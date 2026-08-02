@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Отделка — витрина расценок</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e8eaed;
+    --text-dim: #9aa2b1;
+    --accent: #4c8dff;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  }
+  #gate {
+    height: 100%; display: flex; align-items: center; justify-content: center;
+  }
+  #gate .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 32px; width: 320px; text-align: center;
+  }
+  #gate h1 { font-size: 18px; margin: 0 0 16px; }
+  #gate input {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); font-size: 15px; margin-bottom: 12px;
+  }
+  #gate button {
+    width: 100%; padding: 10px 12px; border-radius: 8px; border: none;
+    background: var(--accent); color: #fff; font-size: 15px; cursor: pointer;
+  }
+  #gate button:disabled { opacity: .6; cursor: default; }
+  #gate .err { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 8px; }
+
+  #app { display: none; height: 100%; flex-direction: column; }
+  header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+  .tabs { display: flex; gap: 6px; }
+  .tab {
+    padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text-dim); cursor: pointer; font-size: 13px;
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .search-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  #search {
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); font-size: 13px; width: 260px;
+  }
+  #count { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
+
+  main { flex: 1; overflow: auto; padding: 0 16px 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  thead th {
+    position: sticky; top: 0; background: var(--panel); text-align: left;
+    padding: 8px 10px; border-bottom: 2px solid var(--border); white-space: nowrap;
+    color: var(--text-dim); font-weight: 600;
+  }
+  tbody td {
+    padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap;
+    max-width: 420px; overflow: hidden; text-overflow: ellipsis;
+  }
+  tbody tr:hover { background: var(--panel2); }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  #status {
+    padding: 40px; text-align: center; color: var(--text-dim);
+  }
+  #status.error { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="box">
+    <h1>Отделка — витрина расценок</h1>
+    <input id="pw" type="password" placeholder="Пароль" autocomplete="current-password">
+    <button id="pwBtn">Войти</button>
+    <div class="err" id="pwErr"></div>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <h1>Отделка СБ3</h1>
+    <div class="tabs">
+      <div class="tab active" data-tab="works">Работы</div>
+      <div class="tab" data-tab="materials">Материалы</div>
+      <div class="tab" data-tab="expenses">Расходы</div>
+    </div>
+    <div class="search-wrap">
+      <span id="count"></span>
+      <input id="search" type="text" placeholder="Поиск...">
+    </div>
+  </header>
+  <main>
+    <div id="status">Загрузка данных...</div>
+    <table id="table" style="display:none">
+      <thead><tr id="thead-row"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </main>
+</div>
+
+<script>
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyo6f-OGca1loM1aBXtHkcx7nq8tlJWBreGepxp0KTwq7GvDdDPKo-tuFjXQqKs1nZfdQ/exec';
+
+const state = {
+  token: localStorage.getItem('otdelka_token') || '',
+  data: null,          // { works: [...], materials: [...], expenses: [...] }
+  tab: 'works',
+  query: ''
+};
+
+const NUM_HINT = /(расценк|цена|стоимост|объем|объём|расход|процент)/i;
+
+function fmtCell(val) {
+  if (typeof val === 'number') {
+    return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(val);
+  }
+  return val === null || val === undefined ? '' : String(val);
+}
+
+function isNumericColumn(key, rows) {
+  if (NUM_HINT.test(key)) return true;
+  return rows.length > 0 && typeof rows[0][key] === 'number';
+}
+
+function renderTable() {
+  const rows = state.data[state.tab] || [];
+  const q = state.query.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)))
+    : rows;
+
+  document.getElementById('count').textContent = filtered.length + ' из ' + rows.length;
+
+  const headers = rows.length ? Object.keys(rows[0]) : [];
+  const numeric = {};
+  headers.forEach(h => { numeric[h] = isNumericColumn(h, rows); });
+
+  const theadRow = document.getElementById('thead-row');
+  theadRow.innerHTML = headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+
+  const CHUNK = 300;
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  let i = 0;
+  function renderChunk() {
+    const frag = document.createDocumentFragment();
+    const end = Math.min(i + CHUNK, filtered.length);
+    for (; i < end; i++) {
+      const r = filtered[i];
+      const tr = document.createElement('tr');
+      tr.innerHTML = headers.map(h => {
+        const cls = numeric[h] ? ' class="num"' : '';
+        return '<td' + cls + '>' + escapeHtml(fmtCell(r[h])) + '</td>';
+      }).join('');
+      frag.appendChild(tr);
+    }
+    tbody.appendChild(frag);
+    if (i < filtered.length) requestAnimationFrame(renderChunk);
+  }
+  renderChunk();
+}
+
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function setStatus(text, isError) {
+  const el = document.getElementById('status');
+  el.style.display = text ? 'block' : 'none';
+  el.textContent = text || '';
+  el.className = isError ? 'error' : '';
+  document.getElementById('table').style.display = text ? 'none' : 'table';
+}
+
+async function fetchWithRetry(url, attempts) {
+  attempts = attempts || 3;
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const resp = await fetch(url);
+      const text = await resp.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch (e) {
+        throw new Error('Сервер вернул не JSON (возможно, ошибка доступа к таблице)');
+      }
+      return json;
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) await new Promise(r => setTimeout(r, 600 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
+
+async function loadData() {
+  setStatus('Загрузка данных...');
+  try {
+    const url = GAS_URL + '?action=load&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url);
+    if (!json.ok) {
+      if (json.error === 'unauthorized') {
+        showGate('Неверный пароль');
+        return;
+      }
+      setStatus('Ошибка загрузки: ' + (json.message || json.error), true);
+      return;
+    }
+    state.data = { works: json.works, materials: json.materials, expenses: json.expenses };
+    setStatus('');
+    renderTable();
+  } catch (e) {
+    setStatus('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.', true);
+  }
+}
+
+function showGate(err) {
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('gate').style.display = 'flex';
+  document.getElementById('pwErr').textContent = err || '';
+  localStorage.removeItem('otdelka_token');
+}
+
+function showApp() {
+  document.getElementById('gate').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+}
+
+document.getElementById('pwBtn').addEventListener('click', submitPassword);
+document.getElementById('pw').addEventListener('keydown', e => {
+  if (e.key === 'Enter') submitPassword();
+});
+
+function submitPassword() {
+  const pw = document.getElementById('pw').value.trim();
+  if (!pw) return;
+  state.token = pw;
+  localStorage.setItem('otdelka_token', pw);
+  showApp();
+  loadData();
+}
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.tab = tab.dataset.tab;
+    document.getElementById('search').value = '';
+    state.query = '';
+    if (state.data) renderTable();
+  });
+});
+
+let searchTimer;
+document.getElementById('search').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.query = e.target.value;
+    if (state.data) renderTable();
+  }, 150);
+});
+
+if (state.token) {
+  showApp();
+  loadData();
+} else {
+  showGate();
+}
+</script>
+</body>
+</html>
