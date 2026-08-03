@@ -233,7 +233,8 @@
   table.inner.contractors th.cname, table.inner.contractors td.cname {
     width: 220px; text-align: left; white-space: normal;
   }
-  table.inner.contractors th.ccorp, table.inner.contractors td.num { width: 92px; }
+  table.inner.contractors th.ccorp, table.inner.contractors td.num { width: 46px; }
+  table.inner.contractors td { font-size: 11px; }
   /* Разделитель «Собственные силы» внутри таблицы подрядчиков. */
   table.inner.contractors tr.sect td {
     background: var(--panel2); font-size: 11px; font-weight: 700; color: var(--text-dim);
@@ -738,6 +739,8 @@ function contractorsHtml(workKey) {
   const head = '<tr><th class="cname">Подрядчик</th>' +
     corps.map(c => '<th class="ccorp">' + escapeHtml(c) + '</th>').join('') + '</tr>';
 
+  // Расценки в сводной — целыми рублями, без копеек (решение пользователя 03.08.2026).
+  const fmtInt = v => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
   const rowsOf = map => Array.from(map.keys())
     .sort((a, b) => a.localeCompare(b, 'ru'))
     .map(name => {
@@ -745,7 +748,7 @@ function contractorsHtml(workKey) {
       return '<tr><td class="cname">' + escapeHtml(name) + '</td>' +
         corps.map(corp => {
           const v = cells.get(corp);
-          return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtCell(v, true))) + '</td>';
+          return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtInt(v))) + '</td>';
         }).join('') + '</tr>';
     }).join('');
 
