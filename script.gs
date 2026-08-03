@@ -2,7 +2,8 @@ var CONFIG = {
   SPREADSHEET_ID: '1-Fd0eTinA8jiJ6UM5jazzj8vfW0wRceZPT7eKOSkutA',
   SHEET_WORKS: 'Работы',
   SHEET_MATERIALS: 'Материалы',
-  SHEET_EXPENSES: 'Расходы'
+  SHEET_EXPENSES: 'Расходы',
+  WORK_KEY: 'Название работы из АР'  // связка «Работы» ↔ «Расходы»
 };
 
 function setup() {
@@ -50,10 +51,17 @@ function doGet(e) {
   if (action === 'load') {
     try {
       var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var works = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_WORKS));
-      var materials = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_MATERIALS));
+      // Лист «Материалы» витрине больше не нужен: показываются работы, а материалы
+      // к ним подтягиваются из «Расходов» по названию работы.
+      // В листе «Работы» ~818 строк-призраков: реальных данных нет, заполнена только
+      // ячейка «Плановый процент переделки» (формула растянута вниз по столбцу).
+      // Работа без названия витрине не нужна — отсекаем, заодно ответ легчает втрое.
+      var works = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_WORKS))
+        .filter(function (row) {
+          return String(row[CONFIG.WORK_KEY] || '').trim() !== '';
+        });
       var expenses = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_EXPENSES));
-      return jsonOut_({ ok: true, works: works, materials: materials, expenses: expenses });
+      return jsonOut_({ ok: true, works: works, expenses: expenses });
     } catch (err) {
       return jsonOut_({ ok: false, error: 'load_failed', message: String(err) });
     }
