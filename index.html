@@ -116,7 +116,7 @@
   /* Во внутренней таблице узкие: числовые + Ед. изм. материала и Слои. */
   table.inner th.num, table.inner th.fixw { width: 84px; }
   table.inner th.fixw { white-space: normal; }
-  table.inner th.mname { width: 460px; }
+  table.inner th.mname { width: 320px; }
 
   /* Название работы — с переносом строк, без обрезки многоточием. */
   td.wname, th.wname {
@@ -263,17 +263,9 @@
       </table>
     </div>
     <div id="pane-bottom" style="display:none">
-      <div class="pane-head">
-        <span id="ctr-work" class="pane-work">Выберите работу в списке выше</span>
-      </div>
       <div id="bottom-cols">
-        <div class="bottom-col">
-          <div id="ctr-body"></div>
-        </div>
-        <div class="bottom-col">
-          <div class="pane-caption">Материалы</div>
-          <div id="mat-body"></div>
-        </div>
+        <div class="bottom-col"><div id="ctr-body"></div></div>
+        <div class="bottom-col"><div id="mat-body"></div></div>
       </div>
     </div>
   </main>
@@ -321,13 +313,13 @@ function filled(v) {
 const DETAIL_COLS = [
   { label: 'Материалы', key: 'Материалы', name: true },
   // Единица измерения самого материала — из справочника «Материалы» по названию.
-  { label: 'Ед. изм. материала', fix: true, calc: r => state.unitByMaterial.get(norm(r['Материалы'])) || '' },
+  { label: 'Ед. изм', fix: true, calc: r => state.unitByMaterial.get(norm(r['Материалы'])) || '' },
   { label: 'Слои', key: 'Слои', fix: true },
   // Ручной расход имеет приоритет над автоматическим; своей колонки у него больше нет.
   { label: 'Расход', calc: r => (filled(r[RUCH]) ? r[RUCH] : r[AVTO]) },
   { label: 'Расход итого', key: 'Расход в рачет' },
   { label: 'Расценка', key: 'Расценка' },
-  { label: 'Стоимость материала в ед работы', key: 'Стоимость материала в ед работы' }
+  { label: 'Стоимость за мат.', key: 'Стоимость материала в ед работы' }
 ];
 
 // Колонка, по которой в раскрытом списке считается итог.
@@ -721,17 +713,16 @@ function contractorsHtml(workKey) {
 }
 
 // Нижняя панель: слева подрядчики × корпуса, справа материалы выбранной работы.
+// Без заголовков и без названия работы (решение пользователя 03.08.2026) —
+// выбранная работа видна по подсветке строки в дереве.
 function renderBottomPane() {
-  const title = document.getElementById('ctr-work');
   const ctrEl = document.getElementById('ctr-body');
   const matEl = document.getElementById('mat-body');
   if (!state.selected) {
-    title.textContent = 'Выберите работу в списке выше';
-    ctrEl.innerHTML = '';
+    ctrEl.innerHTML = '<div class="side-note">Выберите работу в списке выше</div>';
     matEl.innerHTML = '';
     return;
   }
-  title.textContent = state.selectedName;
   ctrEl.innerHTML = contractorsHtml(state.selected);
   matEl.innerHTML = materialsHtml(state.byWork.get(state.selected) || []);
 }
