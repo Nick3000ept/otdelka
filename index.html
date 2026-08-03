@@ -54,6 +54,18 @@
   }
   .sb-item:hover { background: #1a2940; color: #fff; }
   .sb-item.active { background: var(--accent); color: #fff; }
+  .sb-group {
+    padding: 9px 12px; color: #c7cfdd; cursor: pointer; font-size: 13px;
+    border-radius: 8px; margin-top: 6px;
+  }
+  .sb-group:hover { background: #1a2940; color: #fff; }
+  .sb-group .chev { color: #6f7f99; margin-right: 4px; }
+  .sb-sub { padding-left: 26px; display: flex; align-items: center; gap: 8px; }
+  .sb-badge {
+    margin-left: auto; background: #d92d2d; color: #fff; border-radius: 999px;
+    font-size: 11px; font-weight: 700; padding: 1px 7px; min-width: 14px; text-align: center;
+  }
+  .sb-badge:empty { display: none; }
 
   #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
@@ -279,6 +291,27 @@
 
   #status { padding: 40px; text-align: center; color: var(--text-dim); }
   #status.error { color: var(--danger); }
+
+  /* Экран проверки. */
+  #check-screen { flex: 1; overflow: auto; padding: 14px 16px; }
+  .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+  .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
+  table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
+  table.check th {
+    text-align: left; padding: 7px 8px; border-bottom: 2px solid var(--border);
+    color: var(--text-dim); font-weight: 600; background: var(--panel);
+    position: sticky; top: -14px;
+  }
+  table.check td {
+    padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
+    white-space: normal; word-break: break-word;
+  }
+  table.check th.cw-name { width: 44%; }
+  .flag {
+    display: inline-block; margin: 1px 4px 1px 0; padding: 2px 8px;
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+    background: #fdeaea; color: #b42121; border: 1px solid #f2c4c4;
+  }
 </style>
 </head>
 <body>
@@ -297,6 +330,11 @@
     <div class="sb-brand">Отделка СБ3</div>
     <div class="sb-item active" data-screen="rates">Расценки</div>
     <div class="sb-item" data-screen="volumes">Объемы</div>
+    <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
+    <div id="sb-checks" style="display:none">
+      <div class="sb-item sb-sub" data-screen="check-rates">Проверка расценки
+        <span class="sb-badge" id="badge-check-rates"></span></div>
+    </div>
   </aside>
   <div id="content">
   <header>
@@ -321,6 +359,7 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
+    <div id="check-screen" style="display:none"></div>
     <div id="pane-bottom" style="display:none">
       <div id="pane-work"></div>
       <div id="bottom-cols">
@@ -1016,12 +1055,80 @@ function openVolModal(key, name) {
   document.getElementById('modal-overlay').style.display = 'flex';
 }
 
+/**
+ * Проверка «Расценки»: работы, у которых чего-то не хватает —
+ * базовой расценки работ, базовой расценки материалов или расценок подрядчиков
+ * в поэтажке (пока сводка подрядчиков не загрузилась, этот флаг не ставится).
+ */
+function computeRateIssues() {
+  return state.works.map(r => {
+    const flags = [];
+    if (typeof r[BASE_RATE_COL] !== 'number' || r[BASE_RATE_COL] === 0) {
+      flags.push('нет базовой расценки работ');
+    }
+    const mat = r['Стоимость материалов базовая, за ед'];
+    if (typeof mat !== 'number' || mat === 0) flags.push('нет базовой расценки материалов');
+    if (state.floorsStatus === 'ready') {
+      const key = norm(r[WORK_KEY]);
+      if (!((state.floors && state.floors[key]) || []).length) {
+        flags.push('нет расценок подрядчиков');
+      }
+    }
+    return { r: r, flags: flags };
+  }).filter(x => x.flags.length);
+}
+
+function renderCheckRates() {
+  const issues = computeRateIssues();
+  const note = state.floorsStatus !== 'ready'
+    ? ' (сводка подрядчиков ещё грузится — флаг «нет расценок подрядчиков» появится позже)'
+    : '';
+  const head = '<div class="check-head">Проверка расценок: работ с замечаниями — ' +
+    issues.length + '</div>' +
+    '<div class="check-desc">Работы витрины, у которых не заполнена базовая расценка работ ' +
+    'или материалов, либо нет ни одной расценки подрядчика в «Поэтажка_работы»' + note + '</div>';
+  if (!issues.length) {
+    document.getElementById('check-screen').innerHTML =
+      head + '<div class="side-note">Замечаний нет — у всех работ расценки заполнены</div>';
+    return;
+  }
+  const table = '<table class="check"><thead><tr>' +
+    '<th class="cw-name">Название работы из АР</th><th>Место</th><th>Группа работ</th>' +
+    '<th>Чего не хватает</th></tr></thead><tbody>' +
+    issues.map(x =>
+      '<tr><td>' + escapeHtml(fmtCell(x.r[WORK_KEY])) + '</td>' +
+      '<td>' + escapeHtml(fmtCell(x.r[COL_PLACE])) + '</td>' +
+      '<td>' + escapeHtml(fmtCell(x.r[COL_GROUP])) + '</td>' +
+      '<td>' + x.flags.map(f => '<span class="flag">' + escapeHtml(f) + '</span>').join('') +
+      '</td></tr>'
+    ).join('') + '</tbody></table>';
+  document.getElementById('check-screen').innerHTML = head + table;
+}
+
+function updateCheckBadges() {
+  if (!state.works.length) return;
+  document.getElementById('badge-check-rates').textContent =
+    String(computeRateIssues().length || '');
+}
+
 // Переключение вкладок боковой панели.
 function setScreen(screen) {
   if (state.screen === screen) return;
   state.screen = screen;
   document.querySelectorAll('.sb-item').forEach(el =>
     el.classList.toggle('active', el.dataset.screen === screen));
+
+  const isCheck = screen === 'check-rates';
+  document.querySelector('header').style.display = isCheck ? 'none' : '';
+  document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
+  if (isCheck) {
+    document.getElementById('pane-top').style.display = 'none';
+    document.getElementById('pane-bottom').style.display = 'none';
+    document.getElementById('status').style.display = 'none';
+    renderCheckRates();
+    return;
+  }
+
   if (screen === 'volumes' && state.volsStatus === 'idle') loadVols();
   if (screen === 'volumes' && state.volsStatus !== 'ready') {
     setStatus(state.volsStatus === 'error'
@@ -1035,6 +1142,14 @@ function setScreen(screen) {
 
 document.querySelectorAll('.sb-item').forEach(el => {
   el.addEventListener('click', () => setScreen(el.dataset.screen));
+});
+
+// Раскрывающийся блок «Проверки» в боковой панели.
+document.getElementById('sb-checks-toggle').addEventListener('click', () => {
+  const box = document.getElementById('sb-checks');
+  const open = box.style.display !== 'none';
+  box.style.display = open ? 'none' : 'block';
+  document.querySelector('#sb-checks-toggle .chev').innerHTML = open ? '&#9656;' : '&#9662;';
 });
 
 // Клик по строке подрядчика: подсветка + модальное окно с деталями.
@@ -1222,6 +1337,7 @@ async function loadData() {
     setStatus('');
     fillFilters();
     renderTable();
+    updateCheckBadges();
     loadFloors();   // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
   } catch (e) {
     setStatus('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.', true);
@@ -1245,6 +1361,8 @@ async function loadFloors() {
     state.floorsStatus = 'error';
   }
   renderBottomPane();
+  updateCheckBadges();
+  if (state.screen === 'check-rates') renderCheckRates();
 }
 
 function showGate(err) {

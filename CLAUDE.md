@@ -89,6 +89,15 @@ clasp update-deployment AKfycbyo6f-OGca1loM1aBXtHkcx7nq8tlJWBreGepxp0KTwq7GvDdDP
   на вкладку (`loadVols`), суммы по корпусам предрассчитываются в `state.volsTotals`.
   `clearCache()` чистит и floors, и vols-ключи.
 
+- **Проверки** — раскрывающийся блок в боковой панели (`#sb-checks-toggle`), внутри
+  пункты-проверки с красными бейджами-счётчиками. Пока одна: **«Проверка расценки»**
+  (`screen='check-rates'`, `computeRateIssues`/`renderCheckRates`) — работы, у которых
+  не заполнена базовая расценка работ, базовая расценка материалов, либо нет ни одной
+  расценки подрядчика в поэтажке (последний флаг появляется после загрузки floors;
+  бейдж обновляется в `loadData` и `loadFloors`). На экране проверки шапка с фильтрами
+  скрывается. Новые проверки добавлять: пункт в `#sb-checks` + ветка в `setScreen` +
+  compute/render-функции по образцу.
+
 ## Архитектура коротко
 
 - **Auth**: общий пароль (не индивидуальные токены) → localStorage (`otdelka_token`) → бэк сверяет `t=` с Script Properties `PASSWORD` на каждый запрос.
