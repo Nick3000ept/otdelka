@@ -529,8 +529,14 @@ function groupWorks(rows) {
   // не должны молча сложиться в одно число.
   places.forEach(p => p.surfaces.forEach(s => s.subgroups.forEach(g => {
     // Работы без признака ген. объёма — вниз группы (решение пользователя 03.08.2026);
-    // внутри «своих» подсписков порядок листа сохраняется (sort стабильный).
-    g.rows.sort((a, b) => (hasVolume(b) ? 1 : 0) - (hasVolume(a) ? 1 : 0));
+    // работы с признаком сортируются по «Объем работ» на уменьшение, без признака —
+    // в порядке листа (sort стабильный).
+    const volOf = r => (typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0);
+    g.rows.sort((a, b) => {
+      const fa = hasVolume(a), fb = hasVolume(b);
+      if (fa !== fb) return (fb ? 1 : 0) - (fa ? 1 : 0);
+      return fa ? volOf(b) - volOf(a) : 0;
+    });
     const flagged = g.rows.filter(hasVolume);
     g.flagged = flagged.length;
     const byUnit = new Map();
