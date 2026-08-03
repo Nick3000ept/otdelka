@@ -123,10 +123,19 @@
   tbody tr.plc:hover td { background: #e2e5eb; }
   tbody tr.plc .chev { color: var(--accent); margin-right: 4px; }
 
-  /* Группа работ — вложенный уровень внутри места. */
+  /* Поверхность — второй уровень, вложенный в место. */
+  tbody tr.srf td {
+    background: #f2f4f7; border-bottom: 1px solid var(--border);
+    padding: 7px 10px 7px 24px; font-weight: 650; font-size: 13px;
+    cursor: pointer; white-space: normal; max-width: none;
+  }
+  tbody tr.srf:hover td { background: #e8ebf0; }
+  tbody tr.srf .chev { color: var(--accent); margin-right: 4px; }
+
+  /* Группа работ — третий уровень, вложенный в поверхность. */
   tbody tr.grp td {
     background: #f9fafb; border-bottom: 1px solid var(--border);
-    padding: 6px 10px 6px 34px; font-weight: 600; font-size: 13px;
+    padding: 6px 10px 6px 40px; font-weight: 600; font-size: 13px;
     cursor: pointer; white-space: normal; max-width: none;
   }
   tbody tr.grp:hover td { background: #eef0f4; }
@@ -203,8 +212,9 @@ const HIDDEN_COLS = [
   'Признак для бюджета дополнительный объем',
   'Признак Уровень 1 ДГП для увязки',
   'Материалы',
-  'Место',        // не показываем: верхний уровень группировки, значение в заголовке
-  'Группа работ'  // не показываем: вложенный уровень группировки, значение в заголовке
+  'Место',        // не показываем: 1-й уровень группировки, значение в заголовке
+  'Поверхность',  // не показываем: 2-й уровень группировки, значение в заголовке
+  'Группа работ'  // не показываем: 3-й уровень группировки, значение в заголовке
 ];
 
 // Колонка, по которой работа связывается с материалами из листа «Расходы».
@@ -216,6 +226,7 @@ const COL_PLACE = 'Место';
 const COL_SURFACE = 'Поверхность';
 // Список группируется в два уровня: Место -> Группа работ (решение пользователя 03.08.2026).
 const NO_PLACE = '— без места —';
+const NO_SURFACE = '— без поверхности —';
 const NO_GROUP = '— без группы —';
 
 // Раскрытый список материалов: что показываем и в каком порядке (решение пользователя
@@ -365,38 +376,51 @@ function passesFilters(r) {
   return true;
 }
 
-// Два уровня группировки: Место -> Группа работ. Порядок — как в листе «Работы»
-// (порядок таблицы осмыслен), не по алфавиту.
+// Три уровня группировки: Место -> Поверхность -> Группа работ. Порядок — как в листе
+// «Работы» (порядок таблицы осмыслен), не по алфавиту.
 function groupWorks(rows) {
   const places = [];
   const byPlace = new Map();
   rows.forEach(r => {
     const placeName = String(r[COL_PLACE] || '').trim() || NO_PLACE;
     if (!byPlace.has(placeName)) {
-      const p = { name: placeName, key: 'p:' + placeName, rows: [], subgroups: [], byGroup: new Map() };
+      const p = { name: placeName, key: 'p:' + placeName, rows: [], surfaces: [], bySurface: new Map() };
       byPlace.set(placeName, p);
       places.push(p);
     }
     const p = byPlace.get(placeName);
     p.rows.push(r);
 
-    const groupName = String(r[COL_GROUP] || '').trim() || NO_GROUP;
-    if (!p.byGroup.has(groupName)) {
-      const g = { name: groupName, key: p.key + '›g:' + groupName, rows: [] };
-      p.byGroup.set(groupName, g);
-      p.subgroups.push(g);
+    const surfaceName = String(r[COL_SURFACE] || '').trim() || NO_SURFACE;
+    if (!p.bySurface.has(surfaceName)) {
+      const s = { name: surfaceName, key: p.key + '›s:' + surfaceName, rows: [], subgroups: [], byGroup: new Map() };
+      p.bySurface.set(surfaceName, s);
+      p.surfaces.push(s);
     }
-    p.byGroup.get(groupName).rows.push(r);
+    const s = p.bySurface.get(surfaceName);
+    s.rows.push(r);
+
+    const groupName = String(r[COL_GROUP] || '').trim() || NO_GROUP;
+    if (!s.byGroup.has(groupName)) {
+      const g = { name: groupName, key: s.key + '›g:' + groupName, rows: [] };
+      s.byGroup.set(groupName, g);
+      s.subgroups.push(g);
+    }
+    s.byGroup.get(groupName).rows.push(r);
   });
   return places;
 }
 
-// Плоский список всех ключей группировки (мест и подгрупп) — нужен для «свернуть/развернуть всё».
+// Плоский список всех ключей группировки (мест, поверхностей, подгрупп) — нужен
+// для «свернуть/развернуть всё» и для стартового состояния (всё свёрнуто).
 function allGroupKeys(places) {
   const keys = [];
   places.forEach(p => {
     keys.push(p.key);
-    p.subgroups.forEach(g => keys.push(g.key));
+    p.surfaces.forEach(s => {
+      keys.push(s.key);
+      s.subgroups.forEach(g => keys.push(g.key));
+    });
   });
   return keys;
 }
@@ -410,10 +434,15 @@ function renderTable() {
     passesFilters(r) && (!q || keys.some(h => String(r[h]).toLowerCase().includes(q)))
   );
   const places = groupWorks(filtered);
-  const groupCount = places.reduce((acc, p) => acc + p.subgroups.length, 0);
+  let surfaceCount = 0, groupCount = 0;
+  places.forEach(p => {
+    surfaceCount += p.surfaces.length;
+    p.surfaces.forEach(s => { groupCount += s.subgroups.length; });
+  });
 
   document.getElementById('count').textContent =
-    filtered.length + ' из ' + rows.length + ' · мест: ' + places.length + ' · групп: ' + groupCount;
+    filtered.length + ' из ' + rows.length + ' · мест: ' + places.length +
+    ' · поверхностей: ' + surfaceCount + ' · групп: ' + groupCount;
 
   const theadRow = document.getElementById('thead-row');
   theadRow.innerHTML = '<th></th>' + cols.map(c => {
@@ -423,17 +452,21 @@ function renderTable() {
     return '<th' + cls + '>' + escapeHtml(c.label) + '</th>';
   }).join('');
 
-  // Плоский список того, что рисуем: место, затем (если развёрнуто) его группы работ,
-  // затем (если развёрнута группа) сами работы.
+  // Плоский список того, что рисуем: место -> поверхность -> группа работ -> работы,
+  // каждый следующий уровень рисуется только если предыдущий развёрнут.
   const items = [];
   places.forEach(p => {
-    items.push({ type: 'place', place: p });
+    items.push({ type: 'place', node: p });
     if (state.collapsed.has(p.key)) return;
-    p.subgroups.forEach(g => {
-      items.push({ type: 'group', group: g });
-      if (!state.collapsed.has(g.key)) {
-        g.rows.forEach(r => items.push({ type: 'row', row: r }));
-      }
+    p.surfaces.forEach(s => {
+      items.push({ type: 'surface', node: s });
+      if (state.collapsed.has(s.key)) return;
+      s.subgroups.forEach(g => {
+        items.push({ type: 'group', node: g });
+        if (!state.collapsed.has(g.key)) {
+          g.rows.forEach(r => items.push({ type: 'row', row: r }));
+        }
+      });
     });
   });
 
@@ -448,22 +481,14 @@ function renderTable() {
     for (; i < end; i++) {
       const it = items[i];
       const tr = document.createElement('tr');
-      if (it.type === 'place') {
-        const p = it.place;
-        const open = !state.collapsed.has(p.key);
-        tr.className = 'plc';
-        tr.dataset.grp = p.key;
+      if (it.type === 'place' || it.type === 'surface' || it.type === 'group') {
+        const n = it.node;
+        const open = !state.collapsed.has(n.key);
+        tr.className = it.type === 'place' ? 'plc' : (it.type === 'surface' ? 'srf' : 'grp');
+        tr.dataset.grp = n.key;
         tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
-          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(p.name) +
-          ' <span class="cnt">' + p.rows.length + '</span></td>';
-      } else if (it.type === 'group') {
-        const g = it.group;
-        const open = !state.collapsed.has(g.key);
-        tr.className = 'grp';
-        tr.dataset.grp = g.key;
-        tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
-          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(g.name) +
-          ' <span class="cnt">' + g.rows.length + '</span></td>';
+          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(n.name) +
+          ' <span class="cnt">' + n.rows.length + '</span></td>';
       } else {
         const r = it.row;
         tr.className = 'work';
@@ -561,7 +586,7 @@ function toggleGroup(name) {
 }
 
 document.getElementById('tbody').addEventListener('click', e => {
-  const hdr = e.target.closest('tr.plc, tr.grp');
+  const hdr = e.target.closest('tr.plc, tr.srf, tr.grp');
   if (hdr) { toggleGroup(hdr.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
   if (tr) toggleRow(tr);
