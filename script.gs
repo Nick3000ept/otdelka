@@ -23,6 +23,30 @@ function doGet(e) {
     return jsonOut_({ ok: true, time: new Date().toISOString() });
   }
 
+  // Оглавление таблицы: имена вкладок, размеры, заголовки колонок. Без данных —
+  // безопасно смотреть из чата, ответ измеряется килобайтами, а не мегабайтами.
+  if (action === 'meta') {
+    try {
+      var ssMeta = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var sheets = ssMeta.getSheets().map(function (sh) {
+        var lastRow = sh.getLastRow();
+        var lastCol = sh.getLastColumn();
+        var headers = (lastRow > 0 && lastCol > 0)
+          ? sh.getRange(1, 1, 1, lastCol).getValues()[0]
+          : [];
+        return {
+          name: sh.getName(),
+          rows: Math.max(lastRow - 1, 0),
+          cols: lastCol,
+          headers: headers
+        };
+      });
+      return jsonOut_({ ok: true, spreadsheet: ssMeta.getName(), sheets: sheets });
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'meta_failed', message: String(err) });
+    }
+  }
+
   if (action === 'load') {
     try {
       var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
