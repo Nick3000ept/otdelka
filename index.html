@@ -213,6 +213,14 @@
   }
   table.inner.contractors th.ccorp, table.inner.contractors td.num { width: 46px; }
   table.inner.contractors td { font-size: 11px; }
+  /* Кликабельные строки подрядчиков и таблица деталей. */
+  table.inner.contractors tr.crow { cursor: pointer; }
+  table.inner.contractors tr.crow:hover td { background: var(--panel2); }
+  table.inner.contractors tr.crow-sel td { background: #dbe7ff; }
+  table.inner.mini { width: auto; margin: 0 0 10px; }
+  table.inner.mini th, table.inner.mini td { font-size: 11px; }
+  table.inner.mini th.num, table.inner.mini td.num { width: 90px; }
+
   /* Разделитель «Собственные силы» внутри таблицы подрядчиков. */
   table.inner.contractors tr.sect td {
     background: var(--panel2); font-size: 11px; font-weight: 700; color: var(--text-dim);
@@ -268,7 +276,7 @@
     </div>
     <div id="pane-bottom" style="display:none">
       <div id="bottom-cols">
-        <div class="bottom-col"><div id="ctr-body"></div></div>
+        <div class="bottom-col"><div id="ctr-body"></div><div id="ctr-detail"></div></div>
         <div class="bottom-col"><div id="mat-body"></div></div>
       </div>
     </div>
@@ -337,6 +345,10 @@ const state = {
   unitByMaterial: new Map(),   // название материала -> ед. изм. из справочника «Материалы»
   floors: null,                // сводка подрядчик × корпус, грузится отдельным запросом
   floorsStatus: 'loading',     // loading | ready | error
+  contrRates: [],              // лист «Расценки подрядчиков» — детали по клику
+  ssRates: [],                 // лист «Расценки СС» — детали по клику (собств. силы)
+  ssMap: [],                   // лист «Справочник СС» — мэппинг Работа СС -> Работа для АР
+  ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
   query: '',
@@ -718,11 +730,16 @@ function contractorsHtml(workKey) {
   });
 
   // Расценки в сводной — целыми рублями, без копеек (решение пользователя 03.08.2026).
-  const rowsOf = map => Array.from(map.keys())
+  // Строки кликабельны (class crow): обычный подрядчик -> «Расценки подрядчиков»,
+  // из блока собственных сил -> «Расценки СС».
+  const rowsOf = (map, isSS) => Array.from(map.keys())
     .sort((a, b) => a.localeCompare(b, 'ru'))
     .map(name => {
       const cells = map.get(name);
-      return '<tr><td class="cname">' + escapeHtml(name) + '</td>' +
+      const selCls = state.ctrSel && state.ctrSel.name === name && !!state.ctrSel.ss === !!isSS
+        ? ' crow-sel' : '';
+      return '<tr class="crow' + selCls + '" data-contr="' + escapeHtml(name) +
+        '" data-ss="' + (isSS ? 1 : 0) + '"><td class="cname">' + escapeHtml(name) + '</td>' +
         corps.map(corp => {
           const v = cells.get(corp);
           return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtInt(v))) + '</td>';
@@ -732,8 +749,8 @@ function contractorsHtml(workKey) {
   const sect = title =>
     '<tr class="sect"><td colspan="' + (corps.length + 1) + '">' + title + '</td></tr>';
 
-  let body = rowsOf(regular);
-  if (own.size) body += sect('Собственные силы') + rowsOf(own);
+  let body = rowsOf(regular, false);
+  if (own.size) body += sect('Собственные силы') + rowsOf(own, true);
 
   return '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
     '</tbody></table>' +
@@ -746,6 +763,8 @@ function contractorsHtml(workKey) {
 function renderBottomPane() {
   const ctrEl = document.getElementById('ctr-body');
   const matEl = document.getElementById('mat-body');
+  state.ctrSel = null;   // детали подрядчика относятся к прежней работе — сбрасываем
+  document.getElementById('ctr-detail').innerHTML = '';
   if (!state.selected) {
     ctrEl.innerHTML = '<div class="side-note">Выберите работу в списке выше</div>';
     matEl.innerHTML = '';
@@ -754,6 +773,90 @@ function renderBottomPane() {
   ctrEl.innerHTML = contractorsHtml(state.selected);
   matEl.innerHTML = materialsHtml(state.byWork.get(state.selected) || []);
 }
+
+/**
+ * Детали по клику на подрядчика в сводной.
+ * Обычный подрядчик — строки листа «Расценки подрядчиков» (работа + подрядчик).
+ * Собственные силы — лист «Расценки СС»; связка через «Справочник СС»:
+ * Работы.«Название работы СС» -> Справочник.«Работа СС» -> колонка C
+ * «Работа для расценок модель отделка АР» -> Расценки СС.«Работа для АР».
+ */
+function contractorDetailHtml(name, isSS) {
+  const title = '<div class="side-sub" style="margin:10px 0 6px">' +
+    escapeHtml(name) + ' — ' + (isSS ? 'лист «Расценки СС»' : 'лист «Расценки подрядчиков»') +
+    '</div>';
+
+  if (isSS) {
+    const work = state.works.find(r => norm(r[WORK_KEY]) === state.selected);
+    const ssName = norm(work && work['Название работы СС']);
+    if (!ssName) {
+      return title + '<div class="side-note">У работы не заполнено «Название работы СС» — связать с расценками СС нечем</div>';
+    }
+    const targets = new Set(
+      state.ssMap
+        .filter(m => norm(m['Работа СС']) === ssName)
+        .map(m => norm(m['Работа для расценок модель отделка АР']))
+        .filter(v => v)
+    );
+    const rows = state.ssRates.filter(r =>
+      norm(r['Подрядчик']) === norm(name) && targets.has(norm(r['Работа для АР']))
+    );
+    if (!rows.length) {
+      return title + '<div class="side-note">В «Расценках СС» строк по этой работе и подрядчику не найдено</div>';
+    }
+    const cols = [
+      ['Работа для АР', 'Работа для АР', false],
+      ['SUM из Стоимость работ на руки, руб.', 'На руки', true],
+      ['SUM из Стоимость работ с налогами', 'С налогами', true],
+      ['SUM из Стоимость накладных расходов (подсоба, бригадиры, патенты, общежития, ПОС, билеты)', 'Накладные', true],
+      ['SUM из Стоимость итого', 'Итого', true]
+    ];
+    return title + miniTable(cols, rows);
+  }
+
+  const rows = state.contrRates.filter(r =>
+    norm(r['Подрядчик']) === norm(name) && norm(r['Работа']) === state.selected
+  );
+  if (!rows.length) {
+    return title + '<div class="side-note">В «Расценках подрядчиков» строк по этой работе и подрядчику не найдено</div>';
+  }
+  const cols = [
+    ['Корпус', 'Корпус', false],
+    ['Этаж начало бюджет', 'Этаж с', false],
+    ['Этаж конец бюджет', 'Этаж по', false],
+    ['Этажи включить', 'Включить', false],
+    ['Этажи исключить', 'Исключить', false],
+    ['Стоимость работ подрядчика, за ед', 'Работы за ед', true],
+    ['Стоимость материалов подрядчика, за ед', 'Мат-лы за ед', true]
+  ];
+  return title + miniTable(cols, rows);
+}
+
+// Небольшая таблица деталей: cols = [[ключ, заголовок, денежная], ...].
+function miniTable(cols, rows) {
+  const head = '<tr>' + cols.map(c =>
+    '<th' + (c[2] ? ' class="num"' : '') + '>' + escapeHtml(c[1]) + '</th>'
+  ).join('') + '</tr>';
+  const body = rows.map(r =>
+    '<tr>' + cols.map(c => {
+      const v = r[c[0]];
+      const text = c[2] && typeof v === 'number' ? fmtInt(v) : fmtCell(v);
+      return '<td' + (c[2] ? ' class="num"' : '') + '>' + escapeHtml(text) + '</td>';
+    }).join('') + '</tr>'
+  ).join('');
+  return '<table class="inner mini"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
+}
+
+// Клик по строке подрядчика: подсветка + блок деталей под таблицей.
+document.getElementById('ctr-body').addEventListener('click', e => {
+  const tr = e.target.closest('tr.crow');
+  if (!tr || !state.selected) return;
+  state.ctrSel = { name: tr.dataset.contr, ss: tr.dataset.ss === '1' };
+  document.querySelectorAll('#ctr-body tr.crow-sel').forEach(el => el.classList.remove('crow-sel'));
+  tr.classList.add('crow-sel');
+  document.getElementById('ctr-detail').innerHTML =
+    contractorDetailHtml(state.ctrSel.name, state.ctrSel.ss);
+});
 
 // Таблица материалов для всплывающего окна.
 function materialsHtml(list) {
@@ -896,6 +999,9 @@ async function loadData() {
     }
     state.works = json.works || [];
     state.byWork = buildIndex(json.expenses || []);
+    state.contrRates = json.contrRates || [];
+    state.ssRates = json.ssRates || [];
+    state.ssMap = json.ssMap || [];
     // На старте все места и группы свёрнуты (решение пользователя 03.08.2026).
     state.collapsed = new Set(allGroupKeys(groupWorks(state.works)));
     state.unitByMaterial = new Map(

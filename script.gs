@@ -9,6 +9,12 @@ var CONFIG = {
 
   // Лист поэтажных работ — источник сводки «подрядчик × корпус» (03.08.2026).
   // 25 тыс. строк × 34 колонки: целиком НИКОГДА не отдаём, только агрегат.
+  // Детали по клику на подрядчика в сводной (03.08.2026): оба листа маленькие,
+  // отдаются в load целиком.
+  SHEET_CONTR_RATES: 'Расценки подрядчиков',   // 757×9
+  SHEET_SS_RATES: 'Расценки СС',               // 98×6
+  SHEET_SS_MAP: 'Справочник СС',               // 152×7, мэппинг Работа СС -> Работа для АР
+
   SHEET_FLOORS: 'Поэтажка_работы',
   FLOOR_WORK: 'Работа',
   FLOOR_CORP: 'Корпус',
@@ -249,7 +255,13 @@ function doGet(e) {
       var expenses = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_EXPENSES));
       // Сводка по подрядчикам здесь НЕ считается: чтение поэтажки добавляло ~20 сек
       // к загрузке витрины. Она отдаётся отдельно — action=floors, фронт грузит её фоном.
-      return jsonOut_({ ok: true, works: works, expenses: expenses, materials: materials });
+      var contrRates = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_CONTR_RATES));
+      var ssRates = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_SS_RATES));
+      var ssMap = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_SS_MAP));
+      return jsonOut_({
+        ok: true, works: works, expenses: expenses, materials: materials,
+        contrRates: contrRates, ssRates: ssRates, ssMap: ssMap
+      });
     } catch (err) {
       return jsonOut_({ ok: false, error: 'load_failed', message: String(err) });
     }
