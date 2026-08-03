@@ -69,7 +69,10 @@
   #count { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
 
   main { flex: 1; overflow: auto; padding: 0 16px 16px; }
-  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  /* table-layout: fixed — ширины колонок берутся ТОЛЬКО из заголовков и не зависят
+     от того, какие строки сейчас раскрыты. Иначе столбцы скачут при разворачивании
+     уровней (жалоба пользователя 03.08.2026). Все ширины заданы у th ниже. */
+  table { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
   /* Всё по центру, кроме названия работы и локации (просьба пользователя 03.08.2026). */
   thead th {
     position: sticky; top: 0; z-index: 2; background: var(--panel); text-align: center;
@@ -78,53 +81,51 @@
   }
   tbody td {
     padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
-    max-width: 420px; overflow: hidden; text-overflow: ellipsis; text-align: center;
+    overflow: hidden; text-overflow: ellipsis; text-align: center;
   }
   th.wname, td.wname, th.tags, td.tags { text-align: left; }
+
+  /* Ширины колонок задаются только здесь (см. table-layout: fixed выше). */
+  thead th { width: 96px; }
+  thead th.chev-col { width: 8px; }
+  thead th.wname { width: 38%; }
+  thead th.tags { width: 200px; }
+  thead th.volcell { width: 62px; }
   tbody tr.work { cursor: pointer; }
   tbody tr.work:hover { background: var(--panel2); }
   tbody tr.work.open { background: var(--panel2); }
   .num { text-align: center; font-variant-numeric: tabular-nums; }
 
-  /* Широкая ячейка со стрелкой: сдвигает строку работы правее заголовка группы (42px),
-     сохраняя дерево иерархии. */
-  td.chev-cell {
-    width: 48px; min-width: 48px; max-width: 48px; padding: 5px 6px 5px 0;
-    color: var(--text-dim); text-align: right; overflow: visible; text-overflow: clip;
-  }
+  /* Служебная первая колонка (под пустой заголовок). Стрелки у всех уровней и у работы
+     живут внутри ячейки с названием, поэтому здесь только узкий отступ. */
+  td.chev-cell { padding: 0; overflow: visible; text-overflow: clip; }
   .cnt { color: var(--text-dim); font-size: 11px; }
 
   /* Место · поверхность · локация — тегами в одной ячейке. */
-  td.tags { white-space: normal; max-width: 380px; overflow: visible; text-overflow: clip; }
+  td.tags { white-space: normal; overflow: visible; text-overflow: clip; }
   .tag {
     display: inline-block; margin: 1px 4px 1px 0; padding: 2px 8px;
     border: 1px solid var(--border); border-radius: 999px;
     background: var(--panel2); color: var(--text-dim); font-size: 12px; white-space: nowrap;
   }
 
-  th.volcell, td.volcell {
-    width: 62px; min-width: 62px; max-width: 62px; text-align: center; white-space: nowrap;
-  }
+  th.volcell, td.volcell { text-align: center; white-space: nowrap; }
   .check { color: #4ccf7a; font-size: 15px; }
 
-  /* Все числовые колонки — одной ширины. */
-  th.num, td.num { width: 96px; min-width: 96px; max-width: 96px; }
   thead th.num { white-space: normal; }
   /* Во внутренней таблице узкие: числовые + Ед. изм. материала и Слои. */
-  table.inner th.num, table.inner td.num,
-  table.inner th.fixw, table.inner td.fixw { width: 84px; min-width: 84px; max-width: 84px; }
+  table.inner th.num, table.inner th.fixw { width: 84px; }
   table.inner th.fixw { white-space: normal; }
+  table.inner th.mname { width: 460px; }
 
   /* Название работы — с переносом строк, без обрезки многоточием. */
   td.wname, th.wname {
-    white-space: normal; overflow: visible; text-overflow: clip;
-    min-width: 300px; max-width: 640px; word-break: break-word;
+    white-space: normal; overflow: visible; text-overflow: clip; word-break: break-word;
   }
 
   /* Заголовки уровней дерева: место -> поверхность -> группа работ.
      Отступ задаётся только ячейке с названием (.gname), чтобы остальные колонки
-     оставались на своих местах. Работа отрисовывается ещё правее — за счёт
-     широкой ячейки со стрелкой (td.chev-cell). */
+     оставались на своих местах: 8 / 24 / 40px, работа — 56px (td.wname). */
   tbody tr.plc td, tbody tr.srf td, tbody tr.grp td {
     border-bottom: 1px solid var(--border);
     cursor: pointer; white-space: normal; max-width: none;
@@ -138,28 +139,36 @@
     padding: 9px 8px; font-weight: 700;
   }
   tbody tr.plc:hover td { background: #e2e5eb; }
-  tbody tr.plc td.gname { padding-left: 10px; }
+  tbody tr.plc td.gname { padding-left: 8px; }
 
   tbody tr.srf td {
     background: #f2f4f7; padding: 7px 8px; font-weight: 650; font-size: 13px;
   }
   tbody tr.srf:hover td { background: #e8ebf0; }
-  tbody tr.srf td.gname { padding-left: 26px; }
+  tbody tr.srf td.gname { padding-left: 24px; }
 
   tbody tr.grp td {
     background: #f9fafb; padding: 6px 8px; font-weight: 600; font-size: 13px;
   }
   tbody tr.grp:hover td { background: #eef0f4; }
-  tbody tr.grp td.gname { padding-left: 42px; }
+  tbody tr.grp td.gname { padding-left: 40px; }
+
+  /* Работа — четвёртый уровень, правее заголовка группы работ. */
+  tbody tr.work td.wname { padding-left: 56px; }
+  tbody tr.work .chev { color: var(--text-dim); margin-right: 5px; }
 
   /* Итог по объёму в заголовке группы — в своих колонках, не рядом с названием. */
   td.gsum { font-weight: 600; color: var(--text); }
 
   tr.detail > td {
     white-space: normal; max-width: none; overflow: visible;
-    padding: 0 10px 0 40px; background: #f9fafb; border-bottom: 1px solid var(--border);
+    padding: 0 10px 0 72px; background: #f9fafb; border-bottom: 1px solid var(--border);
   }
-  table.inner { width: auto; min-width: 50%; margin: 10px 0 14px; border: 1px solid var(--border); }
+  /* Фиксированная раскладка: список материалов одинаков у всех работ и не «дышит». */
+  table.inner {
+    table-layout: fixed; width: 964px; max-width: 100%;
+    margin: 10px 0 14px; border: 1px solid var(--border);
+  }
   table.inner th {
     position: static; background: var(--panel2); color: var(--text-dim);
     font-size: 12px; padding: 5px 8px; border-bottom: 1px solid var(--border);
@@ -379,7 +388,13 @@ function cellHtml(col, r) {
     return '<td class="tags">' +
       tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('') + '</td>';
   }
-  const cls = col.num ? ' class="num"' : (col.key === WORK_KEY ? ' class="wname"' : '');
+  // Стрелка работы живёт внутри ячейки с названием — так работа встаёт правее
+  // заголовка своей группы и лесенка иерархии не ломается.
+  if (col.key === WORK_KEY) {
+    return '<td class="wname"><span class="chev">&#9656;</span>' +
+      escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
+  }
+  const cls = col.num ? ' class="num"' : '';
   return '<td' + cls + '>' + escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
 }
 
@@ -488,7 +503,7 @@ function renderTable() {
     ' · поверхностей: ' + surfaceCount + ' · групп: ' + groupCount;
 
   const theadRow = document.getElementById('thead-row');
-  theadRow.innerHTML = '<th></th>' + cols.map(c => {
+  theadRow.innerHTML = '<th class="chev-col"></th>' + cols.map(c => {
     const cls = c.num ? ' class="num"'
       : c.vol ? ' class="volcell"'
       : c.tags ? ' class="tags"'
@@ -556,9 +571,7 @@ function renderTable() {
         const r = it.row;
         tr.className = 'work';
         tr.dataset.key = norm(r[WORK_KEY]);
-        tr.innerHTML =
-          '<td class="chev-cell"><span class="chev">&#9656;</span></td>' +
-          cols.map(c => cellHtml(c, r)).join('');
+        tr.innerHTML = '<td class="chev-cell"></td>' + cols.map(c => cellHtml(c, r)).join('');
       }
       frag.appendChild(tr);
     }
