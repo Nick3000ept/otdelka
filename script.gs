@@ -14,6 +14,7 @@ var CONFIG = {
   SHEET_CONTR_RATES: 'Расценки подрядчиков',   // 757×9
   SHEET_SS_RATES: 'Расценки СС',               // 98×6
   SHEET_SS_MAP: 'Справочник СС',               // 152×7, мэппинг Работа СС -> Работа для АР
+  SHEET_CHECK_RATES: 'Проверки расценки',      // готовая проверка «нет расценок» (40×6)
 
   SHEET_FLOORS: 'Поэтажка_работы',
   FLOOR_WORK: 'Работа',
@@ -314,9 +315,10 @@ function doGet(e) {
       var contrRates = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_CONTR_RATES));
       var ssRates = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_SS_RATES));
       var ssMap = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_SS_MAP));
+      var checkRates = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_CHECK_RATES));
       return jsonOut_({
         ok: true, works: works, expenses: expenses, materials: materials,
-        contrRates: contrRates, ssRates: ssRates, ssMap: ssMap
+        contrRates: contrRates, ssRates: ssRates, ssMap: ssMap, checkRates: checkRates
       });
     } catch (err) {
       return jsonOut_({ ok: false, error: 'load_failed', message: String(err) });
