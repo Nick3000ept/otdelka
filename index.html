@@ -237,9 +237,17 @@ const NUM_HINT = /(расценк|цена|стоимост|объем|объё�
 // Денежные колонки — всегда ровно 2 знака после запятой.
 const MONEY_HINT = /(расценк|цена|стоимост|руб)/i;
 
-// Место, поверхность и локация показываются одной ячейкой с тегами.
+// Место, поверхность и локация показываются одной ячейкой с тегами в конце строки.
 const TAG_COLS = ['Место', 'Поверхность', 'Локация'];
 const TAG_LABEL = 'Место · поверхность · локация';
+
+// Короткие заголовки колонок работ (решение пользователя 03.08.2026).
+// Ключ — как в Sheets, значение — как показываем.
+const RENAME = {
+  'Базовая расценка работа в расчет, руб': 'Баз. расценка раб.',
+  'Стоимость материалов базовая, за ед': 'Баз. расценка мат.',
+  'Плановый процент переделки': '% переделки'
+};
 
 function norm(v) {
   return String(v === null || v === undefined ? '' : v).trim().toLowerCase();
@@ -276,20 +284,19 @@ function searchKeys(rows) {
 function workColumns(rows) {
   if (!rows.length) return [];
   const cols = [];
-  let tagsAdded = false;
+  let hasTags = false;
   Object.keys(rows[0]).forEach(h => {
     if (HIDDEN_COLS.indexOf(h) !== -1) return;
-    if (TAG_COLS.indexOf(h) !== -1) {
-      if (!tagsAdded) { cols.push({ label: TAG_LABEL, tags: true }); tagsAdded = true; }
-      return;
-    }
+    if (TAG_COLS.indexOf(h.trim()) !== -1) { hasTags = true; return; }
     cols.push({
-      label: h,
+      label: RENAME[h.trim()] || h,     // признаки «числовая»/«денежная» — по имени из Sheets
       key: h,
       num: isNumericColumn(h, rows),
       money: MONEY_HINT.test(h)
     });
   });
+  // Место · поверхность · локация — последней колонкой.
+  if (hasTags) cols.push({ label: TAG_LABEL, tags: true });
   return cols;
 }
 
