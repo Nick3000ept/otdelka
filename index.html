@@ -201,6 +201,13 @@
   tbody tr.work:hover td { background: var(--panel2); }
   tbody tr.work.sel:hover td { background: #d0dffc; }
 
+  /* Название выбранной работы — по центру над таблицами нижнего блока. */
+  #pane-work {
+    text-align: center; font-size: 13px; font-weight: 700; color: var(--text);
+    margin: 0 0 10px;
+  }
+  #pane-work.placeholder { color: var(--text-dim); font-weight: 400; }
+
   /* Нижний блок: слева подрядчики × корпуса, справа материалы. */
   #bottom-cols { display: flex; gap: 28px; align-items: flex-start; }
   .bottom-col { min-width: 0; overflow-x: auto; }
@@ -301,6 +308,7 @@
       </table>
     </div>
     <div id="pane-bottom" style="display:none">
+      <div id="pane-work"></div>
       <div id="bottom-cols">
         <div class="bottom-col"><div id="ctr-body"></div></div>
         <div class="bottom-col"><div id="mat-body"></div></div>
@@ -809,14 +817,19 @@ function contractorsHtml(workKey) {
 // Без заголовков и без названия работы (решение пользователя 03.08.2026) —
 // выбранная работа видна по подсветке строки в дереве.
 function renderBottomPane() {
+  const workEl = document.getElementById('pane-work');
   const ctrEl = document.getElementById('ctr-body');
   const matEl = document.getElementById('mat-body');
   state.ctrSel = null;   // детали подрядчика относятся к прежней работе — сбрасываем
   if (!state.selected) {
-    ctrEl.innerHTML = '<div class="side-note">Выберите работу в списке выше</div>';
+    workEl.textContent = 'Выберите работу в списке выше';
+    workEl.className = 'placeholder';
+    ctrEl.innerHTML = '';
     matEl.innerHTML = '';
     return;
   }
+  workEl.textContent = state.selectedName;
+  workEl.className = '';
   ctrEl.innerHTML = contractorsHtml(state.selected);
   matEl.innerHTML = materialsHtml(state.byWork.get(state.selected) || []);
 }
