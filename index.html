@@ -115,6 +115,8 @@
   thead th.num { white-space: normal; }
   /* Во внутренней таблице узкие: числовые + Ед. изм. материала и Слои. */
   table.inner th.num, table.inner th.fixw { width: 84px; }
+  /* Ед. изм, Слои, Расход, Итого — на 20% уже остальных (решение пользователя 03.08.2026). */
+  table.inner th.narw { width: 67px; }
   table.inner th.fixw { white-space: normal; }
   table.inner th.mname { width: 320px; }
 
@@ -316,11 +318,11 @@ function filled(v) {
 const DETAIL_COLS = [
   { label: 'Материалы', key: 'Материалы', name: true },
   // Единица измерения самого материала — из справочника «Материалы» по названию.
-  { label: 'Ед. изм', fix: true, calc: r => state.unitByMaterial.get(norm(r['Материалы'])) || '' },
-  { label: 'Слои', key: 'Слои', fix: true },
+  { label: 'Ед. изм', fix: true, nar: true, calc: r => state.unitByMaterial.get(norm(r['Материалы'])) || '' },
+  { label: 'Слои', key: 'Слои', fix: true, nar: true },
   // Ручной расход имеет приоритет над автоматическим; своей колонки у него больше нет.
-  { label: 'Расход', calc: r => (filled(r[RUCH]) ? r[RUCH] : r[AVTO]) },
-  { label: 'Итого', key: 'Расход в рачет' },
+  { label: 'Расход', nar: true, calc: r => (filled(r[RUCH]) ? r[RUCH] : r[AVTO]) },
+  { label: 'Итого', key: 'Расход в рачет', nar: true },
   { label: 'Расценка', key: 'Расценка' },
   { label: 'Стоимость', key: 'Стоимость материала в ед работы' }
 ];
@@ -769,6 +771,7 @@ function materialsHtml(list) {
     const c = [];
     if (numeric[i]) c.push('num');
     if (DETAIL_COLS[i].fix) c.push('fixw');
+    if (DETAIL_COLS[i].nar) c.push('narw');
     if (DETAIL_COLS[i].name) c.push('mname');
     return c.length ? ' class="' + c.join(' ') + '"' : '';
   };
