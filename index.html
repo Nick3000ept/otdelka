@@ -234,11 +234,11 @@
     width: 220px; text-align: left; white-space: normal;
   }
   table.inner.contractors th.ccorp, table.inner.contractors td.num { width: 92px; }
-  .ss {
-    display: block; font-size: 10px; font-weight: 600; color: #1f8a4c;
-    text-transform: uppercase; letter-spacing: .3px;
+  /* Разделитель «Собственные силы» внутри таблицы подрядчиков. */
+  table.inner.contractors tr.sect td {
+    background: var(--panel2); font-size: 11px; font-weight: 700; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: .4px; text-align: left; padding: 6px 8px;
   }
-  .ss.part { color: #b07407; }
   table.inner tfoot td {
     font-size: 12px; padding: 6px 8px; font-weight: 600;
     background: var(--panel2); border-top: 1px solid var(--border);
@@ -725,31 +725,35 @@ function contractorsHtml(workKey) {
   const corps = Array.from(new Set(rows.map(r => r[1])))
     .sort((a, b) => corpNum(a) - corpNum(b) || String(a).localeCompare(String(b), 'ru'));
 
-  // Подрядчики: у одного могут быть и обычные строки, и собственные силы (напр. Смирнов),
-  // поэтому считаем, сколько его ячеек помечены СС, и подписываем строку соответственно.
-  const byContr = new Map();
+  // Два блока: обычные подрядчики и «Собственные силы» (строки с заполненной
+  // «Расценка СС работа»). У одного подрядчика бывают и те, и другие расценки
+  // (напр. Смирнов) — тогда его ячейки расходятся по обоим блокам.
+  const regular = new Map(), own = new Map();
   rows.forEach(([contr, corp, rate, ss]) => {
-    if (!byContr.has(contr)) byContr.set(contr, { cells: new Map(), ss: 0, total: 0 });
-    const c = byContr.get(contr);
-    c.cells.set(corp, rate);
-    c.total++;
-    if (ss) c.ss++;
+    const map = ss ? own : regular;
+    if (!map.has(contr)) map.set(contr, new Map());
+    map.get(contr).set(corp, rate);
   });
 
-  const names = Array.from(byContr.keys()).sort((a, b) => a.localeCompare(b, 'ru'));
   const head = '<tr><th class="cname">Подрядчик</th>' +
     corps.map(c => '<th class="ccorp">' + escapeHtml(c) + '</th>').join('') + '</tr>';
 
-  const body = names.map(name => {
-    const c = byContr.get(name);
-    const mark = c.ss === c.total ? '<span class="ss">собств. силы</span>'
-      : (c.ss > 0 ? '<span class="ss part">частично собств. силы</span>' : '');
-    return '<tr><td class="cname">' + escapeHtml(name) + mark + '</td>' +
-      corps.map(corp => {
-        const v = c.cells.get(corp);
-        return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtCell(v, true))) + '</td>';
-      }).join('') + '</tr>';
-  }).join('');
+  const rowsOf = map => Array.from(map.keys())
+    .sort((a, b) => a.localeCompare(b, 'ru'))
+    .map(name => {
+      const cells = map.get(name);
+      return '<tr><td class="cname">' + escapeHtml(name) + '</td>' +
+        corps.map(corp => {
+          const v = cells.get(corp);
+          return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtCell(v, true))) + '</td>';
+        }).join('') + '</tr>';
+    }).join('');
+
+  const sect = title =>
+    '<tr class="sect"><td colspan="' + (corps.length + 1) + '">' + title + '</td></tr>';
+
+  let body = rowsOf(regular);
+  if (own.size) body += sect('Собственные силы') + rowsOf(own);
 
   return '<div class="side-sub" style="margin-bottom:6px">расценка за работу на ед. в бюджет, руб</div>' +
     '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
