@@ -392,6 +392,7 @@ const state = {
   byWork: new Map(),           // название работы -> строки листа «Расходы»
   unitByMaterial: new Map(),   // название материала -> ед. изм. из справочника «Материалы»
   floors: null,                // сводка подрядчик × корпус, грузится отдельным запросом
+  floorsSS: null,              // работа -> названия работы СС из поэтажки (кол. J)
   floorsStatus: 'loading',     // loading | ready | error
   contrRates: [],              // лист «Расценки подрядчиков» — детали по клику
   ssRates: [],                 // лист «Расценки СС» — детали по клику (собств. силы)
@@ -845,17 +846,28 @@ function renderBottomPane() {
  */
 function contractorDetailHtml(name, isSS) {
   if (isSS) {
-    const work = state.works.find(r => norm(r[WORK_KEY]) === state.selected);
-    const ssName = norm(work && work['Название работы СС']);
-    if (!ssName) {
-      return '<div class="side-note">У работы не заполнено «Название работы СС» — связать с расценками СС нечем</div>';
-    }
-    const targets = new Set(
-      state.ssMap
-        .filter(m => norm(m['Работа СС']) === ssName)
-        .map(m => norm(m['Работа для расценок модель отделка АР']))
-        .filter(v => v)
+    // Названия работы СС берём из ПОЭТАЖКИ (кол. J, приходит в floors как ssNames);
+    // колонка в листе «Работы» — только запасной источник, она почти пустая.
+    const ssNames = new Set(
+      ((state.floorsSS && state.floorsSS[state.selected]) || []).map(norm).filter(Boolean)
     );
+    const work = state.works.find(r => norm(r[WORK_KEY]) === state.selected);
+    const fromWorks = norm(work && work['Название работы СС']);
+    if (fromWorks) ssNames.add(fromWorks);
+    if (!ssNames.size) {
+      return '<div class="side-note">«Название работы СС» не заполнено ни в поэтажке, ни в листе «Работы» — связать с расценками СС нечем</div>';
+    }
+    // Справочник СС: расширяем набор в обе стороны (A «Работа СС» <-> C «Работа для
+    // расценок модель отделка АР»), затем ищем всё это в «Расценки СС».«Работа для АР».
+    const targets = new Set(ssNames);
+    state.ssMap.forEach(m => {
+      const a = norm(m['Работа СС']);
+      const c = norm(m['Работа для расценок модель отделка АР']);
+      if (a && c) {
+        if (ssNames.has(c)) targets.add(a);
+        if (ssNames.has(a)) targets.add(c);
+      }
+    });
     const rows = state.ssRates.filter(r => targets.has(norm(r['Работа для АР'])));
     if (!rows.length) {
       return '<div class="side-note">В «Расценках СС» строк по этой работе не найдено</div>';
@@ -1101,6 +1113,7 @@ async function loadFloors() {
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.floors = json.floors || {};
+    state.floorsSS = json.ssNames || {};
     state.floorsStatus = 'ready';
   } catch (e) {
     state.floorsStatus = 'error';

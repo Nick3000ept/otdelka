@@ -20,10 +20,11 @@ var CONFIG = {
   FLOOR_CORP: 'Корпус',
   FLOOR_CONTRACTOR: 'Подрядчик сводный',              // выбор пользователя 03.08.2026
   FLOOR_RATE: 'Расценка за работу на ед в бюджет',    // что показываем в ячейках
-  FLOOR_SS: 'Расценка СС работа'                      // заполнена -> собственные силы
+  FLOOR_SS: 'Расценка СС работа',                     // заполнена -> собственные силы
+  FLOOR_SS_NAME: 'Название работы СС'                 // кол. J -> мэппинг на «Расценки СС»
 };
 
-var CACHE_FLOORS = 'floors_v1';   // сводка подрядчик × корпус (см. action=floors)
+var CACHE_FLOORS = 'floors_v2';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
@@ -227,7 +228,8 @@ function doGet(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       var ssF = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var payload = JSON.stringify({ ok: true, floors: buildFloorSummary_(ssF) });
+      var summary = buildFloorSummary_(ssF);
+      var payload = JSON.stringify({ ok: true, floors: summary.floors, ssNames: summary.ssNames });
       if (payload.length < 95000) cache.put(CACHE_FLOORS, payload, 21600);
       return ContentService.createTextOutput(payload)
         .setMimeType(ContentService.MimeType.JSON);
@@ -303,11 +305,22 @@ function buildFloorSummary_(ss) {
   var p = col(CONFIG.FLOOR_CONTRACTOR);
   var r = col(CONFIG.FLOOR_RATE);
   var s = col(CONFIG.FLOOR_SS);
+  // Кол. J «Название работы СС» — мэппинг работы на «Расценки СС» (логика пользователя
+  // 03.08.2026: в листе «Работы» эта колонка почти пустая, реальный источник — поэтажка).
+  var ssNameCol = idx[CONFIG.FLOOR_SS_NAME] ? col(CONFIG.FLOOR_SS_NAME) : null;
 
   var map = {};
+  var ssNames = {};   // работа -> { название СС: true }
   for (var k = 0; k < n; k++) {
     var work = String(w[k][0]).trim().toLowerCase();
     if (!work) continue;
+    if (ssNameCol) {
+      var sn = String(ssNameCol[k][0]).trim();
+      if (sn) {
+        if (!ssNames[work]) ssNames[work] = {};
+        ssNames[work][sn] = true;
+      }
+    }
     var rate = typeof r[k][0] === 'number' ? r[k][0] : 0;
     if (!rate) continue;                       // нет расценки — нечего показывать
     var contr = String(p[k][0]).trim();
@@ -327,7 +340,11 @@ function buildFloorSummary_(ss) {
     var byKey = map[work];
     out[work] = Object.keys(byKey).map(function (key) { return byKey[key]; });
   });
-  return out;
+  var ssOut = {};
+  Object.keys(ssNames).forEach(function (work) {
+    ssOut[work] = Object.keys(ssNames[work]);
+  });
+  return { floors: out, ssNames: ssOut };
 }
 
 function sheetToObjects_(sheet) {
