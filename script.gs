@@ -3,7 +3,9 @@ var CONFIG = {
   SHEET_WORKS: 'Работы',
   SHEET_MATERIALS: 'Материалы',
   SHEET_EXPENSES: 'Расходы',
-  WORK_KEY: 'Название работы из АР'  // связка «Работы» ↔ «Расходы»
+  WORK_KEY: 'Название работы из АР',  // связка «Работы» ↔ «Расходы»
+  PLACE_KEY: 'Место',
+  EXCLUDE_PLACES: ['1 этаж']          // места, которые витрина не показывает (03.08.2026)
 };
 
 function setup() {
@@ -59,7 +61,10 @@ function doGet(e) {
       // Работа без названия витрине не нужна — отсекаем, заодно ответ легчает втрое.
       var works = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_WORKS))
         .filter(function (row) {
-          return String(row[CONFIG.WORK_KEY] || '').trim() !== '';
+          if (String(row[CONFIG.WORK_KEY] || '').trim() === '') return false;
+          // Место «1 этаж» на витрине не показываем (190 работ из 321).
+          var place = String(row[CONFIG.PLACE_KEY] || '').trim();
+          return CONFIG.EXCLUDE_PLACES.indexOf(place) === -1;
         });
       var expenses = sheetToObjects_(ss.getSheetByName(CONFIG.SHEET_EXPENSES));
       return jsonOut_({ ok: true, works: works, expenses: expenses, materials: materials });
