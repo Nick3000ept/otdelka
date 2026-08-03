@@ -177,11 +177,11 @@
   }
   table.inner tbody tr:last-child td { border-bottom: none; }
 
-  /* Экран: верхняя треть — дерево работ, нижние 2/3 — подрядчики выбранной работы. */
+  /* Экран: верхние 2/3 — дерево работ, нижняя треть — подрядчики выбранной работы. */
   main { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
-  #pane-top { flex: 0 0 33%; overflow: auto; padding: 0 16px; }
+  #pane-top { flex: 1 1 0; overflow: auto; padding: 0 16px; }
   #pane-bottom {
-    flex: 1 1 0; overflow: auto; padding: 10px 16px 16px;
+    flex: 0 0 33%; overflow: auto; padding: 10px 16px 16px;
     border-top: 2px solid var(--border); background: var(--panel);
   }
   .pane-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
