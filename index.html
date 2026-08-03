@@ -447,10 +447,10 @@ function fmtCell(val, money) {
   return val === null || val === undefined ? '' : String(val);
 }
 
-// Объёмы работ — до десятых (в строках работ и в итогах групп).
+// Объёмы работ — целыми, без десятых (в строках работ и в итогах групп; 03.08.2026).
 function fmtVol(v) {
   return typeof v === 'number'
-    ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 }).format(v)
+    ? new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v)
     : fmtCell(v);
 }
 
