@@ -183,6 +183,24 @@
     text-align: left;
   }
   table.inner tbody tr:last-child td { border-bottom: none; }
+
+  /* Материалы и сводка по подрядчикам — рядом, с переносом на узком экране. */
+  .detail-wrap { display: flex; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+  .side { padding: 10px 0 14px; }
+  .side-title { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+  .side-sub { display: block; font-weight: 400; color: var(--text-dim); font-size: 11px; }
+  .side-note { font-size: 12px; color: var(--text-dim); padding: 12px 0; }
+
+  table.inner.contractors { width: auto; margin: 0; }
+  table.inner.contractors th.cname, table.inner.contractors td.cname {
+    width: 220px; text-align: left; white-space: normal;
+  }
+  table.inner.contractors th.ccorp, table.inner.contractors td.num { width: 92px; }
+  .ss {
+    display: block; font-size: 10px; font-weight: 600; color: #1f8a4c;
+    text-transform: uppercase; letter-spacing: .3px;
+  }
+  .ss.part { color: #b07407; }
   table.inner tfoot td {
     font-size: 12px; padding: 6px 8px; font-weight: 600;
     background: var(--panel2); border-top: 1px solid var(--border);
@@ -290,6 +308,8 @@ const state = {
   works: [],
   byWork: new Map(),           // название работы -> строки листа «Расходы»
   unitByMaterial: new Map(),   // название материала -> ед. изм. из справочника «Материалы»
+  floors: null,                // сводка подрядчик × корпус, грузится отдельным запросом
+  floorsStatus: 'loading',     // loading | ready | error
   query: '',
   filters: { group: '', place: '', surface: '' },
   collapsed: new Set()         // свёрнутые группы работ
@@ -598,9 +618,69 @@ function fillFilters() {
   fillSelect('f-surface', COL_SURFACE);
 }
 
-function detailHtml(list, colspan) {
+/**
+ * Сводная «подрядчик × корпус» по одной работе.
+ * Данные: state.floors[ключ работы] = [[подрядчик, корпус, расценка, признак СС], ...].
+ * В ячейке — расценка за работу на единицу в бюджет (не сумма: складывать расценки нельзя).
+ */
+function contractorsHtml(workKey) {
+  if (state.floorsStatus === 'loading') {
+    return '<div class="side-note">Сводка по подрядчикам загружается…</div>';
+  }
+  if (state.floorsStatus === 'error') {
+    return '<div class="side-note">Сводку по подрядчикам загрузить не удалось</div>';
+  }
+  const rows = (state.floors && state.floors[workKey]) || [];
+  if (!rows.length) {
+    return '<div class="side-note">Подрядчики по этой работе в «Поэтажка_работы» не найдены</div>';
+  }
+
+  // Корпуса — по номеру (К1, К2, … К12), а не по алфавиту.
+  const corpNum = c => {
+    const m = String(c).match(/\d+/);
+    return m ? parseInt(m[0], 10) : 9999;
+  };
+  const corps = Array.from(new Set(rows.map(r => r[1])))
+    .sort((a, b) => corpNum(a) - corpNum(b) || String(a).localeCompare(String(b), 'ru'));
+
+  // Подрядчики: у одного могут быть и обычные строки, и собственные силы (напр. Смирнов),
+  // поэтому считаем, сколько его ячеек помечены СС, и подписываем строку соответственно.
+  const byContr = new Map();
+  rows.forEach(([contr, corp, rate, ss]) => {
+    if (!byContr.has(contr)) byContr.set(contr, { cells: new Map(), ss: 0, total: 0 });
+    const c = byContr.get(contr);
+    c.cells.set(corp, rate);
+    c.total++;
+    if (ss) c.ss++;
+  });
+
+  const names = Array.from(byContr.keys()).sort((a, b) => a.localeCompare(b, 'ru'));
+  const head = '<tr><th class="cname">Подрядчик</th>' +
+    corps.map(c => '<th class="ccorp">' + escapeHtml(c) + '</th>').join('') + '</tr>';
+
+  const body = names.map(name => {
+    const c = byContr.get(name);
+    const mark = c.ss === c.total ? '<span class="ss">собств. силы</span>'
+      : (c.ss > 0 ? '<span class="ss part">частично собств. силы</span>' : '');
+    return '<tr><td class="cname">' + escapeHtml(name) + mark + '</td>' +
+      corps.map(corp => {
+        const v = c.cells.get(corp);
+        return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtCell(v, true))) + '</td>';
+      }).join('') + '</tr>';
+  }).join('');
+
+  return '<div class="side-title">Подрядчики и собственные силы' +
+    '<span class="side-sub">расценка за работу на ед. в бюджет, руб</span></div>' +
+    '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
+    '</tbody></table>';
+}
+
+function detailHtml(list, colspan, workKey) {
+  const side = contractorsHtml(workKey);
   if (!list.length) {
-    return '<td colspan="' + colspan + '"><div class="no-detail">Материалы для этой работы в листе «Расходы» не найдены</div></td>';
+    return '<td colspan="' + colspan + '"><div class="detail-wrap">' +
+      '<div class="no-detail">Материалы для этой работы в листе «Расходы» не найдены</div>' +
+      '<div class="side">' + side + '</div></div></td>';
   }
   const valueOf = (col, row) => (col.calc ? col.calc(row) : row[col.key]);
   const numeric = DETAIL_COLS.map(col =>
@@ -641,8 +721,10 @@ function detailHtml(list, colspan) {
     }).join('') + '</tr>';
   }
 
-  return '<td colspan="' + colspan + '"><table class="inner"><thead>' + head +
-         '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></td>';
+  return '<td colspan="' + colspan + '"><div class="detail-wrap">' +
+    '<table class="inner"><thead>' + head + '</thead><tbody>' + body +
+    '</tbody><tfoot>' + foot + '</tfoot></table>' +
+    '<div class="side">' + side + '</div></div></td>';
 }
 
 function toggleRow(tr) {
@@ -657,7 +739,8 @@ function toggleRow(tr) {
   const list = state.byWork.get(tr.dataset.key) || [];
   const detail = document.createElement('tr');
   detail.className = 'detail';
-  detail.innerHTML = detailHtml(list, tr.children.length);
+  detail.dataset.key = tr.dataset.key;
+  detail.innerHTML = detailHtml(list, tr.children.length, tr.dataset.key);
   tr.parentNode.insertBefore(detail, tr.nextSibling);
   tr.classList.add('open');
   chev.innerHTML = '&#9662;';
@@ -754,9 +837,38 @@ async function loadData() {
     setStatus('');
     fillFilters();
     renderTable();
+    loadFloors();   // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
   } catch (e) {
     setStatus('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.', true);
   }
+}
+
+/**
+ * Сводка «подрядчик × корпус» считается по листу «Поэтажка_работы» (25 тыс. строк) —
+ * это ~25 сек на холодном кэше сервера, поэтому грузим её отдельно и не блокируем таблицу.
+ * Уже раскрытые работы после загрузки перерисовываем, чтобы «загружается…» сменилось данными.
+ */
+async function loadFloors() {
+  try {
+    const url = GAS_URL + '?action=floors&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.floors = json.floors || {};
+    state.floorsStatus = 'ready';
+  } catch (e) {
+    state.floorsStatus = 'error';
+  }
+  refreshOpenDetails();
+}
+
+function refreshOpenDetails() {
+  document.querySelectorAll('tr.detail').forEach(detail => {
+    const key = detail.dataset.key;
+    const work = detail.previousElementSibling;
+    if (!key || !work) return;
+    const list = state.byWork.get(key) || [];
+    detail.innerHTML = detailHtml(list, work.children.length, key);
+  });
 }
 
 function showGate(err) {
