@@ -43,10 +43,24 @@
   #app { display: none; height: 100%; flex-direction: column; }
   header {
     padding: 12px 16px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    display: flex; flex-direction: column; gap: 10px;
   }
+  .toolbar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
   .hint { color: var(--text-dim); font-size: 12px; }
+
+  .filters { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .flt { display: flex; align-items: center; gap: 6px; }
+  .flt label { color: var(--text-dim); font-size: 12px; }
+  .flt select {
+    padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text); font-size: 13px; max-width: 260px;
+  }
+  #f-reset {
+    padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text-dim); font-size: 12px; cursor: pointer;
+  }
+  #f-reset:hover { color: var(--text); }
   .search-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   #search {
     padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
@@ -73,6 +87,20 @@
   td.chev-cell { width: 30px; max-width: 30px; color: var(--text-dim); text-align: center; }
   .cnt { color: var(--text-dim); font-size: 11px; }
 
+  /* Название работы — с переносом строк, без обрезки многоточием. */
+  td.wname, th.wname {
+    white-space: normal; overflow: visible; text-overflow: clip;
+    min-width: 320px; max-width: 520px; word-break: break-word;
+  }
+
+  tbody tr.grp td {
+    background: #1b2029; border-bottom: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    padding: 8px 10px; font-weight: 600; cursor: pointer; white-space: normal; max-width: none;
+  }
+  tbody tr.grp:hover td { background: #212734; }
+  tbody tr.grp .chev { color: var(--accent); margin-right: 4px; }
+
   tr.detail > td {
     white-space: normal; max-width: none; overflow: visible;
     padding: 0 10px 0 40px; background: #12151b; border-bottom: 1px solid var(--border);
@@ -83,7 +111,11 @@
     font-size: 12px; padding: 5px 8px; border-bottom: 1px solid var(--border);
   }
   table.inner td { font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
-  table.inner tr:last-child td { border-bottom: none; }
+  table.inner tbody tr:last-child td { border-bottom: none; }
+  table.inner tfoot td {
+    font-size: 12px; padding: 6px 8px; font-weight: 600;
+    background: var(--panel2); border-top: 1px solid var(--border);
+  }
   .no-detail { color: var(--text-dim); font-size: 12px; padding: 10px 0 12px; }
 
   #status { padding: 40px; text-align: center; color: var(--text-dim); }
@@ -103,11 +135,19 @@
 
 <div id="app">
   <header>
-    <h1>Отделка СБ3 — работы</h1>
-    <span class="hint">Нажмите на работу, чтобы увидеть материалы</span>
-    <div class="search-wrap">
-      <span id="count"></span>
-      <input id="search" type="text" placeholder="Поиск...">
+    <div class="toolbar">
+      <h1>Отделка СБ3 — работы</h1>
+      <span class="hint">Нажмите на работу, чтобы увидеть материалы</span>
+      <div class="search-wrap">
+        <span id="count"></span>
+        <input id="search" type="text" placeholder="Поиск...">
+      </div>
+    </div>
+    <div class="filters">
+      <span class="flt"><label for="f-group">Группа работ</label><select id="f-group"></select></span>
+      <span class="flt"><label for="f-place">Место</label><select id="f-place"></select></span>
+      <span class="flt"><label for="f-surface">Поверхность</label><select id="f-surface"></select></span>
+      <button id="f-reset" type="button">Сбросить</button>
     </div>
   </header>
   <main>
@@ -130,11 +170,18 @@ const HIDDEN_COLS = [
   'Признак для бюджета дополнительный',
   'Признак для бюджета дополнительный объем',
   'Признак Уровень 1 ДГП для увязки',
-  'Материалы'
+  'Материалы',
+  'Группа работ'   // не показываем: работы сгруппированы по ней, значение в заголовке группы
 ];
 
 // Колонка, по которой работа связывается с материалами из листа «Расходы».
 const WORK_KEY = 'Название работы из АР';
+
+// Колонки для группировки и фильтров.
+const COL_GROUP = 'Группа работ';
+const COL_PLACE = 'Место';
+const COL_SURFACE = 'Поверхность';
+const NO_GROUP = '— без группы —';
 
 // Раскрытый список материалов: что показываем и в каком порядке (решение пользователя
 // 03.08.2026). Место, Тип работ, Объем работ и Объем материала не показываем.
@@ -147,7 +194,8 @@ function filled(v) {
 
 const DETAIL_COLS = [
   { label: 'Материалы', key: 'Материалы' },
-  { label: 'Ед. изм. работы', key: 'Ед. изм. работы' },
+  // Единица измерения самого материала — из справочника «Материалы» по названию.
+  { label: 'Ед. изм. материала', calc: r => state.unitByMaterial.get(norm(r['Материалы'])) || '' },
   { label: 'Слои', key: 'Слои' },
   // Ручной расход имеет приоритет над автоматическим; своей колонки у него больше нет.
   { label: 'Расход', calc: r => (filled(r[RUCH]) ? r[RUCH] : r[AVTO]) },
@@ -156,11 +204,17 @@ const DETAIL_COLS = [
   { label: 'Стоимость материала в ед работы', key: 'Стоимость материала в ед работы' }
 ];
 
+// Колонка, по которой в раскрытом списке считается итог.
+const SUM_COL = 'Стоимость материала в ед работы';
+
 const state = {
   token: localStorage.getItem('otdelka_token') || '',
   works: [],
-  byWork: new Map(),   // название работы (нормализованное) -> строки листа «Расходы»
-  query: ''
+  byWork: new Map(),           // название работы -> строки листа «Расходы»
+  unitByMaterial: new Map(),   // название материала -> ед. изм. из справочника «Материалы»
+  query: '',
+  filters: { group: '', place: '', surface: '' },
+  collapsed: new Set()         // свёрнутые группы работ
 };
 
 const NUM_HINT = /(расценк|цена|стоимост|объем|объём|расход|процент)/i;
@@ -203,49 +257,114 @@ function buildIndex(expenses) {
   return map;
 }
 
+function passesFilters(r) {
+  const f = state.filters;
+  if (f.group && String(r[COL_GROUP] || '').trim() !== f.group) return false;
+  if (f.place && String(r[COL_PLACE] || '').trim() !== f.place) return false;
+  if (f.surface && String(r[COL_SURFACE] || '').trim() !== f.surface) return false;
+  return true;
+}
+
+// Группы идут в том порядке, в каком встречаются в листе «Работы» (порядок таблицы осмыслен).
+function groupWorks(rows) {
+  const groups = [];
+  const byName = new Map();
+  rows.forEach(r => {
+    const name = String(r[COL_GROUP] || '').trim() || NO_GROUP;
+    if (!byName.has(name)) {
+      const g = { name: name, rows: [] };
+      byName.set(name, g);
+      groups.push(g);
+    }
+    byName.get(name).rows.push(r);
+  });
+  return groups;
+}
+
 function renderTable() {
   const rows = state.works;
   const headers = visibleHeaders(rows);
   const q = state.query.trim().toLowerCase();
-  const filtered = q
-    ? rows.filter(r => headers.some(h => String(r[h]).toLowerCase().includes(q)))
-    : rows;
+  const filtered = rows.filter(r =>
+    passesFilters(r) && (!q || headers.some(h => String(r[h]).toLowerCase().includes(q)))
+  );
+  const groups = groupWorks(filtered);
 
-  document.getElementById('count').textContent = filtered.length + ' из ' + rows.length;
+  document.getElementById('count').textContent =
+    filtered.length + ' из ' + rows.length + ' · групп: ' + groups.length;
 
   const numeric = {};
   headers.forEach(h => { numeric[h] = isNumericColumn(h, rows); });
 
   const theadRow = document.getElementById('thead-row');
-  theadRow.innerHTML = '<th></th>' + headers.map(h => '<th>' + escapeHtml(h) + '</th>').join('');
+  theadRow.innerHTML = '<th></th>' + headers.map(h =>
+    '<th' + (h === WORK_KEY ? ' class="wname"' : '') + '>' + escapeHtml(h) + '</th>'
+  ).join('');
 
+  // Плоский список того, что рисуем: заголовок группы, затем её работы (если не свёрнута).
+  const items = [];
+  groups.forEach(g => {
+    items.push({ type: 'group', group: g });
+    if (!state.collapsed.has(g.name)) {
+      g.rows.forEach(r => items.push({ type: 'row', row: r }));
+    }
+  });
+
+  const colspan = headers.length + 1;
   const CHUNK = 300;
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = '';
   let i = 0;
   function renderChunk() {
     const frag = document.createDocumentFragment();
-    const end = Math.min(i + CHUNK, filtered.length);
+    const end = Math.min(i + CHUNK, items.length);
     for (; i < end; i++) {
-      const r = filtered[i];
-      const key = norm(r[WORK_KEY]);
-      const cnt = (state.byWork.get(key) || []).length;
+      const it = items[i];
       const tr = document.createElement('tr');
-      tr.className = 'work';
-      tr.dataset.key = key;
-      tr.innerHTML =
-        '<td class="chev-cell"><span class="chev">&#9656;</span>' +
-        (cnt ? ' <span class="cnt">' + cnt + '</span>' : '') + '</td>' +
-        headers.map(h => {
-          const cls = numeric[h] ? ' class="num"' : '';
-          return '<td' + cls + '>' + escapeHtml(fmtCell(r[h])) + '</td>';
-        }).join('');
+      if (it.type === 'group') {
+        const open = !state.collapsed.has(it.group.name);
+        tr.className = 'grp';
+        tr.dataset.grp = it.group.name;
+        tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
+          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(it.group.name) +
+          ' <span class="cnt">' + it.group.rows.length + '</span></td>';
+      } else {
+        const r = it.row;
+        const key = norm(r[WORK_KEY]);
+        const cnt = (state.byWork.get(key) || []).length;
+        tr.className = 'work';
+        tr.dataset.key = key;
+        tr.innerHTML =
+          '<td class="chev-cell"><span class="chev">&#9656;</span>' +
+          (cnt ? ' <span class="cnt">' + cnt + '</span>' : '') + '</td>' +
+          headers.map(h => {
+            const cls = numeric[h] ? ' class="num"' : (h === WORK_KEY ? ' class="wname"' : '');
+            return '<td' + cls + '>' + escapeHtml(fmtCell(r[h])) + '</td>';
+          }).join('');
+      }
       frag.appendChild(tr);
     }
     tbody.appendChild(frag);
-    if (i < filtered.length) requestAnimationFrame(renderChunk);
+    if (i < items.length) requestAnimationFrame(renderChunk);
   }
   renderChunk();
+}
+
+function fillSelect(id, key) {
+  const sel = document.getElementById(id);
+  const prev = sel.value;
+  const vals = Array.from(new Set(
+    state.works.map(r => String(r[key] || '').trim()).filter(v => v)
+  )).sort((a, b) => a.localeCompare(b, 'ru'));
+  sel.innerHTML = '<option value="">Все</option>' +
+    vals.map(v => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>').join('');
+  if (vals.indexOf(prev) !== -1) sel.value = prev;
+}
+
+function fillFilters() {
+  fillSelect('f-group', COL_GROUP);
+  fillSelect('f-place', COL_PLACE);
+  fillSelect('f-surface', COL_SURFACE);
 }
 
 function detailHtml(list, colspan) {
@@ -265,8 +384,23 @@ function detailHtml(list, colspan) {
     }).join('') + '</tr>'
   ).join('');
 
+  // Итог по стоимости материалов на единицу работы.
+  const sumIdx = DETAIL_COLS.findIndex(c => c.key === SUM_COL);
+  let foot = '';
+  if (sumIdx !== -1) {
+    const total = list.reduce((acc, row) => {
+      const v = row[SUM_COL];
+      return acc + (typeof v === 'number' ? v : 0);
+    }, 0);
+    foot = '<tr class="total">' + DETAIL_COLS.map((col, i) => {
+      if (i === 0) return '<td>Итого материалов на ед. работы</td>';
+      if (i === sumIdx) return '<td class="num">' + escapeHtml(fmtCell(total)) + '</td>';
+      return '<td></td>';
+    }).join('') + '</tr>';
+  }
+
   return '<td colspan="' + colspan + '"><table class="inner"><thead>' + head +
-         '</thead><tbody>' + body + '</tbody></table></td>';
+         '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></td>';
 }
 
 function toggleRow(tr) {
@@ -287,9 +421,33 @@ function toggleRow(tr) {
   chev.innerHTML = '&#9662;';
 }
 
+function toggleGroup(name) {
+  if (state.collapsed.has(name)) state.collapsed.delete(name);
+  else state.collapsed.add(name);
+  renderTable();
+}
+
 document.getElementById('tbody').addEventListener('click', e => {
+  const grp = e.target.closest('tr.grp');
+  if (grp) { toggleGroup(grp.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
   if (tr) toggleRow(tr);
+});
+
+['f-group', 'f-place', 'f-surface'].forEach(id => {
+  document.getElementById(id).addEventListener('change', e => {
+    const which = id === 'f-group' ? 'group' : (id === 'f-place' ? 'place' : 'surface');
+    state.filters[which] = e.target.value;
+    if (state.works.length) renderTable();
+  });
+});
+
+document.getElementById('f-reset').addEventListener('click', () => {
+  state.filters = { group: '', place: '', surface: '' };
+  state.query = '';
+  ['f-group', 'f-place', 'f-surface'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('search').value = '';
+  if (state.works.length) renderTable();
 });
 
 function setStatus(text, isError) {
@@ -337,7 +495,13 @@ async function loadData() {
     }
     state.works = json.works || [];
     state.byWork = buildIndex(json.expenses || []);
+    state.unitByMaterial = new Map(
+      (json.materials || [])
+        .filter(m => norm(m['Материал']))
+        .map(m => [norm(m['Материал']), String(m['Ед. изм'] || '').trim()])
+    );
     setStatus('');
+    fillFilters();
     renderTable();
   } catch (e) {
     setStatus('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.', true);
