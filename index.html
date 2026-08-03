@@ -129,11 +129,32 @@ const HIDDEN_COLS = [
   'Признак для бюджета основной',
   'Признак для бюджета дополнительный',
   'Признак для бюджета дополнительный объем',
-  'Признак Уровень 1 ДГП для увязки'
+  'Признак Уровень 1 ДГП для увязки',
+  'Материалы'
 ];
 
 // Колонка, по которой работа связывается с материалами из листа «Расходы».
 const WORK_KEY = 'Название работы из АР';
+
+// Раскрытый список материалов: что показываем и в каком порядке (решение пользователя
+// 03.08.2026). Место, Тип работ, Объем работ и Объем материала не показываем.
+const RUCH = 'Ручной расход';
+const AVTO = 'Расход автомат';
+
+function filled(v) {
+  return v !== '' && v !== null && v !== undefined;
+}
+
+const DETAIL_COLS = [
+  { label: 'Материалы', key: 'Материалы' },
+  { label: 'Ед. изм. работы', key: 'Ед. изм. работы' },
+  { label: 'Слои', key: 'Слои' },
+  // Ручной расход имеет приоритет над автоматическим; своей колонки у него больше нет.
+  { label: 'Расход', calc: r => (filled(r[RUCH]) ? r[RUCH] : r[AVTO]) },
+  { label: 'Расход итого', key: 'Расход в рачет' },
+  { label: 'Расценка', key: 'Расценка' },
+  { label: 'Стоимость материала в ед работы', key: 'Стоимость материала в ед работы' }
+];
 
 const state = {
   token: localStorage.getItem('otdelka_token') || '',
@@ -231,16 +252,16 @@ function detailHtml(list, colspan) {
   if (!list.length) {
     return '<td colspan="' + colspan + '"><div class="no-detail">Материалы для этой работы в листе «Расходы» не найдены</div></td>';
   }
-  // Название работы в раскрытом списке не дублируем — оно уже в строке выше.
-  const cols = Object.keys(list[0]).filter(h => h !== WORK_KEY);
-  const numeric = {};
-  cols.forEach(h => { numeric[h] = isNumericColumn(h, list); });
+  const valueOf = (col, row) => (col.calc ? col.calc(row) : row[col.key]);
+  const numeric = DETAIL_COLS.map(col =>
+    NUM_HINT.test(col.label) || typeof valueOf(col, list[0]) === 'number'
+  );
 
-  const head = '<tr>' + cols.map(h => '<th>' + escapeHtml(h) + '</th>').join('') + '</tr>';
+  const head = '<tr>' + DETAIL_COLS.map(c => '<th>' + escapeHtml(c.label) + '</th>').join('') + '</tr>';
   const body = list.map(row =>
-    '<tr>' + cols.map(h => {
-      const cls = numeric[h] ? ' class="num"' : '';
-      return '<td' + cls + '>' + escapeHtml(fmtCell(row[h])) + '</td>';
+    '<tr>' + DETAIL_COLS.map((col, i) => {
+      const cls = numeric[i] ? ' class="num"' : '';
+      return '<td' + cls + '>' + escapeHtml(fmtCell(valueOf(col, row))) + '</td>';
     }).join('') + '</tr>'
   ).join('');
 
