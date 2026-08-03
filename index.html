@@ -195,7 +195,7 @@ const HIDDEN_COLS = [
   'Признак для бюджета дополнительный объем',
   'Признак Уровень 1 ДГП для увязки',
   'Материалы',
-  'Группа работ'   // не показываем: работы сгруппированы по ней, значение в заголовке группы
+  'Поверхность'   // не показываем: работы сгруппированы по ней, значение в заголовке группы
 ];
 
 // Колонка, по которой работа связывается с материалами из листа «Расходы».
@@ -205,7 +205,9 @@ const WORK_KEY = 'Название работы из АР';
 const COL_GROUP = 'Группа работ';
 const COL_PLACE = 'Место';
 const COL_SURFACE = 'Поверхность';
-const NO_GROUP = '— без группы —';
+const NO_GROUP = '— без поверхности —';
+// Список группируется по поверхности (решение пользователя 03.08.2026, было — по группе работ).
+const GROUP_BY = COL_SURFACE;
 
 // Раскрытый список материалов: что показываем и в каком порядке (решение пользователя
 // 03.08.2026). Место, Тип работ, Объем работ и Объем материала не показываем.
@@ -245,9 +247,10 @@ const NUM_HINT = /(расценк|цена|стоимост|объем|объё�
 // Денежные колонки — всегда ровно 2 знака после запятой.
 const MONEY_HINT = /(расценк|цена|стоимост|руб)/i;
 
-// Место, поверхность и локация показываются одной ячейкой с тегами в конце строки.
-const TAG_COLS = ['Место', 'Поверхность', 'Локация'];
-const TAG_LABEL = 'Место · поверхность · локация';
+// Место и локация показываются одной ячейкой с тегами в конце строки.
+// Поверхность туда не входит — она теперь заголовок группы (см. GROUP_BY).
+const TAG_COLS = ['Место', 'Локация'];
+const TAG_LABEL = 'Место · локация';
 
 // Работа участвует в расчёте генерального объёма, если этот признак заполнен
 // (в колонке лежит не «да/нет», а название группы — 73 работы из 321).
@@ -361,7 +364,7 @@ function groupWorks(rows) {
   const groups = [];
   const byName = new Map();
   rows.forEach(r => {
-    const name = String(r[COL_GROUP] || '').trim() || NO_GROUP;
+    const name = String(r[GROUP_BY] || '').trim() || NO_GROUP;
     if (!byName.has(name)) {
       const g = { name: name, rows: [] };
       byName.set(name, g);
@@ -370,16 +373,19 @@ function groupWorks(rows) {
     byName.get(name).rows.push(r);
   });
   // Итог по группе: объём работ, но только по работам с признаком ген. объёма
-  // (решение пользователя 03.08.2026). Единица берётся, если она в группе одна.
+  // (решение пользователя 03.08.2026). При группировке по поверхности единицы измерения
+  // внутри одной группы могут различаться (напр. «Полы»: м2 + м.п.) — складывать их вместе
+  // нельзя, поэтому считаем сумму отдельно по каждой единице.
   groups.forEach(g => {
     const flagged = g.rows.filter(hasVolume);
     g.flagged = flagged.length;
-    g.vol = flagged.reduce((acc, r) =>
-      acc + (typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0), 0);
-    const units = Array.from(new Set(
-      flagged.map(r => String(r[UNIT_COL] || '').trim()).filter(v => v)
-    ));
-    g.unit = units.length === 1 ? units[0] : '';
+    const byUnit = new Map();
+    flagged.forEach(r => {
+      const u = String(r[UNIT_COL] || '').trim();
+      const v = typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0;
+      byUnit.set(u, (byUnit.get(u) || 0) + v);
+    });
+    g.volParts = Array.from(byUnit.entries());
   });
   return groups;
 }
@@ -431,8 +437,9 @@ function renderTable() {
         tr.dataset.grp = it.group.name;
         const g = it.group;
         const vol = g.flagged
-          ? ' <span class="gvol">объём: ' + escapeHtml(fmtCell(g.vol, true)) +
-            (g.unit ? ' ' + escapeHtml(g.unit) : '') + '</span>'
+          ? ' <span class="gvol">объём: ' + g.volParts.map(([u, v]) =>
+              escapeHtml(fmtCell(v, true)) + (u ? ' ' + escapeHtml(u) : '')
+            ).join(' + ') + '</span>'
           : '';
         tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
           (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(g.name) +
