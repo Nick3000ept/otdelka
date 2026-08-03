@@ -70,23 +70,27 @@
 
   main { flex: 1; overflow: auto; padding: 0 16px 16px; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  /* Всё по центру, кроме названия работы и локации (просьба пользователя 03.08.2026). */
   thead th {
-    position: sticky; top: 0; z-index: 2; background: var(--panel); text-align: left;
+    position: sticky; top: 0; z-index: 2; background: var(--panel); text-align: center;
     padding: 7px 8px; border-bottom: 2px solid var(--border); white-space: nowrap;
     color: var(--text-dim); font-weight: 600;
   }
   tbody td {
     padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
-    max-width: 420px; overflow: hidden; text-overflow: ellipsis;
+    max-width: 420px; overflow: hidden; text-overflow: ellipsis; text-align: center;
   }
+  th.wname, td.wname, th.tags, td.tags { text-align: left; }
   tbody tr.work { cursor: pointer; }
   tbody tr.work:hover { background: var(--panel2); }
   tbody tr.work.open { background: var(--panel2); }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .num { text-align: center; font-variant-numeric: tabular-nums; }
 
+  /* Широкая ячейка со стрелкой: сдвигает строку работы правее заголовка группы (42px),
+     сохраняя дерево иерархии. */
   td.chev-cell {
-    width: 26px; min-width: 26px; max-width: 26px; padding: 6px 4px;
-    color: var(--text-dim); text-align: center; overflow: visible; text-overflow: clip;
+    width: 48px; min-width: 48px; max-width: 48px; padding: 5px 6px 5px 0;
+    color: var(--text-dim); text-align: right; overflow: visible; text-overflow: clip;
   }
   .cnt { color: var(--text-dim); font-size: 11px; }
 
@@ -117,33 +121,39 @@
     min-width: 300px; max-width: 640px; word-break: break-word;
   }
 
-  /* Место — верхний уровень группировки. */
+  /* Заголовки уровней дерева: место -> поверхность -> группа работ.
+     Отступ задаётся только ячейке с названием (.gname), чтобы остальные колонки
+     оставались на своих местах. Работа отрисовывается ещё правее — за счёт
+     широкой ячейки со стрелкой (td.chev-cell). */
+  tbody tr.plc td, tbody tr.srf td, tbody tr.grp td {
+    border-bottom: 1px solid var(--border);
+    cursor: pointer; white-space: normal; max-width: none;
+  }
+  tbody tr.plc .chev, tbody tr.srf .chev, tbody tr.grp .chev {
+    color: var(--accent); margin-right: 4px;
+  }
+
   tbody tr.plc td {
-    background: var(--panel2); border-bottom: 1px solid var(--border);
-    border-top: 1px solid var(--border);
-    padding: 9px 10px; font-weight: 700; cursor: pointer; white-space: normal; max-width: none;
+    background: var(--panel2); border-top: 1px solid var(--border);
+    padding: 9px 8px; font-weight: 700;
   }
   tbody tr.plc:hover td { background: #e2e5eb; }
-  tbody tr.plc .chev { color: var(--accent); margin-right: 4px; }
+  tbody tr.plc td.gname { padding-left: 10px; }
 
-  /* Поверхность — второй уровень, вложенный в место. */
   tbody tr.srf td {
-    background: #f2f4f7; border-bottom: 1px solid var(--border);
-    padding: 7px 10px 7px 24px; font-weight: 650; font-size: 13px;
-    cursor: pointer; white-space: normal; max-width: none;
+    background: #f2f4f7; padding: 7px 8px; font-weight: 650; font-size: 13px;
   }
   tbody tr.srf:hover td { background: #e8ebf0; }
-  tbody tr.srf .chev { color: var(--accent); margin-right: 4px; }
+  tbody tr.srf td.gname { padding-left: 26px; }
 
-  /* Группа работ — третий уровень, вложенный в поверхность. */
   tbody tr.grp td {
-    background: #f9fafb; border-bottom: 1px solid var(--border);
-    padding: 6px 10px 6px 40px; font-weight: 600; font-size: 13px;
-    cursor: pointer; white-space: normal; max-width: none;
+    background: #f9fafb; padding: 6px 8px; font-weight: 600; font-size: 13px;
   }
   tbody tr.grp:hover td { background: #eef0f4; }
-  tbody tr.grp .chev { color: var(--accent); margin-right: 4px; }
-  .gvol { margin-left: 12px; color: var(--text); font-weight: 600; }
+  tbody tr.grp td.gname { padding-left: 42px; }
+
+  /* Итог по объёму в заголовке группы — в своих колонках, не рядом с названием. */
+  td.gsum { font-weight: 600; color: var(--text); }
 
   tr.detail > td {
     white-space: normal; max-width: none; overflow: visible;
@@ -153,8 +163,16 @@
   table.inner th {
     position: static; background: var(--panel2); color: var(--text-dim);
     font-size: 12px; padding: 5px 8px; border-bottom: 1px solid var(--border);
+    text-align: center;
   }
-  table.inner td { font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+  table.inner td {
+    font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--border);
+    text-align: center;
+  }
+  /* Название материала — по левому краю, как и название работы. */
+  table.inner th.mname, table.inner td.mname, table.inner tfoot td:first-child {
+    text-align: left;
+  }
   table.inner tbody tr:last-child td { border-bottom: none; }
   table.inner tfoot td {
     font-size: 12px; padding: 6px 8px; font-weight: 600;
@@ -244,7 +262,7 @@ function filled(v) {
 
 // fix: true — колонка той же узкой ширины, что и числовые (просьба пользователя 03.08.2026).
 const DETAIL_COLS = [
-  { label: 'Материалы', key: 'Материалы' },
+  { label: 'Материалы', key: 'Материалы', name: true },
   // Единица измерения самого материала — из справочника «Материалы» по названию.
   { label: 'Ед. изм. материала', fix: true, calc: r => state.unitByMaterial.get(norm(r['Материалы'])) || '' },
   { label: 'Слои', key: 'Слои', fix: true },
@@ -473,6 +491,7 @@ function renderTable() {
   theadRow.innerHTML = '<th></th>' + cols.map(c => {
     const cls = c.num ? ' class="num"'
       : c.vol ? ' class="volcell"'
+      : c.tags ? ' class="tags"'
       : (c.key === WORK_KEY ? ' class="wname"' : '');
     return '<th' + cls + '>' + escapeHtml(c.label) + '</th>';
   }).join('');
@@ -511,15 +530,28 @@ function renderTable() {
         const open = !state.collapsed.has(n.key);
         tr.className = it.type === 'place' ? 'plc' : (it.type === 'surface' ? 'srf' : 'grp');
         tr.dataset.grp = n.key;
-        // Сумма объёма — только у групп работ, и только по работам с галочкой ген. объёма.
-        const vol = (it.type === 'group' && n.flagged)
-          ? ' <span class="gvol">объём: ' + n.volParts.map(([u, v]) =>
-              escapeHtml(fmtCell(v, true)) + (u ? ' ' + escapeHtml(u) : '')
-            ).join(' + ') + '</span>'
+
+        // Сумма объёма — только у групп работ и только по работам с галочкой ген. объёма.
+        // Показываем её в колонке «Объем работ», единицу — в колонке «Ед. изм. работа»
+        // (просьба пользователя 03.08.2026). Если единиц несколько — всё в колонке объёма.
+        const parts = (it.type === 'group' && n.flagged) ? n.volParts : [];
+        const oneUnit = parts.length === 1;
+        const volText = parts.length
+          ? (oneUnit
+              ? fmtCell(parts[0][1], true)
+              : parts.map(([u, v]) => fmtCell(v, true) + (u ? ' ' + u : '')).join(' + '))
           : '';
-        tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
-          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(n.name) +
-          ' <span class="cnt">' + n.rows.length + '</span>' + vol + '</td>';
+        const unitText = oneUnit ? parts[0][0] : '';
+
+        const label = '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span>' +
+          escapeHtml(n.name) + ' <span class="cnt">' + n.rows.length + '</span>';
+
+        tr.innerHTML = '<td class="chev-cell"></td>' + cols.map(c => {
+          if (c.key === WORK_KEY) return '<td class="wname gname">' + label + '</td>';
+          if (volText && c.key === VOL_COL) return '<td class="num gsum">' + escapeHtml(volText) + '</td>';
+          if (unitText && c.key === UNIT_COL) return '<td class="gsum">' + escapeHtml(unitText) + '</td>';
+          return '<td' + (c.num ? ' class="num"' : (c.vol ? ' class="volcell"' : '')) + '></td>';
+        }).join('');
       } else {
         const r = it.row;
         tr.className = 'work';
@@ -568,6 +600,7 @@ function detailHtml(list, colspan) {
     const c = [];
     if (numeric[i]) c.push('num');
     if (DETAIL_COLS[i].fix) c.push('fixw');
+    if (DETAIL_COLS[i].name) c.push('mname');
     return c.length ? ' class="' + c.join(' ') + '"' : '';
   };
 
