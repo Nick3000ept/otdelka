@@ -21,14 +21,48 @@ var CONFIG = {
   FLOOR_CONTRACTOR: 'Подрядчик сводный',              // выбор пользователя 03.08.2026
   FLOOR_RATE: 'Расценка за работу на ед в бюджет',    // что показываем в ячейках
   FLOOR_SS: 'Расценка СС работа',                     // заполнена -> собственные силы
-  FLOOR_SS_NAME: 'Название работы СС'                 // кол. J -> мэппинг на «Расценки СС»
+  FLOOR_SS_NAME: 'Название работы СС',                // кол. J -> мэппинг на «Расценки СС»
+  FLOOR_FLOOR: 'Этаж',                                // для вкладки «Объемы»
+  FLOOR_VOL: 'Объем'
 };
 
 var CACHE_FLOORS = 'floors_v2';   // сводка подрядчик × корпус + ssNames (см. action=floors)
+var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
-  CacheService.getScriptCache().remove(CACHE_FLOORS);
+  var cache = CacheService.getScriptCache();
+  cache.remove(CACHE_FLOORS);
+  var keys = [CACHE_VOLS + '_n'];
+  for (var i = 0; i < 10; i++) keys.push(CACHE_VOLS + '_' + i);
+  cache.removeAll(keys);
+}
+
+// Ответ «Объемов» больше лимита CacheService (100 КБ/ключ), поэтому кэш — кусками.
+function cachePutBig_(cache, key, str, ttl) {
+  var SIZE = 90000;
+  var n = Math.ceil(str.length / SIZE);
+  if (n > 10) return;   // слишком большой — живём без кэша
+  var obj = {};
+  for (var i = 0; i < n; i++) obj[key + '_' + i] = str.substr(i * SIZE, SIZE);
+  obj[key + '_n'] = String(n);
+  cache.putAll(obj, ttl);
+}
+
+function cacheGetBig_(cache, key) {
+  var meta = cache.get(key + '_n');
+  if (!meta) return null;
+  var n = parseInt(meta, 10);
+  var names = [];
+  for (var i = 0; i < n; i++) names.push(key + '_' + i);
+  var got = cache.getAll(names);
+  var parts = [];
+  for (var j = 0; j < n; j++) {
+    var p = got[key + '_' + j];
+    if (!p) return null;   // кусок протух — пересчитываем целиком
+    parts.push(p);
+  }
+  return parts.join('');
 }
 
 function setup() {
@@ -238,6 +272,26 @@ function doGet(e) {
     }
   }
 
+  // Объёмы по этажам для вкладки «Объемы». Тяжёлый расчёт (~20 сек по поэтажке),
+  // кэш — кусками (ответ больше 100 КБ лимита CacheService).
+  if (action === 'volumes') {
+    try {
+      var cacheV = CacheService.getScriptCache();
+      var cachedV = cacheGetBig_(cacheV, CACHE_VOLS);
+      if (cachedV) {
+        return ContentService.createTextOutput(cachedV)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssV = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadV = JSON.stringify({ ok: true, vols: buildVolumes_(ssV) });
+      cachePutBig_(cacheV, CACHE_VOLS, payloadV, 21600);
+      return ContentService.createTextOutput(payloadV)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'volumes_failed', message: String(err) });
+    }
+  }
+
   if (action === 'load') {
     try {
       var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
@@ -345,6 +399,63 @@ function buildFloorSummary_(ss) {
     ssOut[work] = Object.keys(ssNames[work]);
   });
   return { floors: out, ssNames: ssOut };
+}
+
+/**
+ * Объёмы по этажам для вкладки «Объемы» (03.08.2026): из поэтажки читаются только
+ * Работа / Корпус / Этаж / Объем и сворачиваются в
+ * { работа(lowercase) : { корпус : [[этаж, объём], ...] } } (этажи по возрастанию,
+ * объёмы просуммированы по этажу и округлены до 2 знаков).
+ */
+function buildVolumes_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
+  if (!sh) return {};
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return {};
+
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  var need = [CONFIG.FLOOR_WORK, CONFIG.FLOOR_CORP, CONFIG.FLOOR_FLOOR, CONFIG.FLOOR_VOL];
+  for (var i = 0; i < need.length; i++) {
+    if (!idx[need[i]]) return {};
+  }
+
+  var n = lastRow - 1;
+  var col = function (name) { return sh.getRange(2, idx[name], n, 1).getValues(); };
+  var w = col(CONFIG.FLOOR_WORK);
+  var c = col(CONFIG.FLOOR_CORP);
+  var f = col(CONFIG.FLOOR_FLOOR);
+  var v = col(CONFIG.FLOOR_VOL);
+
+  var map = {};   // работа -> корпус -> этаж -> сумма объёма
+  for (var k = 0; k < n; k++) {
+    var work = String(w[k][0]).trim().toLowerCase();
+    if (!work) continue;
+    var corp = String(c[k][0]).trim();
+    if (!corp) continue;
+    var floor = f[k][0];
+    if (floor === '' || floor === null) continue;
+    var fl = typeof floor === 'number' ? floor : parseFloat(String(floor).replace(',', '.'));
+    if (isNaN(fl)) continue;
+    var vol = typeof v[k][0] === 'number' ? v[k][0] : 0;
+    if (!map[work]) map[work] = {};
+    if (!map[work][corp]) map[work][corp] = {};
+    map[work][corp][fl] = (map[work][corp][fl] || 0) + vol;
+  }
+
+  var out = {};
+  Object.keys(map).forEach(function (work) {
+    out[work] = {};
+    Object.keys(map[work]).forEach(function (corp) {
+      var byFloor = map[work][corp];
+      out[work][corp] = Object.keys(byFloor)
+        .map(function (fl) { return [parseFloat(fl), Math.round(byFloor[fl] * 100) / 100]; })
+        .sort(function (a, b) { return a[0] - b[0]; });
+    });
+  });
+  return out;
 }
 
 function sheetToObjects_(sheet) {

@@ -40,7 +40,22 @@
   #gate button:disabled { opacity: .6; cursor: default; }
   #gate .err { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 8px; }
 
-  #app { display: none; height: 100%; flex-direction: column; }
+  #app { display: none; height: 100%; flex-direction: row; }
+
+  /* Боковая панель с вкладками (по образцу КЛАД). */
+  #sidebar {
+    flex: none; width: 190px; background: #0f1b2d; color: #e8eaed;
+    display: flex; flex-direction: column; padding: 16px 10px; gap: 2px;
+  }
+  .sb-brand { font-size: 18px; font-weight: 700; padding: 0 10px 16px; color: #fff; }
+  .sb-item {
+    padding: 9px 12px; border-radius: 8px; color: #c7cfdd;
+    cursor: pointer; font-size: 13px;
+  }
+  .sb-item:hover { background: #1a2940; color: #fff; }
+  .sb-item.active { background: var(--accent); color: #fff; }
+
+  #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
     padding: 12px 16px; border-bottom: 1px solid var(--border);
     display: flex; flex-direction: column; gap: 10px;
@@ -281,6 +296,12 @@
 </div>
 
 <div id="app">
+  <aside id="sidebar">
+    <div class="sb-brand">Отделка СБ3</div>
+    <div class="sb-item active" data-screen="rates">Расценки</div>
+    <div class="sb-item" data-screen="volumes">Объемы</div>
+  </aside>
+  <div id="content">
   <header>
     <div class="toolbar">
       <h1>Отделка СБ3 — работы</h1>
@@ -315,6 +336,7 @@
       </div>
     </div>
   </main>
+  </div>
 </div>
 
 <!-- Модальное окно с деталями по подрядчику -->
@@ -391,6 +413,10 @@ const state = {
   works: [],
   byWork: new Map(),           // название работы -> строки листа «Расходы»
   unitByMaterial: new Map(),   // название материала -> ед. изм. из справочника «Материалы»
+  screen: 'rates',             // текущая вкладка: rates (расценки) | volumes (объёмы)
+  vols: null,                  // работа -> корпус -> [[этаж, объём], ...] (action=volumes)
+  volsTotals: null,            // работа -> { корпус: суммарный объём }
+  volsStatus: 'idle',          // idle | loading | ready | error
   floors: null,                // сводка подрядчик × корпус, грузится отдельным запросом
   floorsSS: null,              // работа -> названия работы СС из поэтажки (кол. J)
   floorsStatus: 'loading',     // loading | ready | error
@@ -482,8 +508,14 @@ const COL_ORDER = [
 ];
 
 // Колонки таблицы работ: название + галочка ген. объёма + COL_ORDER + локация тегом.
+// На вкладке «Объемы» вместо характеристик — 12 корпусов (иерархия та же).
 function workColumns(rows) {
   if (!rows.length) return [];
+  if (state.screen === 'volumes') {
+    const cols = [{ label: WORK_KEY, key: WORK_KEY }];
+    ALL_CORPS.forEach(c => cols.push({ label: c, corp: c, num: true }));
+    return cols;
+  }
   const keys = Object.keys(rows[0]);
   const mk = h => ({
     label: RENAME[h.trim()] || h,     // признаки «числовая»/«денежная» — по имени из Sheets
@@ -498,6 +530,12 @@ function workColumns(rows) {
 }
 
 function cellHtml(col, r) {
+  // Вкладка «Объемы»: суммарный объём работы по корпусу.
+  if (col.corp) {
+    const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
+    const v = t && t[col.corp];
+    return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
+  }
   if (col.vol) {
     return '<td class="volcell">' + (hasVolume(r) ? '<span class="check">&#10003;</span>' : '') + '</td>';
   }
@@ -916,6 +954,96 @@ function miniTable(cols, rows) {
   return '<table class="inner mini"><thead>' + head + '</thead><tbody>' + body + '</tbody></table>';
 }
 
+// Объёмы по этажам (вкладка «Объемы») — лениво, при первом заходе на вкладку.
+async function loadVols() {
+  state.volsStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=volumes&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.vols = json.vols || {};
+    // Суммы по корпусам считаем один раз, чтобы таблица рисовалась мгновенно.
+    state.volsTotals = new Map();
+    Object.keys(state.vols).forEach(work => {
+      const totals = {};
+      Object.keys(state.vols[work]).forEach(corp => {
+        totals[corp] = state.vols[work][corp].reduce((acc, p) => acc + p[1], 0);
+      });
+      state.volsTotals.set(work, totals);
+    });
+    state.volsStatus = 'ready';
+  } catch (e) {
+    state.volsStatus = 'error';
+  }
+  if (state.screen === 'volumes') {
+    setStatus(state.volsStatus === 'error' ? 'Не удалось загрузить объёмы. Обновите страницу.' : '',
+      state.volsStatus === 'error');
+    if (state.volsStatus === 'ready') renderTable();
+  }
+}
+
+// Поэтажная ведомость по корпусам — модальное окно (вкладка «Объемы»).
+function openVolModal(key, name) {
+  const work = state.works.find(r => norm(r[WORK_KEY]) === key);
+  const unit = String((work && work[UNIT_COL]) || '').trim();
+  document.getElementById('modal-title').textContent = name;
+  document.getElementById('modal-sub').textContent =
+    'Поэтажная ведомость' + (unit ? ' · объёмы в ' + unit : '');
+  const byCorp = (state.vols && state.vols[key]) || {};
+  const corps = ALL_CORPS;
+  let html;
+  const floorSet = new Set();
+  corps.forEach(c => (byCorp[c] || []).forEach(p => floorSet.add(p[0])));
+  if (!floorSet.size) {
+    html = '<div class="side-note">Объёмы по этой работе в «Поэтажка_работы» не найдены</div>';
+  } else {
+    const floors = Array.from(floorSet).sort((a, b) => a - b);
+    const volByCorpFloor = {};
+    corps.forEach(c => {
+      volByCorpFloor[c] = new Map((byCorp[c] || []).map(p => [p[0], p[1]]));
+    });
+    const head = '<tr><th>Этаж</th>' +
+      corps.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') + '</tr>';
+    const body = floors.map(fl =>
+      '<tr><td>' + escapeHtml(fmtCell(fl)) + '</td>' +
+      corps.map(c => {
+        const v = volByCorpFloor[c].get(fl);
+        return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
+      }).join('') + '</tr>'
+    ).join('');
+    const foot = '<tr class="total"><td>Итого</td>' +
+      corps.map(c => {
+        const t = (byCorp[c] || []).reduce((acc, p) => acc + p[1], 0);
+        return '<td class="num">' + (t ? escapeHtml(fmtVol(t)) : '') + '</td>';
+      }).join('') + '</tr>';
+    html = '<table class="inner mini vol-table"><thead>' + head + '</thead><tbody>' + body +
+      '</tbody><tfoot>' + foot + '</tfoot></table>';
+  }
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+// Переключение вкладок боковой панели.
+function setScreen(screen) {
+  if (state.screen === screen) return;
+  state.screen = screen;
+  document.querySelectorAll('.sb-item').forEach(el =>
+    el.classList.toggle('active', el.dataset.screen === screen));
+  if (screen === 'volumes' && state.volsStatus === 'idle') loadVols();
+  if (screen === 'volumes' && state.volsStatus !== 'ready') {
+    setStatus(state.volsStatus === 'error'
+      ? 'Не удалось загрузить объёмы. Обновите страницу.' : 'Объёмы загружаются…',
+      state.volsStatus === 'error');
+    return;
+  }
+  setStatus('');
+  if (state.works.length) renderTable();
+}
+
+document.querySelectorAll('.sb-item').forEach(el => {
+  el.addEventListener('click', () => setScreen(el.dataset.screen));
+});
+
 // Клик по строке подрядчика: подсветка + модальное окно с деталями.
 document.getElementById('ctr-body').addEventListener('click', e => {
   const tr = e.target.closest('tr.crow');
@@ -1011,7 +1139,10 @@ document.getElementById('tbody').addEventListener('click', e => {
   const hdr = e.target.closest('tr.plc, tr.srf, tr.grp');
   if (hdr) { toggleGroup(hdr.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
-  if (tr) selectWork(tr);
+  if (!tr) return;
+  // В «Объемах» клик по работе открывает поэтажную ведомость, в «Расценках» — выбор.
+  if (state.screen === 'volumes') openVolModal(tr.dataset.key, tr.dataset.name || '');
+  else selectWork(tr);
 });
 
 ['f-group', 'f-place', 'f-surface'].forEach(id => {
@@ -1043,7 +1174,9 @@ function setStatus(text, isError) {
   el.textContent = text || '';
   el.className = isError ? 'error' : '';
   document.getElementById('pane-top').style.display = text ? 'none' : 'block';
-  document.getElementById('pane-bottom').style.display = text ? 'none' : 'block';
+  // Нижняя панель (подрядчики/материалы) — только на вкладке «Расценки».
+  document.getElementById('pane-bottom').style.display =
+    (text || state.screen !== 'rates') ? 'none' : 'block';
 }
 
 async function fetchWithRetry(url, attempts) {
