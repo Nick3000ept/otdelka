@@ -6,14 +6,14 @@
 <title>Отделка — витрина расценок</title>
 <style>
   :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --panel2: #1e222b;
-    --border: #2a2f3a;
-    --text: #e8eaed;
-    --text-dim: #9aa2b1;
-    --accent: #4c8dff;
-    --danger: #ff6b6b;
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --panel2: #eef0f4;
+    --border: #d7dbe3;
+    --text: #1c2028;
+    --text-dim: #6b7280;
+    --accent: #2f6fed;
+    --danger: #d92d2d;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -115,18 +115,18 @@
   }
 
   tbody tr.grp td {
-    background: #1b2029; border-bottom: 1px solid var(--border);
+    background: var(--panel2); border-bottom: 1px solid var(--border);
     border-top: 1px solid var(--border);
     padding: 8px 10px; font-weight: 600; cursor: pointer; white-space: normal; max-width: none;
   }
-  tbody tr.grp:hover td { background: #212734; }
+  tbody tr.grp:hover td { background: #e2e5eb; }
   tbody tr.grp .chev { color: var(--accent); margin-right: 4px; }
   .gvol { margin-left: 14px; color: var(--text); font-weight: 600; }
   .gvol .cnt { font-weight: 400; }
 
   tr.detail > td {
     white-space: normal; max-width: none; overflow: visible;
-    padding: 0 10px 0 40px; background: #12151b; border-bottom: 1px solid var(--border);
+    padding: 0 10px 0 40px; background: #f9fafb; border-bottom: 1px solid var(--border);
   }
   table.inner { width: auto; min-width: 50%; margin: 10px 0 14px; border: 1px solid var(--border); }
   table.inner th {
@@ -432,8 +432,7 @@ function renderTable() {
         const g = it.group;
         const vol = g.flagged
           ? ' <span class="gvol">объём: ' + escapeHtml(fmtCell(g.vol, true)) +
-            (g.unit ? ' ' + escapeHtml(g.unit) : '') +
-            ' <span class="cnt">по ' + g.flagged + ' раб. с ген. объёмом</span></span>'
+            (g.unit ? ' ' + escapeHtml(g.unit) : '') + '</span>'
           : '';
         tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
           (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(g.name) +
