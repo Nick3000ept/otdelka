@@ -121,6 +121,8 @@
   }
   tbody tr.grp:hover td { background: #212734; }
   tbody tr.grp .chev { color: var(--accent); margin-right: 4px; }
+  .gvol { margin-left: 14px; color: var(--text); font-weight: 600; }
+  .gvol .cnt { font-weight: 400; }
 
   tr.detail > td {
     white-space: normal; max-width: none; overflow: visible;
@@ -252,6 +254,9 @@ const TAG_LABEL = 'Место · поверхность · локация';
 const VOL_FLAG = 'Признак для бюджета дополнительный объем';
 const VOL_LABEL = 'Ген. объем';
 
+const VOL_COL = 'Объем работ';
+const UNIT_COL = 'Ед. изм. работа';
+
 function hasVolume(r) {
   return String(r[VOL_FLAG] === null || r[VOL_FLAG] === undefined ? '' : r[VOL_FLAG]).trim() !== '';
 }
@@ -364,6 +369,18 @@ function groupWorks(rows) {
     }
     byName.get(name).rows.push(r);
   });
+  // Итог по группе: объём работ, но только по работам с признаком ген. объёма
+  // (решение пользователя 03.08.2026). Единица берётся, если она в группе одна.
+  groups.forEach(g => {
+    const flagged = g.rows.filter(hasVolume);
+    g.flagged = flagged.length;
+    g.vol = flagged.reduce((acc, r) =>
+      acc + (typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0), 0);
+    const units = Array.from(new Set(
+      flagged.map(r => String(r[UNIT_COL] || '').trim()).filter(v => v)
+    ));
+    g.unit = units.length === 1 ? units[0] : '';
+  });
   return groups;
 }
 
@@ -412,9 +429,15 @@ function renderTable() {
         const open = !state.collapsed.has(it.group.name);
         tr.className = 'grp';
         tr.dataset.grp = it.group.name;
+        const g = it.group;
+        const vol = g.flagged
+          ? ' <span class="gvol">объём: ' + escapeHtml(fmtCell(g.vol, true)) +
+            (g.unit ? ' ' + escapeHtml(g.unit) : '') +
+            ' <span class="cnt">по ' + g.flagged + ' раб. с ген. объёмом</span></span>'
+          : '';
         tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
-          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(it.group.name) +
-          ' <span class="cnt">' + it.group.rows.length + '</span></td>';
+          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(g.name) +
+          ' <span class="cnt">' + g.rows.length + '</span>' + vol + '</td>';
       } else {
         const r = it.row;
         tr.className = 'work';
