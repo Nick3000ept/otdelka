@@ -114,15 +114,23 @@
     min-width: 320px; max-width: 520px; word-break: break-word;
   }
 
-  tbody tr.grp td {
+  /* Место — верхний уровень группировки. */
+  tbody tr.plc td {
     background: var(--panel2); border-bottom: 1px solid var(--border);
     border-top: 1px solid var(--border);
-    padding: 8px 10px; font-weight: 600; cursor: pointer; white-space: normal; max-width: none;
+    padding: 9px 10px; font-weight: 700; cursor: pointer; white-space: normal; max-width: none;
   }
-  tbody tr.grp:hover td { background: #e2e5eb; }
+  tbody tr.plc:hover td { background: #e2e5eb; }
+  tbody tr.plc .chev { color: var(--accent); margin-right: 4px; }
+
+  /* Группа работ — вложенный уровень внутри места. */
+  tbody tr.grp td {
+    background: #f9fafb; border-bottom: 1px solid var(--border);
+    padding: 6px 10px 6px 34px; font-weight: 600; font-size: 13px;
+    cursor: pointer; white-space: normal; max-width: none;
+  }
+  tbody tr.grp:hover td { background: #eef0f4; }
   tbody tr.grp .chev { color: var(--accent); margin-right: 4px; }
-  .gvol { margin-left: 14px; color: var(--text); font-weight: 600; }
-  .gvol .cnt { font-weight: 400; }
 
   tr.detail > td {
     white-space: normal; max-width: none; overflow: visible;
@@ -195,7 +203,8 @@ const HIDDEN_COLS = [
   'Признак для бюджета дополнительный объем',
   'Признак Уровень 1 ДГП для увязки',
   'Материалы',
-  'Поверхность'   // не показываем: работы сгруппированы по ней, значение в заголовке группы
+  'Место',        // не показываем: верхний уровень группировки, значение в заголовке
+  'Группа работ'  // не показываем: вложенный уровень группировки, значение в заголовке
 ];
 
 // Колонка, по которой работа связывается с материалами из листа «Расходы».
@@ -205,9 +214,9 @@ const WORK_KEY = 'Название работы из АР';
 const COL_GROUP = 'Группа работ';
 const COL_PLACE = 'Место';
 const COL_SURFACE = 'Поверхность';
-const NO_GROUP = '— без поверхности —';
-// Список группируется по поверхности (решение пользователя 03.08.2026, было — по группе работ).
-const GROUP_BY = COL_SURFACE;
+// Список группируется в два уровня: Место -> Группа работ (решение пользователя 03.08.2026).
+const NO_PLACE = '— без места —';
+const NO_GROUP = '— без группы —';
 
 // Раскрытый список материалов: что показываем и в каком порядке (решение пользователя
 // 03.08.2026). Место, Тип работ, Объем работ и Объем материала не показываем.
@@ -247,18 +256,15 @@ const NUM_HINT = /(расценк|цена|стоимост|объем|объё�
 // Денежные колонки — всегда ровно 2 знака после запятой.
 const MONEY_HINT = /(расценк|цена|стоимост|руб)/i;
 
-// Место и локация показываются одной ячейкой с тегами в конце строки.
-// Поверхность туда не входит — она теперь заголовок группы (см. GROUP_BY).
-const TAG_COLS = ['Место', 'Локация'];
-const TAG_LABEL = 'Место · локация';
+// Локация показывается тегом в конце строки. Место и Группа работ туда не входят —
+// они теперь заголовки уровней группировки (см. groupWorks).
+const TAG_COLS = ['Локация'];
+const TAG_LABEL = 'Локация';
 
 // Работа участвует в расчёте генерального объёма, если этот признак заполнен
 // (в колонке лежит не «да/нет», а название группы — 73 работы из 321).
 const VOL_FLAG = 'Признак для бюджета дополнительный объем';
 const VOL_LABEL = 'Ген. объем';
-
-const VOL_COL = 'Объем работ';
-const UNIT_COL = 'Ед. изм. работа';
 
 function hasVolume(r) {
   return String(r[VOL_FLAG] === null || r[VOL_FLAG] === undefined ? '' : r[VOL_FLAG]).trim() !== '';
@@ -359,35 +365,40 @@ function passesFilters(r) {
   return true;
 }
 
-// Группы идут в том порядке, в каком встречаются в листе «Работы» (порядок таблицы осмыслен).
+// Два уровня группировки: Место -> Группа работ. Порядок — как в листе «Работы»
+// (порядок таблицы осмыслен), не по алфавиту.
 function groupWorks(rows) {
-  const groups = [];
-  const byName = new Map();
+  const places = [];
+  const byPlace = new Map();
   rows.forEach(r => {
-    const name = String(r[GROUP_BY] || '').trim() || NO_GROUP;
-    if (!byName.has(name)) {
-      const g = { name: name, rows: [] };
-      byName.set(name, g);
-      groups.push(g);
+    const placeName = String(r[COL_PLACE] || '').trim() || NO_PLACE;
+    if (!byPlace.has(placeName)) {
+      const p = { name: placeName, key: 'p:' + placeName, rows: [], subgroups: [], byGroup: new Map() };
+      byPlace.set(placeName, p);
+      places.push(p);
     }
-    byName.get(name).rows.push(r);
+    const p = byPlace.get(placeName);
+    p.rows.push(r);
+
+    const groupName = String(r[COL_GROUP] || '').trim() || NO_GROUP;
+    if (!p.byGroup.has(groupName)) {
+      const g = { name: groupName, key: p.key + '›g:' + groupName, rows: [] };
+      p.byGroup.set(groupName, g);
+      p.subgroups.push(g);
+    }
+    p.byGroup.get(groupName).rows.push(r);
   });
-  // Итог по группе: объём работ, но только по работам с признаком ген. объёма
-  // (решение пользователя 03.08.2026). При группировке по поверхности единицы измерения
-  // внутри одной группы могут различаться (напр. «Полы»: м2 + м.п.) — складывать их вместе
-  // нельзя, поэтому считаем сумму отдельно по каждой единице.
-  groups.forEach(g => {
-    const flagged = g.rows.filter(hasVolume);
-    g.flagged = flagged.length;
-    const byUnit = new Map();
-    flagged.forEach(r => {
-      const u = String(r[UNIT_COL] || '').trim();
-      const v = typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0;
-      byUnit.set(u, (byUnit.get(u) || 0) + v);
-    });
-    g.volParts = Array.from(byUnit.entries());
+  return places;
+}
+
+// Плоский список всех ключей группировки (мест и подгрупп) — нужен для «свернуть/развернуть всё».
+function allGroupKeys(places) {
+  const keys = [];
+  places.forEach(p => {
+    keys.push(p.key);
+    p.subgroups.forEach(g => keys.push(g.key));
   });
-  return groups;
+  return keys;
 }
 
 function renderTable() {
@@ -398,10 +409,11 @@ function renderTable() {
   const filtered = rows.filter(r =>
     passesFilters(r) && (!q || keys.some(h => String(r[h]).toLowerCase().includes(q)))
   );
-  const groups = groupWorks(filtered);
+  const places = groupWorks(filtered);
+  const groupCount = places.reduce((acc, p) => acc + p.subgroups.length, 0);
 
   document.getElementById('count').textContent =
-    filtered.length + ' из ' + rows.length + ' · групп: ' + groups.length;
+    filtered.length + ' из ' + rows.length + ' · мест: ' + places.length + ' · групп: ' + groupCount;
 
   const theadRow = document.getElementById('thead-row');
   theadRow.innerHTML = '<th></th>' + cols.map(c => {
@@ -411,13 +423,18 @@ function renderTable() {
     return '<th' + cls + '>' + escapeHtml(c.label) + '</th>';
   }).join('');
 
-  // Плоский список того, что рисуем: заголовок группы, затем её работы (если не свёрнута).
+  // Плоский список того, что рисуем: место, затем (если развёрнуто) его группы работ,
+  // затем (если развёрнута группа) сами работы.
   const items = [];
-  groups.forEach(g => {
-    items.push({ type: 'group', group: g });
-    if (!state.collapsed.has(g.name)) {
-      g.rows.forEach(r => items.push({ type: 'row', row: r }));
-    }
+  places.forEach(p => {
+    items.push({ type: 'place', place: p });
+    if (state.collapsed.has(p.key)) return;
+    p.subgroups.forEach(g => {
+      items.push({ type: 'group', group: g });
+      if (!state.collapsed.has(g.key)) {
+        g.rows.forEach(r => items.push({ type: 'row', row: r }));
+      }
+    });
   });
 
   const colspan = cols.length + 1;
@@ -431,19 +448,22 @@ function renderTable() {
     for (; i < end; i++) {
       const it = items[i];
       const tr = document.createElement('tr');
-      if (it.type === 'group') {
-        const open = !state.collapsed.has(it.group.name);
-        tr.className = 'grp';
-        tr.dataset.grp = it.group.name;
+      if (it.type === 'place') {
+        const p = it.place;
+        const open = !state.collapsed.has(p.key);
+        tr.className = 'plc';
+        tr.dataset.grp = p.key;
+        tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
+          (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(p.name) +
+          ' <span class="cnt">' + p.rows.length + '</span></td>';
+      } else if (it.type === 'group') {
         const g = it.group;
-        const vol = g.flagged
-          ? ' <span class="gvol">объём: ' + g.volParts.map(([u, v]) =>
-              escapeHtml(fmtCell(v, true)) + (u ? ' ' + escapeHtml(u) : '')
-            ).join(' + ') + '</span>'
-          : '';
+        const open = !state.collapsed.has(g.key);
+        tr.className = 'grp';
+        tr.dataset.grp = g.key;
         tr.innerHTML = '<td colspan="' + colspan + '"><span class="chev">' +
           (open ? '&#9662;' : '&#9656;') + '</span>' + escapeHtml(g.name) +
-          ' <span class="cnt">' + g.rows.length + '</span>' + vol + '</td>';
+          ' <span class="cnt">' + g.rows.length + '</span></td>';
       } else {
         const r = it.row;
         tr.className = 'work';
@@ -541,8 +561,8 @@ function toggleGroup(name) {
 }
 
 document.getElementById('tbody').addEventListener('click', e => {
-  const grp = e.target.closest('tr.grp');
-  if (grp) { toggleGroup(grp.dataset.grp); return; }
+  const hdr = e.target.closest('tr.plc, tr.grp');
+  if (hdr) { toggleGroup(hdr.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
   if (tr) toggleRow(tr);
 });
@@ -556,9 +576,8 @@ document.getElementById('tbody').addEventListener('click', e => {
 });
 
 document.getElementById('f-toggle-all').addEventListener('click', e => {
-  const allNames = groupWorks(state.works).map(g => g.name);
   const expandAll = state.collapsed.size > 0;
-  state.collapsed = expandAll ? new Set() : new Set(allNames);
+  state.collapsed = expandAll ? new Set() : new Set(allGroupKeys(groupWorks(state.works)));
   e.target.textContent = expandAll ? 'Свернуть все' : 'Развернуть все';
   if (state.works.length) renderTable();
 });
@@ -616,8 +635,8 @@ async function loadData() {
     }
     state.works = json.works || [];
     state.byWork = buildIndex(json.expenses || []);
-    // На старте все группы свёрнуты (решение пользователя 03.08.2026).
-    state.collapsed = new Set(groupWorks(state.works).map(g => g.name));
+    // На старте все места и группы свёрнуты (решение пользователя 03.08.2026).
+    state.collapsed = new Set(allGroupKeys(groupWorks(state.works)));
     state.unitByMaterial = new Map(
       (json.materials || [])
         .filter(m => norm(m['Материал']))
