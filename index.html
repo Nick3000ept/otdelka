@@ -221,6 +221,9 @@
   table.inner.mini th, table.inner.mini td { font-size: 11px; }
   table.inner.mini th.num, table.inner.mini td.num { width: 90px; }
 
+  /* Базовая расценка — приглушённая строка внизу сводной. */
+  table.inner.contractors tr.baserow td { color: var(--text-dim); }
+
   /* Разделитель «Собственные силы» внутри таблицы подрядчиков. */
   table.inner.contractors tr.sect td {
     background: var(--panel2); font-size: 11px; font-weight: 700; color: var(--text-dim);
@@ -712,17 +715,14 @@ function contractorsHtml(workKey) {
   const head = '<tr><th class="cname">Подрядчик</th>' +
     corps.map(c => '<th class="ccorp">' + escapeHtml(c) + '</th>').join('') + '</tr>';
 
-  // Подрядчиков в поэтажке нет — показываем базовую расценку из строки работы
-  // (решение пользователя 03.08.2026), чтобы блок не оставался пустым.
-  if (!rows.length) {
-    const work = state.works.find(r => norm(r[WORK_KEY]) === workKey);
-    const base = work && typeof work[BASE_RATE_COL] === 'number' ? work[BASE_RATE_COL] : null;
-    const body = '<tr><td class="cname">Базовая расценка</td>' +
-      corps.map(() => '<td class="num">' + (base === null ? '' : escapeHtml(fmtInt(base))) + '</td>').join('') +
-      '</tr>';
-    return '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
-      '</tbody></table>' +
-      '<div class="side-sub" style="margin-top:6px">подрядчиков по работе нет — показана базовая расценка работы, руб</div>';
+  // Базовая расценка из строки работы — всегда нижней строкой, но только в корпусах,
+  // где не назначен ни подрядчик, ни собственные силы (решение пользователя 03.08.2026).
+  const work = state.works.find(r => norm(r[WORK_KEY]) === workKey);
+  const base = work && typeof work[BASE_RATE_COL] === 'number' ? work[BASE_RATE_COL] : null;
+  const occupied = new Set(rows.map(r => r[1]));
+
+  if (!rows.length && base === null) {
+    return '<div class="side-note">Подрядчики по этой работе в «Поэтажка_работы» не найдены</div>';
   }
 
   // Два блока: обычные подрядчики и «Собственные силы» (строки с заполненной
@@ -757,6 +757,11 @@ function contractorsHtml(workKey) {
 
   let body = rowsOf(regular, false);
   if (own.size) body += sect('Собственные силы') + rowsOf(own, true);
+  if (base !== null && corps.some(c => !occupied.has(c))) {
+    body += '<tr class="baserow"><td class="cname">Базовая расценка</td>' +
+      corps.map(c => '<td class="num">' +
+        (occupied.has(c) ? '' : escapeHtml(fmtInt(base))) + '</td>').join('') + '</tr>';
+  }
 
   return '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
     '</tbody></table>' +
