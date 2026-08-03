@@ -199,35 +199,9 @@
   tbody tr.work:hover td { background: var(--panel2); }
   tbody tr.work.sel:hover td { background: #d0dffc; }
 
-  /* Ссылка «показать материалы» в колонке базовой расценки материалов. */
-  a.mat-link { color: var(--accent); text-decoration: underline; cursor: pointer; }
-  a.mat-link:hover { text-decoration: none; }
-
-  /* Всплывающее окно с материалами. */
-  #modal-overlay {
-    position: fixed; inset: 0; background: rgba(15, 17, 21, .45);
-    display: flex; align-items: center; justify-content: center; z-index: 50;
-  }
-  #modal {
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    max-width: min(1040px, 94vw); max-height: 86vh; display: flex; flex-direction: column;
-    box-shadow: 0 18px 50px rgba(15, 17, 21, .25);
-  }
-  .modal-head {
-    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-    padding: 14px 18px 10px; border-bottom: 1px solid var(--border);
-  }
-  .modal-title {
-    font-size: 11px; font-weight: 700; color: var(--text-dim);
-    text-transform: uppercase; letter-spacing: .4px;
-  }
-  .modal-sub { font-size: 13px; font-weight: 600; color: var(--text); margin-top: 2px; }
-  #modal-close {
-    border: 1px solid var(--border); background: var(--panel2); color: var(--text-dim);
-    border-radius: 8px; width: 30px; height: 30px; cursor: pointer; font-size: 14px; flex: none;
-  }
-  #modal-close:hover { color: var(--text); }
-  #modal-body { padding: 4px 18px 16px; overflow: auto; }
+  /* Нижний блок: слева подрядчики × корпуса, справа материалы. */
+  #bottom-cols { display: flex; gap: 28px; align-items: flex-start; }
+  .bottom-col { min-width: 0; overflow-x: auto; }
 
   table.inner.contractors { width: auto; margin: 0; }
   table.inner.contractors th.cname, table.inner.contractors td.cname {
@@ -265,7 +239,7 @@
   <header>
     <div class="toolbar">
       <h1>Отделка СБ3 — работы</h1>
-      <span class="hint">Клик по работе — подрядчики внизу · клик по «Баз. расценка мат.» — материалы</span>
+      <span class="hint">Клик по работе — подрядчики и материалы внизу</span>
       <div class="search-wrap">
         <span id="count"></span>
         <input id="search" type="text" placeholder="Поиск...">
@@ -290,26 +264,19 @@
     </div>
     <div id="pane-bottom" style="display:none">
       <div class="pane-head">
-        <span class="pane-caption">Подрядчики и собственные силы</span>
-        <span id="ctr-work" class="pane-work"></span>
+        <span id="ctr-work" class="pane-work">Выберите работу в списке выше</span>
       </div>
-      <div id="ctr-body"><div class="side-note">Выберите работу в списке выше</div></div>
+      <div id="bottom-cols">
+        <div class="bottom-col">
+          <div id="ctr-body"></div>
+        </div>
+        <div class="bottom-col">
+          <div class="pane-caption">Материалы</div>
+          <div id="mat-body"></div>
+        </div>
+      </div>
     </div>
   </main>
-</div>
-
-<!-- Всплывающее окно с материалами работы -->
-<div id="modal-overlay" style="display:none">
-  <div id="modal">
-    <div class="modal-head">
-      <div>
-        <div class="modal-title">Материалы</div>
-        <div id="modal-work" class="modal-sub"></div>
-      </div>
-      <button id="modal-close" type="button" title="Закрыть (Esc)">&#10005;</button>
-    </div>
-    <div id="modal-body"></div>
-  </div>
 </div>
 
 <script>
@@ -379,9 +346,6 @@ const state = {
   filters: { group: '', place: '', surface: '' },
   collapsed: new Set()         // свёрнутые группы работ
 };
-
-// Клик по значению этой колонки открывает окно с материалами работы.
-const MAT_RATE_COL = 'Стоимость материалов базовая, за ед';
 
 const NUM_HINT = /(расценк|цена|стоимост|объем|объём|расход|процент)/i;
 // Денежные колонки — всегда ровно 2 знака после запятой.
@@ -479,13 +443,6 @@ function cellHtml(col, r) {
   // Название с отступом (лесенка иерархии); раскрытия больше нет, клик выбирает работу.
   if (col.key === WORK_KEY) {
     return '<td class="wname">' + escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
-  }
-  // Базовая расценка материалов — ссылка на всплывающее окно с материалами.
-  if (col.key === MAT_RATE_COL) {
-    const text = fmtCell(r[col.key], col.money);
-    const hasMats = (state.byWork.get(norm(r[WORK_KEY])) || []).length > 0;
-    if (!hasMats) return '<td class="num">' + escapeHtml(text) + '</td>';
-    return '<td class="num"><a class="mat-link">' + (text ? escapeHtml(text) : 'материалы') + '</a></td>';
   }
   const cls = col.num ? ' class="num"' : '';
   return '<td' + cls + '>' + escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
@@ -758,22 +715,25 @@ function contractorsHtml(workKey) {
   let body = rowsOf(regular);
   if (own.size) body += sect('Собственные силы') + rowsOf(own);
 
-  return '<div class="side-sub" style="margin-bottom:6px">расценка за работу на ед. в бюджет, руб</div>' +
-    '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
-    '</tbody></table>';
+  return '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
+    '</tbody></table>' +
+    '<div class="side-sub" style="margin-top:6px">расценка за работу на ед. в бюджет, руб</div>';
 }
 
-// Нижняя панель (2/3 экрана): подрядчики × корпуса выбранной работы.
+// Нижняя панель: слева подрядчики × корпуса, справа материалы выбранной работы.
 function renderBottomPane() {
   const title = document.getElementById('ctr-work');
-  const bodyEl = document.getElementById('ctr-body');
+  const ctrEl = document.getElementById('ctr-body');
+  const matEl = document.getElementById('mat-body');
   if (!state.selected) {
-    title.textContent = '';
-    bodyEl.innerHTML = '<div class="side-note">Выберите работу в списке выше</div>';
+    title.textContent = 'Выберите работу в списке выше';
+    ctrEl.innerHTML = '';
+    matEl.innerHTML = '';
     return;
   }
   title.textContent = state.selectedName;
-  bodyEl.innerHTML = contractorsHtml(state.selected);
+  ctrEl.innerHTML = contractorsHtml(state.selected);
+  matEl.innerHTML = materialsHtml(state.byWork.get(state.selected) || []);
 }
 
 // Таблица материалов для всплывающего окна.
@@ -833,23 +793,6 @@ function selectWork(tr) {
   renderBottomPane();
 }
 
-function openMaterials(key, name) {
-  document.getElementById('modal-work').textContent = name;
-  document.getElementById('modal-body').innerHTML = materialsHtml(state.byWork.get(key) || []);
-  document.getElementById('modal-overlay').style.display = 'flex';
-}
-
-function closeMaterials() {
-  document.getElementById('modal-overlay').style.display = 'none';
-}
-
-document.getElementById('modal-close').addEventListener('click', closeMaterials);
-document.getElementById('modal-overlay').addEventListener('click', e => {
-  if (e.target.id === 'modal-overlay') closeMaterials();   // клик мимо окна
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeMaterials();
-});
 
 function toggleGroup(name) {
   if (state.collapsed.has(name)) state.collapsed.delete(name);
@@ -861,12 +804,7 @@ document.getElementById('tbody').addEventListener('click', e => {
   const hdr = e.target.closest('tr.plc, tr.srf, tr.grp');
   if (hdr) { toggleGroup(hdr.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
-  if (!tr) return;
-  selectWork(tr);
-  // Клик по ссылке в «Баз. расценка мат.» — ещё и окно с материалами.
-  if (e.target.closest('a.mat-link')) {
-    openMaterials(tr.dataset.key, tr.dataset.name || '');
-  }
+  if (tr) selectWork(tr);
 });
 
 ['f-group', 'f-place', 'f-surface'].forEach(id => {
