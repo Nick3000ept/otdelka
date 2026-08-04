@@ -21,6 +21,7 @@ var CONFIG = {
   FLOOR_CORP: 'Корпус',
   FLOOR_CONTRACTOR: 'Подрядчик сводный',              // выбор пользователя 03.08.2026
   FLOOR_RATE: 'Расценка за работу на ед в бюджет',    // что показываем в ячейках
+  FLOOR_RATE_MAT: 'Стоимость материалов на ед в бюджет',  // режим «Материалы» (04.08.2026)
   FLOOR_SS: 'Расценка СС работа',                     // заполнена -> собственные силы
   FLOOR_SS_NAME: 'Название работы СС',                // кол. J -> мэппинг на «Расценки СС»
   FLOOR_FLOOR: 'Этаж',                                // для вкладки «Объемы»
@@ -31,7 +32,7 @@ var CONFIG = {
   FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета' // кол. AG — что суммируем
 };
 
-var CACHE_FLOORS = 'floors_v2';   // сводка подрядчик × корпус + ssNames (см. action=floors)
+var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
 var CACHE_BUDGET = 'budget_v1';   // свод бюджета статья -> стоимость (см. action=budget)
 
@@ -478,8 +479,9 @@ function doGet(e) {
 
 /**
  * Сводка «подрядчик × корпус» по каждой работе из листа «Поэтажка_работы».
- * Лист огромный (25 тыс. строк), поэтому читаем ТОЛЬКО 5 нужных колонок и сразу
- * сворачиваем в агрегат: работа -> [[подрядчик, корпус, расценка, признак СС], ...].
+ * Лист огромный (25 тыс. строк), поэтому читаем ТОЛЬКО 6 нужных колонок и сразу
+ * сворачиваем в агрегат:
+ * работа -> [[подрядчик, корпус, расценка работы, признак СС, расценка материалов], ...].
  * Проверено 03.08.2026: внутри тройки работа+подрядчик+корпус расценка всегда одна
  * (0 расхождений на 1073 тройки), поэтому в ячейку кладём её как есть, без усреднения.
  * Собственные силы — по строке: заполнена «Расценка СС работа» (у Смирнова есть и те,
@@ -509,6 +511,8 @@ function buildFloorSummary_(ss) {
   var p = col(CONFIG.FLOOR_CONTRACTOR);
   var r = col(CONFIG.FLOOR_RATE);
   var s = col(CONFIG.FLOOR_SS);
+  // Стоимость материалов на ед — для переключателя «Работа/Материалы» (04.08.2026).
+  var rm = idx[CONFIG.FLOOR_RATE_MAT] ? col(CONFIG.FLOOR_RATE_MAT) : null;
   // Кол. J «Название работы СС» — мэппинг работы на «Расценки СС» (логика пользователя
   // 03.08.2026: в листе «Работы» эта колонка почти пустая, реальный источник — поэтажка).
   var ssNameCol = idx[CONFIG.FLOOR_SS_NAME] ? col(CONFIG.FLOOR_SS_NAME) : null;
@@ -526,7 +530,8 @@ function buildFloorSummary_(ss) {
       }
     }
     var rate = typeof r[k][0] === 'number' ? r[k][0] : 0;
-    if (!rate) continue;                       // нет расценки — нечего показывать
+    var mat = (rm && typeof rm[k][0] === 'number') ? rm[k][0] : 0;
+    if (!rate && !mat) continue;               // ни работы, ни материалов — не строка сводной
     var contr = String(p[k][0]).trim();
     if (!contr) continue;                      // подрядчик не указан — не строка сводной
     var corp = String(c[k][0]).trim();
@@ -535,8 +540,14 @@ function buildFloorSummary_(ss) {
 
     if (!map[work]) map[work] = {};
     var key = contr + '' + corp;
-    if (!map[work][key]) map[work][key] = [contr, corp, rate, isSS];
-    else if (isSS) map[work][key][3] = 1;
+    if (!map[work][key]) {
+      map[work][key] = [contr, corp, rate, isSS, mat];
+    } else {
+      var entry = map[work][key];
+      if (isSS) entry[3] = 1;
+      if (!entry[2] && rate) entry[2] = rate;   // берём первое непустое значение
+      if (!entry[4] && mat) entry[4] = mat;
+    }
   }
 
   var out = {};

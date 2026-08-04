@@ -244,8 +244,21 @@
   /* Нижний блок: слева подрядчики × корпуса, справа материалы. */
   #bottom-cols { display: flex; gap: 28px; align-items: flex-start; }
   .bottom-col { min-width: 0; overflow-x: auto; }
-  /* Заголовки обеих таблиц на одной высоте: убираем верхний отступ у таблиц. */
+  /* Заголовки обеих таблиц на одной высоте: убираем верхний отступ у таблиц.
+     Слева над сводной появились кнопки режима (~30px) — материалам даём такой же
+     отступ, чтобы шапки таблиц не разъехались (договорённость 03.08.2026). */
   #bottom-cols table.inner { margin-top: 0; }
+  #bottom-cols #mat-body { padding-top: 30px; }
+
+  /* Переключатель ячеек сводной: работа / материалы / работа + материалы. */
+  .ctr-modes { display: flex; gap: 6px; margin-bottom: 6px; }
+  .ctr-mode {
+    padding: 3px 10px; font-size: 11px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel2);
+    color: var(--text-dim); cursor: pointer;
+  }
+  .ctr-mode:hover { color: var(--text); }
+  .ctr-mode.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
   table.inner.contractors { width: auto; margin: 0; }
   table.inner.contractors th.cname, table.inner.contractors td.cname {
@@ -533,6 +546,7 @@ const state = {
   questionsStatus: 'idle',     // idle | loading | ready | error
   userName: localStorage.getItem('otdelka_user') || '',  // имя для вопросов/статусов
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
+  ctrMode: 'work',             // что в ячейках сводной: work | mat | both (04.08.2026)
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
   query: '',
@@ -943,6 +957,7 @@ function fillFilters() {
 // Корпуса всегда одни и те же — все 12, чтобы колонки не скакали между работами.
 const ALL_CORPS = ['К1','К2','К3','К4','К5','К6','К7','К8','К9','К10','К11','К12'];
 const BASE_RATE_COL = 'Базовая расценка работа в расчет, руб';
+const BASE_MAT_COL = 'Стоимость материалов базовая, за ед';
 const fmtInt = v => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
 
 function contractorsHtml(workKey) {
@@ -954,27 +969,41 @@ function contractorsHtml(workKey) {
   }
   const rows = (state.floors && state.floors[workKey]) || [];
   const corps = ALL_CORPS;
+
+  // Переключатель содержимого ячеек: работа / материалы / работа + материалы
+  // (просьба пользователя 04.08.2026). Данные обеих расценок приходят из floors.
+  const mode = state.ctrMode;
+  const modeBtn = (m, label) => '<button type="button" class="ctr-mode' +
+    (mode === m ? ' active' : '') + '" data-mode="' + m + '">' + label + '</button>';
+  const modesBar = '<div class="ctr-modes">' + modeBtn('work', 'Работа') +
+    modeBtn('mat', 'Материалы') + modeBtn('both', 'Работа + материалы') + '</div>';
+  const pick = (w, m) => (mode === 'work' ? w : (mode === 'mat' ? m : w + m)) || null;
+
   const head = '<tr><th class="cname">Подрядчик</th>' +
     corps.map(c => '<th class="ccorp">' + escapeHtml(c) + '</th>').join('') + '</tr>';
 
-  // Базовая расценка из строки работы — всегда нижней строкой, но только в корпусах,
+  // Базовые значения из строки работы — всегда нижней строкой, но только в корпусах,
   // где не назначен ни подрядчик, ни собственные силы (решение пользователя 03.08.2026).
   const work = state.works.find(r => norm(r[WORK_KEY]) === workKey);
-  const base = work && typeof work[BASE_RATE_COL] === 'number' ? work[BASE_RATE_COL] : null;
+  const baseW = work && typeof work[BASE_RATE_COL] === 'number' ? work[BASE_RATE_COL] : 0;
+  const baseM = work && typeof work[BASE_MAT_COL] === 'number' ? work[BASE_MAT_COL] : 0;
+  const base = pick(baseW, baseM);
   const occupied = new Set(rows.map(r => r[1]));
 
   if (!rows.length && base === null) {
-    return '<div class="side-note">Подрядчики по этой работе в «Поэтажка_работы» не найдены</div>';
+    return modesBar +
+      '<div class="side-note">Подрядчики по этой работе в «Поэтажка_работы» не найдены</div>';
   }
 
   // Два блока: обычные подрядчики и «Собственные силы» (строки с заполненной
   // «Расценка СС работа»). У одного подрядчика бывают и те, и другие расценки
   // (напр. Смирнов) — тогда его ячейки расходятся по обоим блокам.
+  // В ячейке хранится пара [работа, материалы], режим выбирает, что показать.
   const regular = new Map(), own = new Map();
-  rows.forEach(([contr, corp, rate, ss]) => {
+  rows.forEach(([contr, corp, rate, ss, mat]) => {
     const map = ss ? own : regular;
     if (!map.has(contr)) map.set(contr, new Map());
-    map.get(contr).set(corp, rate);
+    map.get(contr).set(corp, [rate || 0, mat || 0]);
   });
 
   // Расценки в сводной — целыми рублями, без копеек (решение пользователя 03.08.2026).
@@ -989,8 +1018,9 @@ function contractorsHtml(workKey) {
       return '<tr class="crow' + selCls + '" data-contr="' + escapeHtml(name) +
         '" data-ss="' + (isSS ? 1 : 0) + '"><td class="cname">' + escapeHtml(name) + '</td>' +
         corps.map(corp => {
-          const v = cells.get(corp);
-          return '<td class="num">' + (v === undefined ? '' : escapeHtml(fmtInt(v))) + '</td>';
+          const pair = cells.get(corp);
+          const v = pair ? pick(pair[0], pair[1]) : null;
+          return '<td class="num">' + (v === null ? '' : escapeHtml(fmtInt(v))) + '</td>';
         }).join('') + '</tr>';
     }).join('');
 
@@ -1005,9 +1035,14 @@ function contractorsHtml(workKey) {
         (occupied.has(c) ? '' : escapeHtml(fmtInt(base))) + '</td>').join('') + '</tr>';
   }
 
-  return '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
-    '</tbody></table>' +
-    '<div class="side-sub" style="margin-top:6px">расценка за работу на ед. в бюджет, руб</div>';
+  const captions = {
+    work: 'расценка за работу на ед. в бюджет, руб',
+    mat: 'стоимость материалов на ед. в бюджет, руб',
+    both: 'работа + материалы на ед. в бюджет, руб'
+  };
+  return modesBar + '<table class="inner contractors"><thead>' + head + '</thead><tbody>' +
+    body + '</tbody></table>' +
+    '<div class="side-sub" style="margin-top:6px">' + captions[mode] + '</div>';
 }
 
 // Нижняя панель: слева подрядчики × корпуса, справа материалы выбранной работы.
@@ -1637,7 +1672,14 @@ document.getElementById('sb-checks-toggle').addEventListener('click', () => {
 });
 
 // Клик по строке подрядчика: подсветка + модальное окно с деталями.
+// Кнопки «Работа/Материалы/Работа + материалы» переключают содержимое ячеек.
 document.getElementById('ctr-body').addEventListener('click', e => {
+  const mb = e.target.closest('button.ctr-mode');
+  if (mb && state.selected) {
+    state.ctrMode = mb.dataset.mode;
+    document.getElementById('ctr-body').innerHTML = contractorsHtml(state.selected);
+    return;
+  }
   const tr = e.target.closest('tr.crow');
   if (!tr || !state.selected) return;
   state.ctrSel = { name: tr.dataset.contr, ss: tr.dataset.ss === '1' };
