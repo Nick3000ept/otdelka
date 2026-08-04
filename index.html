@@ -364,9 +364,9 @@
     <div class="sb-item" data-screen="budget">Бюджет</div>
     <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
     <div id="sb-checks" style="display:none">
-      <div class="sb-item sb-sub" data-screen="check-rates">Проверка расценки
+      <div class="sb-item sb-sub" data-screen="check-rates">Недостающие расценки
         <span class="sb-badge" id="badge-check-rates"></span></div>
-      <div class="sb-item sb-sub" data-screen="check-work-rates">Расценки работ
+      <div class="sb-item sb-sub" data-screen="check-work-rates">Отклонения расценок
         <span class="sb-badge" id="badge-check-work-rates"></span></div>
     </div>
   </aside>
@@ -1196,7 +1196,7 @@ function openVolModal(key, name) {
  */
 function renderCheckRates() {
   const rows = state.checkRates;
-  const head = '<div class="check-head">Проверка расценок: замечаний — ' + rows.length + '</div>' +
+  const head = '<div class="check-head">Недостающие расценки: замечаний — ' + rows.length + '</div>' +
     '<div class="check-desc">Работы из шахматки без расценок — лист «Проверки расценки», ' +
     'этажи указаны диапазоном</div>';
   if (!rows.length) {
@@ -1262,8 +1262,8 @@ const fmtDev = v => new Intl.NumberFormat('ru-RU',
 function renderCheckWorkRates() {
   const el = document.getElementById('check-screen');
   const list = workRateChecks();
-  const title = '<div class="check-head">Расценки работ' +
-    (list ? ': отклонений — ' + list.length : '') + '</div>';
+  const title = '<div class="check-head">Отклонения расценок' +
+    (list ? ': найдено — ' + list.length : '') + '</div>';
   if (list === null) {
     el.innerHTML = title + '<div class="side-note">' + (state.floorsStatus === 'error'
       ? 'Сводку по подрядчикам загрузить не удалось — обновите страницу.'
