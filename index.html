@@ -117,9 +117,11 @@
   thead th.wauto { width: auto; }
   thead th.tags { width: 200px; }
   thead th.volcell { width: 62px; white-space: normal; }
-  /* Корпуса на «Объемах» — вдвое уже обычных числовых, «Итого» чуть шире. */
-  thead th.corpcell { width: 48px; }
+  /* Корпуса на «Объемах» — узкие (48px + 10% по просьбе 04.08.2026), «Итого» чуть шире. */
+  thead th.corpcell { width: 53px; }
   thead th.totcell { width: 64px; }
+  /* Числа объёмов на «Объемах» — мельче, чтобы не обрезались (просьба 04.08.2026). */
+  table.vols tbody td.num { font-size: 11px; }
   tbody tr.work { cursor: pointer; }
   tbody tr.work:hover { background: var(--panel2); }
   tbody tr.work.open { background: var(--panel2); }
@@ -503,9 +505,9 @@ const TAG_LABEL = 'Локация';
 
 // Работа участвует в расчёте лидерного объёма, если этот признак заполнен
 // (в колонке лежит не «да/нет», а название группы — 73 работы из 321).
-// «Ген. объем» переименован в «Лидерный объем» по просьбе пользователя 04.08.2026.
+// Заголовок: «Ген. объем» -> «Лидерный объем» -> «Лид.» (просьбы пользователя 04.08.2026).
 const VOL_FLAG = 'Признак для бюджета дополнительный объем';
-const VOL_LABEL = 'Лидерный объем';
+const VOL_LABEL = 'Лид.';
 
 const VOL_COL = 'Объем работ';
 const UNIT_COL = 'Ед. изм. работа';
@@ -754,6 +756,9 @@ function renderTable() {
   document.getElementById('count').textContent =
     filtered.length + ' из ' + rows.length + ' · мест: ' + places.length +
     ' · поверхностей: ' + surfaceCount + ' · групп: ' + groupCount;
+
+  // На «Объемах» у таблицы свой класс — числа в ячейках рисуются мельче.
+  document.getElementById('table').classList.toggle('vols', state.screen === 'volumes');
 
   const theadRow = document.getElementById('thead-row');
   theadRow.innerHTML = '<th class="chev-col"></th>' + cols.map(c => {
