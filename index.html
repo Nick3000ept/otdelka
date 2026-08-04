@@ -90,7 +90,6 @@
     padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel2); color: var(--text); font-size: 13px; width: 260px;
   }
-  #count { color: var(--text-dim); font-size: 12px; white-space: nowrap; }
 
   main { flex: 1; overflow: auto; padding: 0 16px 16px; }
   /* table-layout: fixed — ширины колонок берутся ТОЛЬКО из заголовков и не зависят
@@ -426,7 +425,6 @@
       <button id="f-toggle-all" type="button">Развернуть все</button>
       <button id="f-reset" type="button">Сбросить</button>
       <div class="search-wrap">
-        <span id="count"></span>
         <input id="search" type="text" placeholder="Поиск...">
       </div>
     </div>
@@ -810,16 +808,8 @@ function renderTable() {
     renderBottomPane();
   }
 
+  // Счётчики рядом с поиском убраны по просьбе пользователя 04.08.2026.
   const places = groupWorks(filtered);
-  let surfaceCount = 0, groupCount = 0;
-  places.forEach(p => {
-    surfaceCount += p.surfaces.length;
-    p.surfaces.forEach(s => { groupCount += s.subgroups.length; });
-  });
-
-  document.getElementById('count').textContent =
-    filtered.length + ' из ' + rows.length + ' · мест: ' + places.length +
-    ' · поверхностей: ' + surfaceCount + ' · групп: ' + groupCount;
 
   // На «Объемах» у таблицы свой класс — числа в ячейках рисуются мельче.
   document.getElementById('table').classList.toggle('vols', state.screen === 'volumes');
