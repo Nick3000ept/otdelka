@@ -1262,10 +1262,15 @@ function renderBudget() {
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
   // значения заполняются на уровне работ.
+  // Статьи — по алфавиту (просьба 05.08.2026); индекс i остаётся исходным из state.budget,
+  // на него завязаны ключи раскрытий budgetWorkOpen/budgetGrpCollapsed.
+  const order = rows.map((r, i) => [r, i])
+    .sort((a, b) => String(a[0][0]).localeCompare(String(b[0][0]), 'ru'));
   const table = '<table class="check budget"><thead><tr>' +
     '<th>Статья бюджета</th><th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
     '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
-    rows.map((r, i) => {
+    order.map(pair => {
+      const r = pair[0], i = pair[1];
       const works = r[2] || [];
       const open = state.budgetOpen.has(String(r[0]));
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
