@@ -1272,18 +1272,18 @@ function budgetWorkHtml(w) {
   // на каждую комбинацию «раб/ед + мат/ед», суммы стоят в корпусах с этой расценкой
   // (просьба пользователя 05.08.2026: важно видеть, на каком корпусе какая расценка).
   const fl = (state.floors && state.floors[norm(name)]) || [];
-  const rateByCorp = new Map();   // подрядчик|корпус -> [раб/ед, мат/ед]
-  fl.forEach(r => rateByCorp.set(r[0] + '|' + r[1], [r[2] || 0, r[4] || 0]));
+  const rateByCorp = new Map();   // подрядчик|корпус -> [раб/ед, мат/ед, признак СС]
+  fl.forEach(r => rateByCorp.set(r[0] + '|' + r[1], [r[2] || 0, r[4] || 0, r[3] ? 1 : 0]));
 
   const contrTotal = new Map();   // подрядчик -> сумма (для порядка строк)
-  const rowsMap = new Map();      // подрядчик|раб|мат -> строка сводной
+  const rowsMap = new Map();      // подрядчик|раб|мат|СС -> строка сводной
   (w[2] || []).forEach(cell => {
     const p = cell[0], c = cell[1], v = cell[2];
     contrTotal.set(p, (contrTotal.get(p) || 0) + v);
-    const rk = rateByCorp.get(p + '|' + c) || [0, 0];
-    const key = p + '|' + rk[0] + '|' + rk[1];
+    const rk = rateByCorp.get(p + '|' + c) || [0, 0, 0];
+    const key = p + '|' + rk[0] + '|' + rk[1] + '|' + rk[2];
     if (!rowsMap.has(key)) {
-      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], corps: {}, total: 0 });
+      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], ss: rk[2], corps: {}, total: 0 });
     }
     const o = rowsMap.get(key);
     o.corps[c] = (o.corps[c] || 0) + v;
@@ -1294,6 +1294,8 @@ function budgetWorkHtml(w) {
   }
   // Подрядчики — по убыванию их общей суммы; строки одного подрядчика рядом,
   // внутри — по убыванию суммы строки. Имя пишем только в первой его строке.
+  // Два блока (просьба 05.08.2026): обычные подрядчики и «Собственные силы»
+  // (признак СС — по строкам поэтажки, как в сводной на «Расценках»).
   const list = Array.from(rowsMap.values()).sort((a, b) =>
     (contrTotal.get(b.contr) - contrTotal.get(a.contr)) ||
     a.contr.localeCompare(b.contr, 'ru') ||
@@ -1301,17 +1303,26 @@ function budgetWorkHtml(w) {
   const head = '<tr><th>Подрядчик</th><th class="num">Раб., руб/ед</th>' +
     '<th class="num">Мат., руб/ед</th>' +
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') + '</tr>';
-  let prevContr = null;
-  const body = list.map(o => {
-    const nameCell = o.contr === prevContr ? '' : escapeHtml(o.contr);
-    prevContr = o.contr;
-    return '<tr><td>' + nameCell + '</td>' +
-      '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
-      '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
-      ALL_CORPS.map(c =>
-        '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
-      ).join('') + '</tr>';
-  }).join('');
+  const renderRows = rows => {
+    let prevContr = null;
+    return rows.map(o => {
+      const nameCell = o.contr === prevContr ? '' : escapeHtml(o.contr);
+      prevContr = o.contr;
+      return '<tr><td>' + nameCell + '</td>' +
+        '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
+        '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
+        ALL_CORPS.map(c =>
+          '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
+        ).join('') + '</tr>';
+    }).join('');
+  };
+  const reg = list.filter(o => !o.ss);
+  const own = list.filter(o => o.ss);
+  let body = renderRows(reg);
+  if (own.length) {
+    body += '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 3) + '">Собственные силы</td></tr>' +
+      renderRows(own);
+  }
   return '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
     '</thead><tbody>' + body + '</tbody></table>' +
     '<div class="side-sub" style="margin-top:6px">в ячейках — стоимость работ и материалов ' +
