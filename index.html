@@ -373,15 +373,16 @@
   table.check.budget tr.bwork { cursor: pointer; }
   table.check.budget tr.bwork:hover td { background: var(--panel2); }
   table.check.budget tr.bwork.open td { background: #dbe7ff; font-weight: 600; }
-  /* Выпадающая сводная по работе: подрядчики × корпуса, скролл внутри своей ячейки. */
+  /* Выпадающая сводная по работе: весь блок залит тем же синим, что и выделенная
+     работа, внутри таблицы цветовой индикации строк нет (просьба 05.08.2026). */
   table.check.budget tr.bdetail > td {
-    background: #f6f8fb; padding: 10px 14px 16px 25px; white-space: normal;
+    background: #dbe7ff; padding: 10px 14px 16px 25px; white-space: normal;
     border-left: 3px solid var(--accent);
   }
-  .bdetail-title {
-    font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 8px;
-  }
-  .bdetail-title .bd-sum { color: var(--text-dim); font-weight: 600; }
+  tr.bdetail table.inner th,
+  tr.bdetail table.inner td,
+  tr.bdetail table.inner tfoot td,
+  tr.bdetail table.inner tr.sect td { background: transparent; }
   .bdetail-wrap { overflow-x: auto; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
@@ -568,7 +569,7 @@ const state = {
   budget: null,                // свод статья -> стоимость + работы (action=budget)
   budgetStatus: 'idle',        // idle | loading | ready | error
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
-  budgetWorkOpen: null,        // раскрытая работа бюджета: 'индексСтатьи|индексРаботы'
+  budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
   checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
   questions: [],               // вопросы по работам (action=questions + POST)
@@ -1253,7 +1254,7 @@ function renderBudget() {
         // (просьба пользователя 05.08.2026, вместо модального окна).
         html += works.map((w, wi) => {
           const key = i + '|' + wi;
-          const wOpen = state.budgetWorkOpen === key;
+          const wOpen = state.budgetWorkOpen.has(key);
           let h = '<tr class="bwork' + (wOpen ? ' open' : '') + '" data-bi="' + i +
             '" data-wi="' + wi + '">' +
             '<td><span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') + '</span> ' +
@@ -1330,9 +1331,11 @@ function budgetWorkHtml(w) {
     undef.total += o.total;
     return false;
   });
+  // Справа — сумматор «Итого» по строке (просьба 05.08.2026).
   const head = '<tr><th>Название</th><th class="num">Раб., руб/ед</th>' +
     '<th class="num">Мат., руб/ед</th>' +
-    ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') + '</tr>';
+    ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') +
+    '<th class="num">Итого</th></tr>';
   const renderRows = rows => {
     let prevContr = null;
     return rows.map(o => {
@@ -1343,11 +1346,12 @@ function budgetWorkHtml(w) {
         '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
         ALL_CORPS.map(c =>
           '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
-        ).join('') + '</tr>';
+        ).join('') +
+        '<td class="num gsum">' + (o.total ? escapeHtml(fmtInt(o.total)) : '') + '</td></tr>';
     }).join('');
   };
   const sect = t =>
-    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 3) + '">' + t + '</td></tr>';
+    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 4) + '">' + t + '</td></tr>';
   const reg = list.filter(o => !o.ss);
   const own = list.filter(o => o.ss);
   let body = '';
@@ -1357,7 +1361,9 @@ function budgetWorkHtml(w) {
 
   // Сумматор по корпусам (просьба 05.08.2026) — по всем строкам, включая «Не определен».
   const totals = {};
+  let grand = 0;
   (undef ? [undef] : []).concat(reg, own).forEach(o => {
+    grand += o.total;
     ALL_CORPS.forEach(c => {
       if (o.corps[c]) totals[c] = (totals[c] || 0) + o.corps[c];
     });
@@ -1365,24 +1371,22 @@ function budgetWorkHtml(w) {
   const foot = '<tr class="total"><td>Итого</td><td class="num"></td><td class="num"></td>' +
     ALL_CORPS.map(c =>
       '<td class="num">' + (totals[c] ? escapeHtml(fmtInt(totals[c])) : '') + '</td>'
-    ).join('') + '</tr>';
-  // Заголовок сводной — чтобы было видно, к какой работе относятся данные.
-  return '<div class="bdetail-title">' + escapeHtml(name) +
-    ' <span class="bd-sum">· итого ' + escapeHtml(fmtInt(w[1])) + ' руб</span></div>' +
-    '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
-    '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>' +
-    '<div class="side-sub" style="margin-top:6px">в ячейках — стоимость работ и материалов ' +
-    'итого для бюджета, руб' +
-    (state.floorsStatus !== 'ready' ? ' · расценки за ед. ещё загружаются' : '') +
-    '</div></div>';
+    ).join('') +
+    '<td class="num">' + (grand ? escapeHtml(fmtInt(grand)) : '') + '</td></tr>';
+  // Без заголовка и подписи под таблицей (просьба 05.08.2026) — принадлежность
+  // видна по подсветке строки работы и общей синей заливке блока.
+  return '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
+    '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>';
 }
 
 // Клик по статье бюджета — раскрыть/свернуть работы; по работе — выпадающая сводная.
 document.getElementById('budget-screen').addEventListener('click', e => {
   const bw = e.target.closest('tr.bwork');
   if (bw) {
+    // Можно держать открытыми несколько работ сразу (просьба 05.08.2026).
     const key = bw.dataset.bi + '|' + bw.dataset.wi;
-    state.budgetWorkOpen = state.budgetWorkOpen === key ? null : key;
+    if (state.budgetWorkOpen.has(key)) state.budgetWorkOpen.delete(key);
+    else state.budgetWorkOpen.add(key);
     renderBudget();
     return;
   }
