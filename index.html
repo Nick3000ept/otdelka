@@ -287,8 +287,9 @@
   /* Базовая расценка — приглушённая строка внизу сводной. */
   table.inner.contractors tr.baserow td { color: var(--text-dim); }
 
-  /* Разделитель «Собственные силы» внутри таблиц подрядчиков (сводная и детали проверки). */
-  table.inner tr.sect td {
+  /* Разделители-заголовки: «Собственные силы» в таблицах подрядчиков
+     и группы работ в проверке «Расценки работ». */
+  table.inner tr.sect td, table.check tr.sect td {
     background: var(--panel2); font-size: 11px; font-weight: 700; color: var(--text-dim);
     text-transform: uppercase; letter-spacing: .4px; text-align: left; padding: 6px 8px;
   }
@@ -1244,7 +1245,8 @@ function workRateChecks() {
     const worst = Math.max(devC === null ? 0 : Math.abs(devC),
                            devS === null ? 0 : Math.abs(devS));
     if (worst <= DEV_LIMIT) return;
-    out.push({ key, name: String(w[WORK_KEY] || ''), base, avgC, devC, avgS, devS, worst, rows });
+    const group = String(w[COL_GROUP] || '').trim() || NO_GROUP;
+    out.push({ key, name: String(w[WORK_KEY] || ''), group, base, avgC, devC, avgS, devS, worst, rows });
   });
   out.sort((a, b) => b.worst - a.worst);
   return out;
@@ -1276,23 +1278,41 @@ function renderCheckWorkRates() {
   }
   const devTxt = d => (d === null ? '' : (d > 0 ? '+' : '−') + fmtDev(d) + '%');
   const devCls = d => (d !== null && Math.abs(d) > DEV_LIMIT ? ' class="num dev-bad"' : ' class="num"');
+  // Работы сгруппированы по «Группа работ» (просьба пользователя 04.08.2026).
+  // Список уже отсортирован по отклонению, поэтому порядок групп — по худшему
+  // отклонению внутри группы, работы внутри — тоже от большего к меньшему.
+  const groups = [];
+  const byGroup = new Map();
+  list.forEach(it => {
+    if (!byGroup.has(it.group)) {
+      const g = { name: it.group, items: [] };
+      byGroup.set(it.group, g);
+      groups.push(g);
+    }
+    byGroup.get(it.group).items.push(it);
+  });
+  const rowHtml = it => {
+    const open = state.checkOpen === it.key;
+    let html = '<tr class="wrow' + (open ? ' open' : '') + '" data-key="' +
+      escapeHtml(it.key) + '">' +
+      '<td>' + escapeHtml(it.name) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtInt(it.base)) + '</td>' +
+      '<td class="num">' + (it.avgC === null ? '' : escapeHtml(fmtInt(it.avgC))) + '</td>' +
+      '<td' + devCls(it.devC) + '>' + escapeHtml(devTxt(it.devC)) + '</td>' +
+      '<td class="num">' + (it.avgS === null ? '' : escapeHtml(fmtInt(it.avgS))) + '</td>' +
+      '<td' + devCls(it.devS) + '>' + escapeHtml(devTxt(it.devS)) + '</td></tr>';
+    if (open) html += '<tr class="wdetail"><td colspan="6">' + checkDetailHtml(it) + '</td></tr>';
+    return html;
+  };
   const table = '<table class="check"><thead><tr>' +
     '<th class="cw-name">Работа</th><th class="num">Баз. расценка</th>' +
     '<th class="num">Ср. подрядчики</th><th class="num">Откл.</th>' +
     '<th class="num">Ср. СС</th><th class="num">Откл.</th></tr></thead><tbody>' +
-    list.map(it => {
-      const open = state.checkOpen === it.key;
-      let html = '<tr class="wrow' + (open ? ' open' : '') + '" data-key="' +
-        escapeHtml(it.key) + '">' +
-        '<td>' + escapeHtml(it.name) + '</td>' +
-        '<td class="num">' + escapeHtml(fmtInt(it.base)) + '</td>' +
-        '<td class="num">' + (it.avgC === null ? '' : escapeHtml(fmtInt(it.avgC))) + '</td>' +
-        '<td' + devCls(it.devC) + '>' + escapeHtml(devTxt(it.devC)) + '</td>' +
-        '<td class="num">' + (it.avgS === null ? '' : escapeHtml(fmtInt(it.avgS))) + '</td>' +
-        '<td' + devCls(it.devS) + '>' + escapeHtml(devTxt(it.devS)) + '</td></tr>';
-      if (open) html += '<tr class="wdetail"><td colspan="6">' + checkDetailHtml(it) + '</td></tr>';
-      return html;
-    }).join('') + '</tbody></table>';
+    groups.map(g =>
+      '<tr class="sect"><td colspan="6">' + escapeHtml(g.name) +
+      ' <span class="cnt">' + g.items.length + '</span></td></tr>' +
+      g.items.map(rowHtml).join('')
+    ).join('') + '</tbody></table>';
   el.innerHTML = head + table;
 }
 
