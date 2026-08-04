@@ -141,7 +141,9 @@
   }
 
   th.volcell, td.volcell { text-align: center; white-space: nowrap; }
-  .check { color: #4ccf7a; font-size: 15px; }
+  /* Галочка лидерного объёма. Имя .tick, не .check — класс .check носят таблицы
+     проверок/бюджета, и общее имя красило их текст в зелёный (баг 04.08.2026). */
+  .tick { color: #4ccf7a; font-size: 15px; }
 
   thead th.num { white-space: normal; }
   /* Во внутренней таблице узкие: числовые + Ед. изм. материала и Слои. */
@@ -301,9 +303,11 @@
 
   /* Экраны проверок и бюджета. */
   #check-screen, #budget-screen { flex: 1; overflow: auto; padding: 14px 16px; }
-  /* Свод бюджета: две колонки, таблицу не растягиваем на весь экран. */
-  table.check.budget { max-width: 760px; }
+  /* Свод бюджета: две колонки, таблицу не растягиваем на весь экран.
+     Статья должна помещаться в одну строку (просьба 04.08.2026). */
+  table.check.budget { max-width: 1000px; }
   table.check.budget th.num, table.check.budget td.num { width: 200px; }
+  table.check.budget td:first-child { white-space: nowrap; }
   table.check.budget tfoot td {
     font-weight: 700; background: var(--panel2);
     border-top: 2px solid var(--border); padding: 7px 8px;
@@ -319,6 +323,7 @@
   table.check td {
     padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
     white-space: normal; word-break: break-word;
+    text-align: left;   /* текст по левому краю, как заголовки (просьба 04.08.2026) */
   }
   table.check th.cw-name { width: 44%; }
   /* Проверка «Расценки работ»: числовые колонки по центру, строки кликабельны,
@@ -615,7 +620,7 @@ function cellHtml(col, r) {
     return '<td class="num gsum">' + (sum ? escapeHtml(fmtVol(sum)) : '') + '</td>';
   }
   if (col.vol) {
-    return '<td class="volcell">' + (hasVolume(r) ? '<span class="check">&#10003;</span>' : '') + '</td>';
+    return '<td class="volcell">' + (hasVolume(r) ? '<span class="tick">&#10003;</span>' : '') + '</td>';
   }
   if (col.tags) {
     const tags = TAG_COLS
