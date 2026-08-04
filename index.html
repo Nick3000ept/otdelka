@@ -352,7 +352,11 @@
      колонки по 100px: место под текст увеличивалось трижды, последний раз вдвое
      (просьбы 05.08.2026). */
   table.check.budget { max-width: 2400px; }
-  table.check.budget th.num, table.check.budget td.num { width: 100px; }
+  /* Статье — явный auto: иначе на неё действует общий thead th {width:96px} основной
+     таблицы, фиксированная раскладка ломается и числовые колонки распухают
+     (баг 05.08.2026). Числовые — ровно 150px (просьба пользователя). */
+  table.check.budget th:first-child { width: auto; }
+  table.check.budget th.num, table.check.budget td.num { width: 150px; }
   table.check.budget td:first-child { white-space: nowrap; }
   table.check.budget tfoot td {
     font-weight: 700; background: var(--panel2);
