@@ -28,13 +28,14 @@ var CONFIG = {
   FLOOR_VOL: 'Объем',
 
   // Вкладка «Бюджет» (04.08.2026): свод по поэтажке статья -> стоимость.
-  FLOOR_BUDGET_FLAG: 'Признак для бюджета основной',            // кол. L — статья бюджета
-  FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета' // кол. AG — что суммируем
+  FLOOR_BUDGET_FLAG: 'Признак для бюджета основной',             // кол. L — статья бюджета
+  FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета', // кол. AG — что суммируем
+  FLOOR_REDO: 'Плановый процент переделки'                       // кол. Q — коэф. переделки
 };
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v3';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
+var CACHE_BUDGET = 'budget_v4';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
@@ -627,7 +628,8 @@ function buildVolumes_(ss) {
  * «Признак для бюджета основной» (кол. L — статья бюджета), внутри статьи —
  * разбивка по работам (кол. A), внутри работы — по подрядчикам и корпусам
  * (для сводной по клику на работу, просьба 05.08.2026).
- * Возвращает [[статья, сумма, [[работа, сумма, [[подрядчик, корпус, сумма], ...]], ...]], ...]
+ * Возвращает [[статья, сумма, [[работа, сумма,
+ *   [[подрядчик, корпус, стоимость, объём, коэфПеределки], ...]], ...]], ...]
  * — всё по убыванию суммы; строки без статьи собираются в «— без статьи —»,
  * строки без подрядчика — в «— без подрядчика —».
  */
@@ -651,6 +653,9 @@ function buildBudget_(ss) {
   var wrk = sh.getRange(2, idx[CONFIG.FLOOR_WORK], n, 1).getValues();
   var corp = sh.getRange(2, idx[CONFIG.FLOOR_CORP], n, 1).getValues();
   var contr = sh.getRange(2, idx[CONFIG.FLOOR_CONTRACTOR], n, 1).getValues();
+  // Объём (кол. D) и коэффициент переделки (кол. Q) — для сводной по работе (05.08.2026).
+  var vol = idx[CONFIG.FLOOR_VOL] ? sh.getRange(2, idx[CONFIG.FLOOR_VOL], n, 1).getValues() : null;
+  var redo = idx[CONFIG.FLOOR_REDO] ? sh.getRange(2, idx[CONFIG.FLOOR_REDO], n, 1).getValues() : null;
 
   var map = {};
   for (var k = 0; k < n; k++) {
@@ -660,13 +665,19 @@ function buildBudget_(ss) {
     var work = String(wrk[k][0]).trim() || '— без работы —';
     var c = String(corp[k][0]).trim();
     var p = String(contr[k][0]).trim() || '— без подрядчика —';
+    var vv = (vol && typeof vol[k][0] === 'number') ? vol[k][0] : 0;
+    var rr = (redo && typeof redo[k][0] === 'number') ? redo[k][0] : 0;
     if (!map[item]) map[item] = { total: 0, works: {} };
     map[item].total += v;
     var w = map[item].works;
     if (!w[work]) w[work] = { total: 0, cells: {} };
     w[work].total += v;
     var cellKey = p + '' + c;
-    w[work].cells[cellKey] = (w[work].cells[cellKey] || 0) + v;
+    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0 };
+    var cellObj = w[work].cells[cellKey];
+    cellObj.c += v;                       // стоимость (кол. AG)
+    cellObj.v += vv;                      // объём (кол. D)
+    if (!cellObj.r && rr) cellObj.r = rr; // коэф. переделки — первое непустое
   }
   return Object.keys(map)
     .map(function (item) {
@@ -675,7 +686,9 @@ function buildBudget_(ss) {
           var w = map[item].works[wName];
           var cells = Object.keys(w.cells).map(function (key) {
             var parts = key.split('');
-            return [parts[0], parts[1], Math.round(w.cells[key])];
+            var cell = w.cells[key];
+            return [parts[0], parts[1], Math.round(cell.c),
+                    Math.round(cell.v * 100) / 100, cell.r];
           });
           return [wName, Math.round(w.total), cells];
         })

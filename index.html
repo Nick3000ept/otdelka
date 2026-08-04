@@ -1298,15 +1298,19 @@ function budgetWorkHtml(w) {
   const rowsMap = new Map();      // подрядчик|раб|мат|СС -> строка сводной
   (w[2] || []).forEach(cell => {
     const p = cell[0], c = cell[1], v = cell[2];
+    const cellVol = cell[3] || 0, cellRedo = cell[4] || 0;
     contrTotal.set(p, (contrTotal.get(p) || 0) + v);
     const rk = rateByCorp.get(p + '|' + c) || [0, 0, 0];
     const key = p + '|' + rk[0] + '|' + rk[1] + '|' + rk[2];
     if (!rowsMap.has(key)) {
-      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], ss: rk[2], corps: {}, total: 0 });
+      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], ss: rk[2],
+        corps: {}, total: 0, vol: 0, redo: 0 });
     }
     const o = rowsMap.get(key);
     o.corps[c] = (o.corps[c] || 0) + v;
     o.total += v;
+    o.vol += cellVol;
+    if (!o.redo && cellRedo) o.redo = cellRedo;
   });
   if (!rowsMap.size) {
     return '<div class="side-note">Разбивки по подрядчикам для этой работы нет</div>';
@@ -1329,22 +1333,31 @@ function budgetWorkHtml(w) {
   let undef = null;
   list = list.filter(o => {
     if (o.contr !== UNDEF) return true;
-    if (!undef) undef = { contr: 'Не определен', rw: baseW, rm: baseM, ss: 0, corps: {}, total: 0 };
+    if (!undef) {
+      undef = { contr: 'Не определен', rw: baseW, rm: baseM, ss: 0,
+        corps: {}, total: 0, vol: 0, redo: 0 };
+    }
     Object.keys(o.corps).forEach(c => {
       undef.corps[c] = (undef.corps[c] || 0) + o.corps[c];
     });
     undef.total += o.total;
+    undef.vol += o.vol;
+    if (!undef.redo && o.redo) undef.redo = o.redo;
     return false;
   });
-  // Справа — сумматор «Итого» по строке (просьба 05.08.2026).
+  // Справа — сумматор «Итого» по строке; после расценок — объём работы
+  // и коэффициент переделки (просьбы 05.08.2026).
   const head = '<tr><th>Название</th><th class="num">Раб., руб/ед</th>' +
     '<th class="num">Мат., руб/ед</th>' +
+    '<th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') +
     '<th class="num">Итого</th></tr>';
   const rowHtml = (o, nameCell) =>
     '<tr><td>' + nameCell + '</td>' +
     '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
     '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
+    '<td class="num">' + (o.vol ? escapeHtml(fmtVol(o.vol)) : '') + '</td>' +
+    '<td class="num">' + (o.redo ? escapeHtml(fmtCell(o.redo)) : '') + '</td>' +
     ALL_CORPS.map(c =>
       '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
     ).join('') +
@@ -1362,15 +1375,18 @@ function budgetWorkHtml(w) {
       if (last && !first) {
         const grp = rows.filter(r => r.contr === o.contr);
         const corps = {};
-        let t = 0;
+        let t = 0, tv = 0;
         grp.forEach(r => {
           t += r.total;
+          tv += r.vol;
           ALL_CORPS.forEach(c => {
             if (r.corps[c]) corps[c] = (corps[c] || 0) + r.corps[c];
           });
         });
         html += '<tr class="csub"><td>Итого ' + escapeHtml(o.contr) + '</td>' +
           '<td class="num"></td><td class="num"></td>' +
+          '<td class="num">' + (tv ? escapeHtml(fmtVol(tv)) : '') + '</td>' +
+          '<td class="num"></td>' +
           ALL_CORPS.map(c =>
             '<td class="num">' + (corps[c] ? escapeHtml(fmtInt(corps[c])) : '') + '</td>'
           ).join('') +
@@ -1380,7 +1396,7 @@ function budgetWorkHtml(w) {
     return html;
   };
   const sect = t =>
-    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 4) + '">' + t + '</td></tr>';
+    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 6) + '">' + t + '</td></tr>';
   const reg = list.filter(o => !o.ss);
   const own = list.filter(o => o.ss);
   let body = '';
@@ -1390,14 +1406,17 @@ function budgetWorkHtml(w) {
 
   // Сумматор по корпусам (просьба 05.08.2026) — по всем строкам, включая «Не определен».
   const totals = {};
-  let grand = 0;
+  let grand = 0, grandVol = 0;
   (undef ? [undef] : []).concat(reg, own).forEach(o => {
     grand += o.total;
+    grandVol += o.vol;
     ALL_CORPS.forEach(c => {
       if (o.corps[c]) totals[c] = (totals[c] || 0) + o.corps[c];
     });
   });
   const foot = '<tr class="total"><td>Итого</td><td class="num"></td><td class="num"></td>' +
+    '<td class="num">' + (grandVol ? escapeHtml(fmtVol(grandVol)) : '') + '</td>' +
+    '<td class="num"></td>' +
     ALL_CORPS.map(c =>
       '<td class="num">' + (totals[c] ? escapeHtml(fmtInt(totals[c])) : '') + '</td>'
     ).join('') +
