@@ -1256,14 +1256,18 @@ function renderBudget() {
   }
   const total = rows.reduce((acc, r) => acc + r[1], 0);
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
+  // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
+  // значения заполняются на уровне работ.
   const table = '<table class="check budget"><thead><tr>' +
-    '<th>Статья бюджета</th><th class="num">Стоимость, руб</th></tr></thead><tbody>' +
+    '<th>Статья бюджета</th><th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
+    '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
     rows.map((r, i) => {
       const works = r[2] || [];
       const open = state.budgetOpen.has(String(r[0]));
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
+        '<td class="num"></td><td class="num"></td>' +
         '<td class="num">' + escapeHtml(fmtInt(r[1])) + '</td></tr>';
       if (open) {
         // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
@@ -1280,16 +1284,16 @@ function renderBudget() {
           });
           const wr = state.works.find(r => norm(r[WORK_KEY]) === norm(String(w[0])));
           const unit = String((wr && wr[UNIT_COL]) || '').trim();
-          const info = (vol ? 'объем ' + fmtVol(vol) + (unit ? ' ' + unit : '') : '') +
-            (redo ? (vol ? ' · ' : '') + 'коэф. ' + fmtCell(redo) : '');
           let h = '<tr class="bwork' + (wOpen ? ' open' : '') + '" data-bi="' + i +
             '" data-wi="' + wi + '">' +
             '<td><span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') + '</span> ' +
-            escapeHtml(String(w[0])) +
-            (info ? ' <span class="bw-info">' + escapeHtml(info) + '</span>' : '') + '</td>' +
+            escapeHtml(String(w[0])) + '</td>' +
+            '<td class="num">' +
+            (vol ? escapeHtml(fmtVol(vol) + (unit ? ' ' + unit : '')) : '') + '</td>' +
+            '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
             '<td class="num">' + escapeHtml(fmtInt(w[1])) + '</td></tr>';
           if (wOpen) {
-            h += '<tr class="bdetail"><td colspan="2">' + budgetWorkHtml(w) + '</td></tr>';
+            h += '<tr class="bdetail"><td colspan="4">' + budgetWorkHtml(w) + '</td></tr>';
           }
           return h;
         };
@@ -1313,6 +1317,7 @@ function renderBudget() {
           let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
+            '<td class="num"></td><td class="num"></td>' +
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td></tr>';
           if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
           return h;
@@ -1320,6 +1325,7 @@ function renderBudget() {
       }
       return html;
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
+    '<td class="num"></td><td class="num"></td>' +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + table;
 }
