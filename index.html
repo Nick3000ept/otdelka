@@ -829,16 +829,19 @@ function renderTable() {
 
   // Плоский список того, что рисуем: место -> поверхность -> группа работ -> работы,
   // каждый следующий уровень рисуется только если предыдущий развёрнут.
+  // При активном поиске раскрываем всё: найденную работу видно сразу, без ручного
+  // раскрытия материнских уровней (просьба пользователя 04.08.2026).
+  const showAll = !!q;
   const items = [];
   places.forEach(p => {
     items.push({ type: 'place', node: p });
-    if (state.collapsed.has(p.key)) return;
+    if (!showAll && state.collapsed.has(p.key)) return;
     p.surfaces.forEach(s => {
       items.push({ type: 'surface', node: s });
-      if (state.collapsed.has(s.key)) return;
+      if (!showAll && state.collapsed.has(s.key)) return;
       s.subgroups.forEach(g => {
         items.push({ type: 'group', node: g });
-        if (!state.collapsed.has(g.key)) {
+        if (showAll || !state.collapsed.has(g.key)) {
           g.rows.forEach(r => items.push({ type: 'row', row: r }));
         }
       });
@@ -858,7 +861,7 @@ function renderTable() {
       const tr = document.createElement('tr');
       if (it.type === 'place' || it.type === 'surface' || it.type === 'group') {
         const n = it.node;
-        const open = !state.collapsed.has(n.key);
+        const open = showAll || !state.collapsed.has(n.key);
         tr.className = it.type === 'place' ? 'plc' : (it.type === 'surface' ? 'srf' : 'grp');
         tr.dataset.grp = n.key;
 
