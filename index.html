@@ -278,8 +278,8 @@
   /* Базовая расценка — приглушённая строка внизу сводной. */
   table.inner.contractors tr.baserow td { color: var(--text-dim); }
 
-  /* Разделитель «Собственные силы» внутри таблицы подрядчиков. */
-  table.inner.contractors tr.sect td {
+  /* Разделитель «Собственные силы» внутри таблиц подрядчиков (сводная и детали проверки). */
+  table.inner tr.sect td {
     background: var(--panel2); font-size: 11px; font-weight: 700; color: var(--text-dim);
     text-transform: uppercase; letter-spacing: .4px; text-align: left; padding: 6px 8px;
   }
@@ -307,6 +307,15 @@
     white-space: normal; word-break: break-word;
   }
   table.check th.cw-name { width: 44%; }
+  /* Проверка «Расценки работ»: числовые колонки по центру, строки кликабельны,
+     отклонения больше порога — красным, под строкой раскрывается список подрядчиков. */
+  table.check th.num { text-align: center; width: 110px; }
+  table.check td.num { text-align: center; white-space: nowrap; }
+  table.check tr.wrow { cursor: pointer; }
+  table.check tr.wrow:hover td { background: var(--panel2); }
+  table.check tr.wrow.open td { background: #dbe7ff; }
+  table.check tr.wdetail > td { background: #fafbfc; padding: 10px 14px 14px; }
+  .dev-bad { color: #b42121; font-weight: 700; }
   .flag {
     display: inline-block; margin: 1px 4px 1px 0; padding: 2px 8px;
     border-radius: 999px; font-size: 11px; font-weight: 600;
@@ -334,6 +343,8 @@
     <div id="sb-checks" style="display:none">
       <div class="sb-item sb-sub" data-screen="check-rates">Проверка расценки
         <span class="sb-badge" id="badge-check-rates"></span></div>
+      <div class="sb-item sb-sub" data-screen="check-work-rates">Расценки работ
+        <span class="sb-badge" id="badge-check-work-rates"></span></div>
     </div>
   </aside>
   <div id="content">
@@ -456,6 +467,7 @@ const state = {
   ssRates: [],                 // лист «Расценки СС» — детали по клику (собств. силы)
   ssMap: [],                   // лист «Справочник СС» — мэппинг Работа СС -> Работа для АР
   checkRates: [],              // лист «Проверки расценки» — готовая проверка «нет расценок»
+  checkOpen: null,             // раскрытая строка в проверке «Расценки работ»
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
@@ -545,7 +557,11 @@ const COL_ORDER = [
 function workColumns(rows) {
   if (!rows.length) return [];
   if (state.screen === 'volumes') {
-    const cols = [{ label: WORK_KEY, key: WORK_KEY }];
+    // Ед. изм. работы — сразу после названия (просьба пользователя 04.08.2026).
+    const cols = [
+      { label: WORK_KEY, key: WORK_KEY },
+      { label: 'Ед. изм', key: UNIT_COL, unit: true }
+    ];
     ALL_CORPS.forEach(c => cols.push({ label: c, corp: c, num: true }));
     return cols;
   }
@@ -716,6 +732,7 @@ function renderTable() {
   theadRow.innerHTML = '<th class="chev-col"></th>' + cols.map(c => {
     const cls = c.num ? ' class="num"'
       : c.vol ? ' class="volcell"'
+      : c.unit ? ' class="volcell"'
       : c.tags ? ' class="tags"'
       : (c.key === WORK_KEY ? ' class="wname"' : '');
     return '<th' + cls + '>' + escapeHtml(c.label) + '</th>';
@@ -1085,26 +1102,148 @@ function renderCheckRates() {
   document.getElementById('check-screen').innerHTML = head + table;
 }
 
+/**
+ * Проверка «Расценки работ» (просьба пользователя 04.08.2026): работы, у которых базовая
+ * расценка отличается больше чем на 15% от средней по подрядчикам или по собственным силам.
+ * Средние считаются по сводке «Поэтажка_работы» (state.floors: [подрядчик, корпус,
+ * расценка за ед. в бюджет, признак СС]) — по всем ячейкам «подрядчик × корпус».
+ * Отклонение = (базовая − средняя) / средняя. Сортировка — от самого большого отклонения.
+ * Считается на странице, без запросов к серверу. null — сводка ещё не загружена.
+ */
+const DEV_LIMIT = 15;   // порог отклонения, %
+
+function workRateChecks() {
+  if (state.floorsStatus !== 'ready') return null;
+  const out = [];
+  state.works.forEach(w => {
+    const base = typeof w[BASE_RATE_COL] === 'number' ? w[BASE_RATE_COL] : null;
+    if (base === null) return;
+    const key = norm(w[WORK_KEY]);
+    const rows = (state.floors && state.floors[key]) || [];
+    const cVals = [], sVals = [];
+    rows.forEach(r => {
+      if (typeof r[2] !== 'number') return;
+      (r[3] ? sVals : cVals).push(r[2]);
+    });
+    const avg = a => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
+    const avgC = avg(cVals), avgS = avg(sVals);
+    const dev = a => (a ? (base - a) / a * 100 : null);
+    const devC = dev(avgC), devS = dev(avgS);
+    const worst = Math.max(devC === null ? 0 : Math.abs(devC),
+                           devS === null ? 0 : Math.abs(devS));
+    if (worst <= DEV_LIMIT) return;
+    out.push({ key, name: String(w[WORK_KEY] || ''), base, avgC, devC, avgS, devS, worst, rows });
+  });
+  out.sort((a, b) => b.worst - a.worst);
+  return out;
+}
+
+// Отклонения — с одним знаком после запятой, чтобы порог 15% читался честно.
+const fmtDev = v => new Intl.NumberFormat('ru-RU',
+  { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.abs(v));
+
+function renderCheckWorkRates() {
+  const el = document.getElementById('check-screen');
+  const list = workRateChecks();
+  const title = '<div class="check-head">Расценки работ' +
+    (list ? ': отклонений — ' + list.length : '') + '</div>';
+  if (list === null) {
+    el.innerHTML = title + '<div class="side-note">' + (state.floorsStatus === 'error'
+      ? 'Сводку по подрядчикам загрузить не удалось — обновите страницу.'
+      : 'Сводка по подрядчикам ещё загружается — проверка появится через несколько секунд…') +
+      '</div>';
+    return;
+  }
+  const head = title +
+    '<div class="check-desc">Базовая расценка отличается от средней по подрядчикам или ' +
+    'собственным силам больше чем на ' + DEV_LIMIT + '% (отклонение — от средней; средние — ' +
+    'по «Поэтажка_работы»). Клик по строке — все подрядчики с расценками.</div>';
+  if (!list.length) {
+    el.innerHTML = head + '<div class="side-note">Отклонений больше ' + DEV_LIMIT + '% нет</div>';
+    return;
+  }
+  const devTxt = d => (d === null ? '' : (d > 0 ? '+' : '−') + fmtDev(d) + '%');
+  const devCls = d => (d !== null && Math.abs(d) > DEV_LIMIT ? ' class="num dev-bad"' : ' class="num"');
+  const table = '<table class="check"><thead><tr>' +
+    '<th class="cw-name">Работа</th><th class="num">Баз. расценка</th>' +
+    '<th class="num">Ср. подрядчики</th><th class="num">Откл.</th>' +
+    '<th class="num">Ср. СС</th><th class="num">Откл.</th></tr></thead><tbody>' +
+    list.map(it => {
+      const open = state.checkOpen === it.key;
+      let html = '<tr class="wrow' + (open ? ' open' : '') + '" data-key="' +
+        escapeHtml(it.key) + '">' +
+        '<td>' + escapeHtml(it.name) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtInt(it.base)) + '</td>' +
+        '<td class="num">' + (it.avgC === null ? '' : escapeHtml(fmtInt(it.avgC))) + '</td>' +
+        '<td' + devCls(it.devC) + '>' + escapeHtml(devTxt(it.devC)) + '</td>' +
+        '<td class="num">' + (it.avgS === null ? '' : escapeHtml(fmtInt(it.avgS))) + '</td>' +
+        '<td' + devCls(it.devS) + '>' + escapeHtml(devTxt(it.devS)) + '</td></tr>';
+      if (open) html += '<tr class="wdetail"><td colspan="6">' + checkDetailHtml(it) + '</td></tr>';
+      return html;
+    }).join('') + '</tbody></table>';
+  el.innerHTML = head + table;
+}
+
+// Раскрытая строка проверки: все подрядчики и собственные силы по работе.
+// Поэтажку схлопываем: один подрядчик с одной расценкой на нескольких корпусах — одна строка.
+function checkDetailHtml(it) {
+  const agg = new Map();
+  it.rows.forEach(r => {
+    if (typeof r[2] !== 'number') return;
+    const k = (r[3] ? 1 : 0) + '|' + r[0] + '|' + r[2];
+    if (!agg.has(k)) agg.set(k, { contr: r[0], ss: !!r[3], rate: r[2], corps: [] });
+    agg.get(k).corps.push(r[1]);
+  });
+  const items = Array.from(agg.values());
+  if (!items.length) {
+    return '<div class="side-note">Подрядчики по этой работе в «Поэтажка_работы» не найдены</div>';
+  }
+  items.sort((a, b) => (a.ss !== b.ss ? (a.ss ? 1 : -1)
+    : (a.contr.localeCompare(b.contr, 'ru') || a.rate - b.rate)));
+  const corpsTxt = c => c.slice()
+    .sort((x, y) => ALL_CORPS.indexOf(x) - ALL_CORPS.indexOf(y)).join(', ');
+  const row = x => '<tr><td>' + escapeHtml(x.contr) + '</td>' +
+    '<td>' + escapeHtml(corpsTxt(x.corps)) + '</td>' +
+    '<td class="num">' + escapeHtml(fmtInt(x.rate)) + '</td></tr>';
+  const sect = t => '<tr class="sect"><td colspan="3">' + t + '</td></tr>';
+  const reg = items.filter(x => !x.ss), own = items.filter(x => x.ss);
+  let body = reg.map(row).join('');
+  if (own.length) body += sect('Собственные силы') + own.map(row).join('');
+  return '<table class="inner mini"><thead><tr><th>Подрядчик</th><th>Корпуса</th>' +
+    '<th class="num">Расценка</th></tr></thead><tbody>' + body + '</tbody></table>' +
+    '<div class="side-sub" style="margin-top:4px">расценка за работу на ед. в бюджет, руб · ' +
+    'базовая — ' + escapeHtml(fmtInt(it.base)) + ' руб</div>';
+}
+
 function updateCheckBadges() {
   document.getElementById('badge-check-rates').textContent =
     String(state.checkRates.length || '');
+  const list = workRateChecks();
+  document.getElementById('badge-check-work-rates').textContent =
+    (list && list.length) ? String(list.length) : '';
 }
 
-// Переключение вкладок боковой панели.
+// Переключение вкладок боковой панели. Экраны проверок — в одном справочнике:
+// имя вкладки -> функция отрисовки (новые проверки добавлять сюда).
+const CHECK_SCREENS = {
+  'check-rates': renderCheckRates,
+  'check-work-rates': renderCheckWorkRates
+};
+
 function setScreen(screen) {
   if (state.screen === screen) return;
   state.screen = screen;
   document.querySelectorAll('.sb-item').forEach(el =>
     el.classList.toggle('active', el.dataset.screen === screen));
 
-  const isCheck = screen === 'check-rates';
+  const isCheck = !!CHECK_SCREENS[screen];
   document.querySelector('header').style.display = isCheck ? 'none' : '';
   document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
   if (isCheck) {
     document.getElementById('pane-top').style.display = 'none';
     document.getElementById('pane-bottom').style.display = 'none';
     document.getElementById('status').style.display = 'none';
-    renderCheckRates();
+    CHECK_SCREENS[screen]();
     return;
   }
 
@@ -1121,6 +1260,14 @@ function setScreen(screen) {
 
 document.querySelectorAll('.sb-item').forEach(el => {
   el.addEventListener('click', () => setScreen(el.dataset.screen));
+});
+
+// Проверка «Расценки работ»: клик по строке раскрывает/сворачивает список подрядчиков.
+document.getElementById('check-screen').addEventListener('click', e => {
+  const tr = e.target.closest('tr.wrow');
+  if (!tr) return;
+  state.checkOpen = state.checkOpen === tr.dataset.key ? null : tr.dataset.key;
+  renderCheckWorkRates();
 });
 
 // Раскрывающийся блок «Проверки» в боковой панели.
@@ -1341,6 +1488,10 @@ async function loadFloors() {
     state.floorsStatus = 'error';
   }
   renderBottomPane();
+  // Проверка «Расценки работ» считается по этой сводке: обновляем бейдж,
+  // а если пользователь уже на вкладке — и саму таблицу.
+  updateCheckBadges();
+  if (state.screen === 'check-work-rates') renderCheckWorkRates();
 }
 
 function showGate(err) {
