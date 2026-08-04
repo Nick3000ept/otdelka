@@ -368,8 +368,18 @@
   }
   table.check.budget tr.brow:hover td { background: #e2e5eb; }
   table.check.budget tr.brow .chev { color: var(--accent); }
+  /* Группа работ внутри статьи — промежуточный уровень (05.08.2026). */
+  table.check.budget tr.bgrp { cursor: pointer; }
+  table.check.budget tr.bgrp td {
+    background: #f2f4f7; font-weight: 600; font-size: 12px;
+  }
+  table.check.budget tr.bgrp:hover td { background: #e8ebf0; }
+  table.check.budget tr.bgrp td:first-child { padding-left: 24px; }
+  table.check.budget tr.bgrp .chev { color: var(--accent); }
   table.check.budget tr.bwork td { color: var(--text); font-size: 12px; }
-  table.check.budget tr.bwork td:first-child { padding-left: 28px; white-space: normal; }
+  table.check.budget tr.bwork td:first-child { padding-left: 44px; white-space: normal; }
+  /* Объём и коэффициент переделки — приглушённой припиской у названия работы. */
+  .bw-info { color: var(--text-dim); font-size: 11px; font-weight: 400; white-space: nowrap; }
   table.check.budget tr.bwork { cursor: pointer; }
   table.check.budget tr.bwork:hover td { background: var(--panel2); }
   table.check.budget tr.bwork.open td { background: #dbe7ff; font-weight: 600; }
@@ -575,6 +585,7 @@ const state = {
   budgetStatus: 'idle',        // idle | loading | ready | error
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
+  budgetGrpCollapsed: new Set(), // свёрнутые группы работ внутри статей бюджета
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
   checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
   questions: [],               // вопросы по работам (action=questions + POST)
@@ -1255,19 +1266,55 @@ function renderBudget() {
         escapeHtml(String(r[0])) + '</td>' +
         '<td class="num">' + escapeHtml(fmtInt(r[1])) + '</td></tr>';
       if (open) {
-        // Клик по работе — выпадающая сводная «подрядчики × корпуса» под строкой
-        // (просьба пользователя 05.08.2026, вместо модального окна).
-        html += works.map((w, wi) => {
+        // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
+        // группы сортируются по сумме. Клик по работе — выпадающая сводная
+        // «подрядчики × корпуса» под строкой; объём и коэффициент переделки —
+        // в строке работы, не в сводной (просьба 05.08.2026).
+        const workRowHtml = (w, wi) => {
           const key = i + '|' + wi;
           const wOpen = state.budgetWorkOpen.has(key);
+          let vol = 0, redo = 0;
+          (w[2] || []).forEach(cell => {
+            vol += cell[3] || 0;
+            if (!redo && cell[4]) redo = cell[4];
+          });
+          const wr = state.works.find(r => norm(r[WORK_KEY]) === norm(String(w[0])));
+          const unit = String((wr && wr[UNIT_COL]) || '').trim();
+          const info = (vol ? 'объем ' + fmtVol(vol) + (unit ? ' ' + unit : '') : '') +
+            (redo ? (vol ? ' · ' : '') + 'коэф. ' + fmtCell(redo) : '');
           let h = '<tr class="bwork' + (wOpen ? ' open' : '') + '" data-bi="' + i +
             '" data-wi="' + wi + '">' +
             '<td><span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') + '</span> ' +
-            escapeHtml(String(w[0])) + '</td>' +
+            escapeHtml(String(w[0])) +
+            (info ? ' <span class="bw-info">' + escapeHtml(info) + '</span>' : '') + '</td>' +
             '<td class="num">' + escapeHtml(fmtInt(w[1])) + '</td></tr>';
           if (wOpen) {
             h += '<tr class="bdetail"><td colspan="2">' + budgetWorkHtml(w) + '</td></tr>';
           }
+          return h;
+        };
+        const grps = [];
+        const byG = new Map();
+        works.forEach((w, wi) => {
+          const g = String(w[3] || '— без группы —');
+          if (!byG.has(g)) {
+            const o = { name: g, total: 0, items: [] };
+            byG.set(g, o);
+            grps.push(o);
+          }
+          const o = byG.get(g);
+          o.total += w[1];
+          o.items.push([w, wi]);
+        });
+        grps.sort((a, b) => b.total - a.total);
+        html += grps.map(g => {
+          const gKey = i + '|' + g.name;
+          const gOpen = !state.budgetGrpCollapsed.has(gKey);
+          let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
+            '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
+            escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
+            '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td></tr>';
+          if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
           return h;
         }).join('');
       }
@@ -1298,19 +1345,15 @@ function budgetWorkHtml(w) {
   const rowsMap = new Map();      // подрядчик|раб|мат|СС -> строка сводной
   (w[2] || []).forEach(cell => {
     const p = cell[0], c = cell[1], v = cell[2];
-    const cellVol = cell[3] || 0, cellRedo = cell[4] || 0;
     contrTotal.set(p, (contrTotal.get(p) || 0) + v);
     const rk = rateByCorp.get(p + '|' + c) || [0, 0, 0];
     const key = p + '|' + rk[0] + '|' + rk[1] + '|' + rk[2];
     if (!rowsMap.has(key)) {
-      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], ss: rk[2],
-        corps: {}, total: 0, vol: 0, redo: 0 });
+      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], ss: rk[2], corps: {}, total: 0 });
     }
     const o = rowsMap.get(key);
     o.corps[c] = (o.corps[c] || 0) + v;
     o.total += v;
-    o.vol += cellVol;
-    if (!o.redo && cellRedo) o.redo = cellRedo;
   });
   if (!rowsMap.size) {
     return '<div class="side-note">Разбивки по подрядчикам для этой работы нет</div>';
@@ -1334,30 +1377,24 @@ function budgetWorkHtml(w) {
   list = list.filter(o => {
     if (o.contr !== UNDEF) return true;
     if (!undef) {
-      undef = { contr: 'Не определен', rw: baseW, rm: baseM, ss: 0,
-        corps: {}, total: 0, vol: 0, redo: 0 };
+      undef = { contr: 'Не определен', rw: baseW, rm: baseM, ss: 0, corps: {}, total: 0 };
     }
     Object.keys(o.corps).forEach(c => {
       undef.corps[c] = (undef.corps[c] || 0) + o.corps[c];
     });
     undef.total += o.total;
-    undef.vol += o.vol;
-    if (!undef.redo && o.redo) undef.redo = o.redo;
     return false;
   });
-  // Справа — сумматор «Итого» по строке; после расценок — объём работы
-  // и коэффициент переделки (просьбы 05.08.2026).
+  // Справа — сумматор «Итого» по строке (просьба 05.08.2026). Объём и коэффициент
+  // переделки показываются на уровне строки работы, не здесь (просьба 05.08.2026).
   const head = '<tr><th>Название</th><th class="num">Раб., руб/ед</th>' +
     '<th class="num">Мат., руб/ед</th>' +
-    '<th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') +
     '<th class="num">Итого</th></tr>';
   const rowHtml = (o, nameCell) =>
     '<tr><td>' + nameCell + '</td>' +
     '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
     '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
-    '<td class="num">' + (o.vol ? escapeHtml(fmtVol(o.vol)) : '') + '</td>' +
-    '<td class="num">' + (o.redo ? escapeHtml(fmtCell(o.redo)) : '') + '</td>' +
     ALL_CORPS.map(c =>
       '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
     ).join('') +
@@ -1375,18 +1412,15 @@ function budgetWorkHtml(w) {
       if (last && !first) {
         const grp = rows.filter(r => r.contr === o.contr);
         const corps = {};
-        let t = 0, tv = 0;
+        let t = 0;
         grp.forEach(r => {
           t += r.total;
-          tv += r.vol;
           ALL_CORPS.forEach(c => {
             if (r.corps[c]) corps[c] = (corps[c] || 0) + r.corps[c];
           });
         });
         html += '<tr class="csub"><td>Итого ' + escapeHtml(o.contr) + '</td>' +
           '<td class="num"></td><td class="num"></td>' +
-          '<td class="num">' + (tv ? escapeHtml(fmtVol(tv)) : '') + '</td>' +
-          '<td class="num"></td>' +
           ALL_CORPS.map(c =>
             '<td class="num">' + (corps[c] ? escapeHtml(fmtInt(corps[c])) : '') + '</td>'
           ).join('') +
@@ -1396,7 +1430,7 @@ function budgetWorkHtml(w) {
     return html;
   };
   const sect = t =>
-    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 6) + '">' + t + '</td></tr>';
+    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 4) + '">' + t + '</td></tr>';
   const reg = list.filter(o => !o.ss);
   const own = list.filter(o => o.ss);
   let body = '';
@@ -1406,17 +1440,14 @@ function budgetWorkHtml(w) {
 
   // Сумматор по корпусам (просьба 05.08.2026) — по всем строкам, включая «Не определен».
   const totals = {};
-  let grand = 0, grandVol = 0;
+  let grand = 0;
   (undef ? [undef] : []).concat(reg, own).forEach(o => {
     grand += o.total;
-    grandVol += o.vol;
     ALL_CORPS.forEach(c => {
       if (o.corps[c]) totals[c] = (totals[c] || 0) + o.corps[c];
     });
   });
   const foot = '<tr class="total"><td>Итого</td><td class="num"></td><td class="num"></td>' +
-    '<td class="num">' + (grandVol ? escapeHtml(fmtVol(grandVol)) : '') + '</td>' +
-    '<td class="num"></td>' +
     ALL_CORPS.map(c =>
       '<td class="num">' + (totals[c] ? escapeHtml(fmtInt(totals[c])) : '') + '</td>'
     ).join('') +
@@ -1427,8 +1458,17 @@ function budgetWorkHtml(w) {
     '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>';
 }
 
-// Клик по статье бюджета — раскрыть/свернуть работы; по работе — выпадающая сводная.
+// Клик по статье бюджета — раскрыть/свернуть работы; по группе работ — её работы;
+// по работе — выпадающая сводная.
 document.getElementById('budget-screen').addEventListener('click', e => {
+  const bg = e.target.closest('tr.bgrp');
+  if (bg) {
+    const key = bg.dataset.bi + '|' + bg.dataset.grp;
+    if (state.budgetGrpCollapsed.has(key)) state.budgetGrpCollapsed.delete(key);
+    else state.budgetGrpCollapsed.add(key);
+    renderBudget();
+    return;
+  }
   const bw = e.target.closest('tr.bwork');
   if (bw) {
     // Можно держать открытыми несколько работ сразу (просьба 05.08.2026).
