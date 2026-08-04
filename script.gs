@@ -34,15 +34,17 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v2';   // свод бюджета статья -> стоимость + работы (action=budget)
+var CACHE_BUDGET = 'budget_v3';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
-  cache.remove(CACHE_BUDGET);
-  var keys = [CACHE_VOLS + '_n'];
-  for (var i = 0; i < 10; i++) keys.push(CACHE_VOLS + '_' + i);
+  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n'];
+  for (var i = 0; i < 10; i++) {
+    keys.push(CACHE_VOLS + '_' + i);
+    keys.push(CACHE_BUDGET + '_' + i);
+  }
   cache.removeAll(keys);
 }
 
@@ -427,14 +429,14 @@ function doGet(e) {
   if (action === 'budget') {
     try {
       var cacheB = CacheService.getScriptCache();
-      var cachedB = cacheB.get(CACHE_BUDGET);
+      var cachedB = cacheGetBig_(cacheB, CACHE_BUDGET);
       if (cachedB) {
         return ContentService.createTextOutput(cachedB)
           .setMimeType(ContentService.MimeType.JSON);
       }
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
       var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB) });
-      cacheB.put(CACHE_BUDGET, payloadB, 21600);
+      cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
       return ContentService.createTextOutput(payloadB)
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
@@ -623,9 +625,11 @@ function buildVolumes_(ss) {
  * Свод бюджета (04.08.2026): по листу «Поэтажка_работы» суммируем
  * «Стоимость материалы + работа для бюджета» (кол. AG) в разрезе
  * «Признак для бюджета основной» (кол. L — статья бюджета), внутри статьи —
- * разбивка по работам (кол. A) для раскрытия на витрине (просьба 04.08.2026).
- * Возвращает [[статья, сумма, [[работа, сумма], ...]], ...] — всё по убыванию суммы;
- * строки без статьи, но с деньгами, собираются в «— без статьи —».
+ * разбивка по работам (кол. A), внутри работы — по подрядчикам и корпусам
+ * (для сводной по клику на работу, просьба 05.08.2026).
+ * Возвращает [[статья, сумма, [[работа, сумма, [[подрядчик, корпус, сумма], ...]], ...]], ...]
+ * — всё по убыванию суммы; строки без статьи собираются в «— без статьи —»,
+ * строки без подрядчика — в «— без подрядчика —».
  */
 function buildBudget_(ss) {
   var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
@@ -638,12 +642,15 @@ function buildBudget_(ss) {
   var idx = {};
   head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
   if (!idx[CONFIG.FLOOR_BUDGET_FLAG] || !idx[CONFIG.FLOOR_BUDGET_COST] ||
-      !idx[CONFIG.FLOOR_WORK]) return [];
+      !idx[CONFIG.FLOOR_WORK] || !idx[CONFIG.FLOOR_CORP] ||
+      !idx[CONFIG.FLOOR_CONTRACTOR]) return [];
 
   var n = lastRow - 1;
   var flag = sh.getRange(2, idx[CONFIG.FLOOR_BUDGET_FLAG], n, 1).getValues();
   var cost = sh.getRange(2, idx[CONFIG.FLOOR_BUDGET_COST], n, 1).getValues();
   var wrk = sh.getRange(2, idx[CONFIG.FLOOR_WORK], n, 1).getValues();
+  var corp = sh.getRange(2, idx[CONFIG.FLOOR_CORP], n, 1).getValues();
+  var contr = sh.getRange(2, idx[CONFIG.FLOOR_CONTRACTOR], n, 1).getValues();
 
   var map = {};
   for (var k = 0; k < n; k++) {
@@ -651,14 +658,27 @@ function buildBudget_(ss) {
     if (!v) continue;
     var item = String(flag[k][0]).trim() || '— без статьи —';
     var work = String(wrk[k][0]).trim() || '— без работы —';
+    var c = String(corp[k][0]).trim();
+    var p = String(contr[k][0]).trim() || '— без подрядчика —';
     if (!map[item]) map[item] = { total: 0, works: {} };
     map[item].total += v;
-    map[item].works[work] = (map[item].works[work] || 0) + v;
+    var w = map[item].works;
+    if (!w[work]) w[work] = { total: 0, cells: {} };
+    w[work].total += v;
+    var cellKey = p + '' + c;
+    w[work].cells[cellKey] = (w[work].cells[cellKey] || 0) + v;
   }
   return Object.keys(map)
     .map(function (item) {
       var works = Object.keys(map[item].works)
-        .map(function (w) { return [w, Math.round(map[item].works[w])]; })
+        .map(function (wName) {
+          var w = map[item].works[wName];
+          var cells = Object.keys(w.cells).map(function (key) {
+            var parts = key.split('');
+            return [parts[0], parts[1], Math.round(w.cells[key])];
+          });
+          return [wName, Math.round(w.total), cells];
+        })
         .sort(function (a, b) { return b[1] - a[1]; });
       return [item, Math.round(map[item].total), works];
     })
