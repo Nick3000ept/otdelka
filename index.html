@@ -381,10 +381,13 @@
   }
   tr.bdetail table.inner th,
   tr.bdetail table.inner td,
-  tr.bdetail table.inner tfoot td,
-  tr.bdetail table.inner tr.sect td { background: transparent; }
+  tr.bdetail table.inner tfoot td { background: transparent; }
   /* Сумматор по подрядчику — жирным, без своей заливки. */
   tr.bdetail table.inner tr.csub td { font-weight: 700; }
+  /* Заголовки «Подрядчики» / «Собственные силы» — выделены плашкой (05.08.2026). */
+  tr.bdetail table.inner tr.sect td {
+    background: rgba(47, 111, 237, .16); color: var(--text);
+  }
   .bdetail-wrap { overflow-x: auto; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
