@@ -1296,11 +1296,28 @@ function budgetWorkHtml(w) {
   // внутри — по убыванию суммы строки. Имя пишем только в первой его строке.
   // Два блока (просьба 05.08.2026): обычные подрядчики и «Собственные силы»
   // (признак СС — по строкам поэтажки, как в сводной на «Расценках»).
-  const list = Array.from(rowsMap.values()).sort((a, b) =>
+  let list = Array.from(rowsMap.values()).sort((a, b) =>
     (contrTotal.get(b.contr) - contrTotal.get(a.contr)) ||
     a.contr.localeCompare(b.contr, 'ru') ||
     (b.total - a.total));
-  const head = '<tr><th>Подрядчик</th><th class="num">Раб., руб/ед</th>' +
+
+  // Строки поэтажки без подрядчика — одной строкой «Не определен» в самом верху,
+  // с базовыми стоимостями работы и материалов из справочника «Работы» (05.08.2026).
+  const UNDEF = '— без подрядчика —';
+  const workRow = state.works.find(r => norm(r[WORK_KEY]) === norm(name));
+  const baseW = workRow && typeof workRow[BASE_RATE_COL] === 'number' ? workRow[BASE_RATE_COL] : 0;
+  const baseM = workRow && typeof workRow[BASE_MAT_COL] === 'number' ? workRow[BASE_MAT_COL] : 0;
+  let undef = null;
+  list = list.filter(o => {
+    if (o.contr !== UNDEF) return true;
+    if (!undef) undef = { contr: 'Не определен', rw: baseW, rm: baseM, ss: 0, corps: {}, total: 0 };
+    Object.keys(o.corps).forEach(c => {
+      undef.corps[c] = (undef.corps[c] || 0) + o.corps[c];
+    });
+    undef.total += o.total;
+    return false;
+  });
+  const head = '<tr><th>Название</th><th class="num">Раб., руб/ед</th>' +
     '<th class="num">Мат., руб/ед</th>' +
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') + '</tr>';
   const renderRows = rows => {
@@ -1316,15 +1333,28 @@ function budgetWorkHtml(w) {
         ).join('') + '</tr>';
     }).join('');
   };
+  const sect = t =>
+    '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 3) + '">' + t + '</td></tr>';
   const reg = list.filter(o => !o.ss);
   const own = list.filter(o => o.ss);
-  let body = renderRows(reg);
-  if (own.length) {
-    body += '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 3) + '">Собственные силы</td></tr>' +
-      renderRows(own);
-  }
+  let body = '';
+  if (undef) body += renderRows([undef]);
+  if (reg.length) body += sect('Подрядчики') + renderRows(reg);
+  if (own.length) body += sect('Собственные силы') + renderRows(own);
+
+  // Сумматор по корпусам (просьба 05.08.2026) — по всем строкам, включая «Не определен».
+  const totals = {};
+  (undef ? [undef] : []).concat(reg, own).forEach(o => {
+    ALL_CORPS.forEach(c => {
+      if (o.corps[c]) totals[c] = (totals[c] || 0) + o.corps[c];
+    });
+  });
+  const foot = '<tr class="total"><td>Итого</td><td class="num"></td><td class="num"></td>' +
+    ALL_CORPS.map(c =>
+      '<td class="num">' + (totals[c] ? escapeHtml(fmtInt(totals[c])) : '') + '</td>'
+    ).join('') + '</tr>';
   return '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
-    '</thead><tbody>' + body + '</tbody></table>' +
+    '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>' +
     '<div class="side-sub" style="margin-top:6px">в ячейках — стоимость работ и материалов ' +
     'итого для бюджета, руб' +
     (state.floorsStatus !== 'ready' ? ' · расценки за ед. ещё загружаются' : '') +
