@@ -398,6 +398,9 @@
   tr.bdetail table.inner tfoot td { background: transparent; }
   /* Сумматор по подрядчику — жирным, без своей заливки. */
   tr.bdetail table.inner tr.csub td { font-weight: 700; }
+  /* Суммы в ячейках кликабельны — расшифровка по этажам. */
+  tr.bdetail table.inner td.bcell { cursor: pointer; text-decoration: underline dotted; }
+  tr.bdetail table.inner td.bcell:hover { color: var(--accent); }
   /* Заголовки «Подрядчики» / «Собственные силы» — выделены плашкой (05.08.2026). */
   tr.bdetail table.inner tr.sect td {
     background: rgba(47, 111, 237, .16); color: var(--text);
@@ -590,6 +593,8 @@ const state = {
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetGrpCollapsed: new Set(), // свёрнутые группы работ внутри статей бюджета
+  budgetFloors: null,          // расшифровка ячеек бюджета по этажам (action=budgetFloors)
+  budgetFloorsStatus: 'idle',  // idle | loading | ready | error
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
   checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
   questions: [],               // вопросы по работам (action=questions + POST)
@@ -1302,7 +1307,8 @@ function renderBudget() {
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
             '<td class="num">' + escapeHtml(fmtInt(w[1])) + '</td></tr>';
           if (wOpen) {
-            h += '<tr class="bdetail"><td colspan="4">' + budgetWorkHtml(w) + '</td></tr>';
+            h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
+              '"><td colspan="4">' + budgetWorkHtml(w) + '</td></tr>';
           }
           return h;
         };
@@ -1364,7 +1370,8 @@ function budgetWorkHtml(w) {
     const rk = rateByCorp.get(p + '|' + c) || [0, 0, 0];
     const key = p + '|' + rk[0] + '|' + rk[1] + '|' + rk[2];
     if (!rowsMap.has(key)) {
-      rowsMap.set(key, { contr: p, rw: rk[0], rm: rk[1], ss: rk[2], corps: {}, total: 0 });
+      rowsMap.set(key, { contr: p, src: p, rw: rk[0], rm: rk[1], ss: rk[2],
+        corps: {}, total: 0 });
     }
     const o = rowsMap.get(key);
     o.corps[c] = (o.corps[c] || 0) + v;
@@ -1392,7 +1399,8 @@ function budgetWorkHtml(w) {
   list = list.filter(o => {
     if (o.contr !== UNDEF) return true;
     if (!undef) {
-      undef = { contr: 'Не определен', rw: baseW, rm: baseM, ss: 0, corps: {}, total: 0 };
+      undef = { contr: 'Не определен', src: UNDEF, rw: baseW, rm: baseM, ss: 0,
+        corps: {}, total: 0 };
     }
     Object.keys(o.corps).forEach(c => {
       undef.corps[c] = (undef.corps[c] || 0) + o.corps[c];
@@ -1406,13 +1414,17 @@ function budgetWorkHtml(w) {
     '<th class="num">Мат., руб/ед</th>' +
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') +
     '<th class="num">Итого</th></tr>';
+  // Ячейки с суммами кликабельны: расшифровка по этажам (просьба 05.08.2026).
   const rowHtml = (o, nameCell) =>
     '<tr><td>' + nameCell + '</td>' +
     '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
     '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
-    ALL_CORPS.map(c =>
-      '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
-    ).join('') +
+    ALL_CORPS.map(c => {
+      const v = o.corps[c];
+      if (!v) return '<td class="num"></td>';
+      return '<td class="num bcell" data-contr="' + escapeHtml(o.src) +
+        '" data-corp="' + escapeHtml(c) + '">' + escapeHtml(fmtInt(v)) + '</td>';
+    }).join('') +
     '<td class="num gsum">' + (o.total ? escapeHtml(fmtInt(o.total)) : '') + '</td></tr>';
 
   // Сумматоры «Итого <подрядчик>» убраны по просьбе пользователя 05.08.2026 —
@@ -1455,9 +1467,80 @@ function budgetWorkHtml(w) {
     '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>';
 }
 
+/**
+ * Расшифровка ячейки бюджета (просьба 05.08.2026): клик по сумме «подрядчик × корпус»
+ * -> модальное окно с этажами: этаж, объём, расценки за работу и материалы, стоимость.
+ * Данные (action=budgetFloors) грузятся при первом клике и живут в памяти страницы.
+ */
+async function loadBudgetFloors() {
+  state.budgetFloorsStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=budgetFloors&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.budgetFloors = json.bfloors || {};
+    state.budgetFloorsStatus = 'ready';
+  } catch (e) {
+    state.budgetFloorsStatus = 'error';
+  }
+}
+
+async function openBudgetCellModal(bi, wi, contr, corp) {
+  const item = state.budget && state.budget[bi];
+  const w = item && (item[2] || [])[wi];
+  if (!w) return;
+  const name = String(w[0]);
+  const shownContr = contr === '— без подрядчика —' ? 'Не определен' : contr;
+  document.getElementById('modal-title').textContent = shownContr + ' · ' + corp;
+  document.getElementById('modal-sub').textContent = name;
+  const bodyEl = document.getElementById('modal-body');
+  document.getElementById('modal-overlay').style.display = 'flex';
+  if (!state.budgetFloors) {
+    bodyEl.innerHTML = '<div class="side-note">Расшифровка по этажам загружается… ' +
+      'первый раз это может занять до полуминуты</div>';
+    await loadBudgetFloors();
+    if (!state.budgetFloors) {
+      bodyEl.innerHTML = '<div class="side-note">Не удалось загрузить расшифровку. ' +
+        'Закройте окно и попробуйте ещё раз.</div>';
+      return;
+    }
+  }
+  const entry = (state.budgetFloors[norm(name)] || {})[contr + '|' + corp];
+  if (!entry) {
+    bodyEl.innerHTML = '<div class="side-note">Строк поэтажки для этой ячейки не нашлось</div>';
+    return;
+  }
+  const rw = entry.r[0], rm = entry.r[1];
+  const head = '<tr><th class="num">Этаж</th><th class="num">Объем</th>' +
+    '<th class="num">Раб., руб/ед</th><th class="num">Мат., руб/ед</th>' +
+    '<th class="num">Стоимость, руб</th></tr>';
+  let tvol = 0, tcost = 0;
+  const body = entry.f.map(f => {
+    tvol += f[1];
+    tcost += f[2];
+    return '<tr><td class="num">' + escapeHtml(fmtCell(f[0])) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtVol(f[1])) + '</td>' +
+      '<td class="num">' + (rw ? escapeHtml(fmtInt(rw)) : '') + '</td>' +
+      '<td class="num">' + (rm ? escapeHtml(fmtInt(rm)) : '') + '</td>' +
+      '<td class="num">' + escapeHtml(fmtInt(f[2])) + '</td></tr>';
+  }).join('');
+  const foot = '<tr class="total"><td>Итого</td>' +
+    '<td class="num">' + escapeHtml(fmtVol(tvol)) + '</td><td></td><td></td>' +
+    '<td class="num">' + escapeHtml(fmtInt(tcost)) + '</td></tr>';
+  bodyEl.innerHTML = '<table class="inner mini"><thead>' + head + '</thead><tbody>' +
+    body + '</tbody><tfoot>' + foot + '</tfoot></table>';
+}
+
 // Клик по статье бюджета — раскрыть/свернуть работы; по группе работ — её работы;
-// по работе — выпадающая сводная.
+// по работе — выпадающая сводная; по сумме в сводной — расшифровка по этажам.
 document.getElementById('budget-screen').addEventListener('click', e => {
+  const bc = e.target.closest('td.bcell');
+  if (bc) {
+    const det = e.target.closest('tr.bdetail');
+    if (det) openBudgetCellModal(+det.dataset.bi, +det.dataset.wi,
+      bc.dataset.contr, bc.dataset.corp);
+    return;
+  }
   const bg = e.target.closest('tr.bgrp');
   if (bg) {
     const key = bg.dataset.bi + '|' + bg.dataset.grp;

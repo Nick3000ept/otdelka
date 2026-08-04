@@ -37,15 +37,17 @@ var CONFIG = {
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
 var CACHE_BUDGET = 'budget_v5';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
+var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
-  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n'];
+  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n'];
   for (var i = 0; i < 10; i++) {
     keys.push(CACHE_VOLS + '_' + i);
     keys.push(CACHE_BUDGET + '_' + i);
+    keys.push(CACHE_BFL + '_' + i);
   }
   cache.removeAll(keys);
 }
@@ -446,6 +448,27 @@ function doGet(e) {
     }
   }
 
+  // Расшифровка ячеек бюджета по этажам (05.08.2026): работа -> подрядчик|корпус ->
+  // { r: [расц.раб, расц.мат], f: [[этаж, объём, стоимость], ...] }. Тяжёлый расчёт
+  // по поэтажке, кэш чанкованный на 6 часов; фронт грузит при первом клике по ячейке.
+  if (action === 'budgetFloors') {
+    try {
+      var cacheBF = CacheService.getScriptCache();
+      var cachedBF = cacheGetBig_(cacheBF, CACHE_BFL);
+      if (cachedBF) {
+        return ContentService.createTextOutput(cachedBF)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssBF = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadBF = JSON.stringify({ ok: true, bfloors: buildBudgetFloors_(ssBF) });
+      cachePutBig_(cacheBF, CACHE_BFL, payloadBF, 21600);
+      return ContentService.createTextOutput(payloadBF)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'bfloors_failed', message: String(err) });
+    }
+  }
+
   if (action === 'load') {
     try {
       var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
@@ -703,6 +726,89 @@ function buildBudget_(ss) {
       return [item, Math.round(map[item].total), works];
     })
     .sort(function (a, b) { return b[1] - a[1]; });
+}
+
+/**
+ * Расшифровка ячеек бюджета по этажам (05.08.2026): из поэтажки собираем
+ * { работа(lowercase): { 'подрядчик|корпус': { r: [расц. работы AB, расц. материалов AC],
+ *   f: [[этаж, объём D, стоимость AG], ...] } } }.
+ * Берём только строки с деньгами (как в buildBudget_), объёмы и стоимость суммируются
+ * по этажу, этажи по возрастанию. Расценки внутри тройки работа+подрядчик+корпус
+ * уникальны (проверено 03.08.2026), поэтому хранятся один раз на группу.
+ */
+function buildBudgetFloors_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
+  if (!sh) return {};
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return {};
+
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  var need = [CONFIG.FLOOR_WORK, CONFIG.FLOOR_CORP, CONFIG.FLOOR_CONTRACTOR,
+              CONFIG.FLOOR_FLOOR, CONFIG.FLOOR_VOL, CONFIG.FLOOR_RATE,
+              CONFIG.FLOOR_RATE_MAT, CONFIG.FLOOR_BUDGET_COST];
+  for (var i = 0; i < need.length; i++) {
+    if (!idx[need[i]]) return {};
+  }
+
+  var n = lastRow - 1;
+  var col = function (name) { return sh.getRange(2, idx[name], n, 1).getValues(); };
+  var w = col(CONFIG.FLOOR_WORK);
+  var c = col(CONFIG.FLOOR_CORP);
+  var p = col(CONFIG.FLOOR_CONTRACTOR);
+  var fl = col(CONFIG.FLOOR_FLOOR);
+  var vv = col(CONFIG.FLOOR_VOL);
+  var rw = col(CONFIG.FLOOR_RATE);
+  var rm = col(CONFIG.FLOOR_RATE_MAT);
+  var cost = col(CONFIG.FLOOR_BUDGET_COST);
+
+  var map = {};
+  for (var k = 0; k < n; k++) {
+    var v = typeof cost[k][0] === 'number' ? cost[k][0] : 0;
+    if (!v) continue;
+    var work = String(w[k][0]).trim().toLowerCase();
+    if (!work) continue;
+    var corp = String(c[k][0]).trim();
+    var contr = String(p[k][0]).trim() || '— без подрядчика —';
+    var key = contr + '|' + corp;
+    var floor = fl[k][0];
+    var flNum = typeof floor === 'number'
+      ? floor : parseFloat(String(floor).replace(',', '.'));
+    if (isNaN(flNum)) flNum = String(floor).trim();
+    var vol = typeof vv[k][0] === 'number' ? vv[k][0] : 0;
+
+    if (!map[work]) map[work] = {};
+    if (!map[work][key]) {
+      map[work][key] = {
+        r: [typeof rw[k][0] === 'number' ? rw[k][0] : 0,
+            typeof rm[k][0] === 'number' ? rm[k][0] : 0],
+        fl: {}
+      };
+    }
+    var g = map[work][key];
+    if (!g.fl[flNum]) g.fl[flNum] = [flNum, 0, 0];
+    g.fl[flNum][1] += vol;
+    g.fl[flNum][2] += v;
+  }
+
+  // Словарь этажей -> отсортированный массив, объёмы/стоимость округляем.
+  Object.keys(map).forEach(function (work) {
+    Object.keys(map[work]).forEach(function (key) {
+      var g = map[work][key];
+      g.f = Object.keys(g.fl).map(function (fk) {
+        var row = g.fl[fk];
+        return [row[0], Math.round(row[1] * 100) / 100, Math.round(row[2])];
+      }).sort(function (a, b) {
+        var an = typeof a[0] === 'number' ? a[0] : 9999;
+        var bn = typeof b[0] === 'number' ? b[0] : 9999;
+        return an - bn;
+      });
+      delete g.fl;
+    });
+  });
+  return map;
 }
 
 function sheetToObjects_(sheet) {
