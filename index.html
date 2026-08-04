@@ -383,6 +383,8 @@
   tr.bdetail table.inner td,
   tr.bdetail table.inner tfoot td,
   tr.bdetail table.inner tr.sect td { background: transparent; }
+  /* Сумматор по подрядчику — жирным, без своей заливки. */
+  tr.bdetail table.inner tr.csub td { font-weight: 700; }
   .bdetail-wrap { overflow-x: auto; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
@@ -1336,19 +1338,43 @@ function budgetWorkHtml(w) {
     '<th class="num">Мат., руб/ед</th>' +
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') +
     '<th class="num">Итого</th></tr>';
+  const rowHtml = (o, nameCell) =>
+    '<tr><td>' + nameCell + '</td>' +
+    '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
+    '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
+    ALL_CORPS.map(c =>
+      '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
+    ).join('') +
+    '<td class="num gsum">' + (o.total ? escapeHtml(fmtInt(o.total)) : '') + '</td></tr>';
+
+  // После строк подрядчика с несколькими расценками — его сумматор
+  // «Итого <подрядчик>» (просьба пользователя 05.08.2026).
   const renderRows = rows => {
-    let prevContr = null;
-    return rows.map(o => {
-      const nameCell = o.contr === prevContr ? '' : escapeHtml(o.contr);
-      prevContr = o.contr;
-      return '<tr><td>' + nameCell + '</td>' +
-        '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
-        '<td class="num">' + (o.rm ? escapeHtml(fmtInt(o.rm)) : '') + '</td>' +
-        ALL_CORPS.map(c =>
-          '<td class="num">' + (o.corps[c] ? escapeHtml(fmtInt(o.corps[c])) : '') + '</td>'
-        ).join('') +
-        '<td class="num gsum">' + (o.total ? escapeHtml(fmtInt(o.total)) : '') + '</td></tr>';
-    }).join('');
+    let html = '';
+    for (let i = 0; i < rows.length; i++) {
+      const o = rows[i];
+      const first = i === 0 || rows[i - 1].contr !== o.contr;
+      html += rowHtml(o, first ? escapeHtml(o.contr) : '');
+      const last = i === rows.length - 1 || rows[i + 1].contr !== o.contr;
+      if (last && !first) {
+        const grp = rows.filter(r => r.contr === o.contr);
+        const corps = {};
+        let t = 0;
+        grp.forEach(r => {
+          t += r.total;
+          ALL_CORPS.forEach(c => {
+            if (r.corps[c]) corps[c] = (corps[c] || 0) + r.corps[c];
+          });
+        });
+        html += '<tr class="csub"><td>Итого ' + escapeHtml(o.contr) + '</td>' +
+          '<td class="num"></td><td class="num"></td>' +
+          ALL_CORPS.map(c =>
+            '<td class="num">' + (corps[c] ? escapeHtml(fmtInt(corps[c])) : '') + '</td>'
+          ).join('') +
+          '<td class="num">' + escapeHtml(fmtInt(t)) + '</td></tr>';
+      }
+    }
+    return html;
   };
   const sect = t =>
     '<tr class="sect"><td colspan="' + (ALL_CORPS.length + 4) + '">' + t + '</td></tr>';
