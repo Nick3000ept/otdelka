@@ -1457,12 +1457,15 @@ function checkDetailHtml(it) {
 /**
  * Проверка «Без стоимости» (просьба пользователя 04.08.2026): работы из справочника
  * «Работы», у которых не заполнена базовая расценка работ ИЛИ базовая стоимость
- * материалов. Считается на странице по уже загруженным works, без запросов.
- * Пустым считается всё, что не число, и ноль.
+ * материалов. Только работы с «Объем работ» > 0 — без объёма стоимость не нужна
+ * (уточнение пользователя 05.08.2026). Считается на странице по уже загруженным
+ * works, без запросов. Пустым считается всё, что не число, и ноль.
  */
 function noCostChecks() {
   const out = [];
   state.works.forEach(w => {
+    const vol = typeof w[VOL_COL] === 'number' ? w[VOL_COL] : 0;
+    if (vol <= 0) return;
     const rw = (typeof w[BASE_RATE_COL] === 'number' && w[BASE_RATE_COL] !== 0)
       ? w[BASE_RATE_COL] : null;
     const rm = (typeof w[BASE_MAT_COL] === 'number' && w[BASE_MAT_COL] !== 0)
@@ -1484,9 +1487,9 @@ function renderCheckNoCost() {
   const el = document.getElementById('check-screen');
   const list = noCostChecks();
   const head = '<div class="check-head">Без стоимости: найдено — ' + list.length + '</div>' +
-    '<div class="check-desc">Работы из справочника «Работы», у которых не назначена ' +
-    'базовая расценка работ или базовая стоимость материалов. Клик по группе — ' +
-    'список работ.</div>';
+    '<div class="check-desc">Работы из справочника «Работы» с объёмом больше нуля, ' +
+    'у которых не назначена базовая расценка работ или базовая стоимость материалов. ' +
+    'Клик по группе — список работ.</div>';
   if (!list.length) {
     el.innerHTML = head + '<div class="side-note">У всех работ обе стоимости заполнены</div>';
     return;
