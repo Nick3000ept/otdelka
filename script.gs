@@ -24,16 +24,22 @@ var CONFIG = {
   FLOOR_SS: 'Расценка СС работа',                     // заполнена -> собственные силы
   FLOOR_SS_NAME: 'Название работы СС',                // кол. J -> мэппинг на «Расценки СС»
   FLOOR_FLOOR: 'Этаж',                                // для вкладки «Объемы»
-  FLOOR_VOL: 'Объем'
+  FLOOR_VOL: 'Объем',
+
+  // Вкладка «Бюджет» (04.08.2026): свод по поэтажке статья -> стоимость.
+  FLOOR_BUDGET_FLAG: 'Признак для бюджета основной',            // кол. L — статья бюджета
+  FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета' // кол. AG — что суммируем
 };
 
 var CACHE_FLOORS = 'floors_v2';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
+var CACHE_BUDGET = 'budget_v1';   // свод бюджета статья -> стоимость (см. action=budget)
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
+  cache.remove(CACHE_BUDGET);
   var keys = [CACHE_VOLS + '_n'];
   for (var i = 0; i < 10; i++) keys.push(CACHE_VOLS + '_' + i);
   cache.removeAll(keys);
@@ -293,6 +299,26 @@ function doGet(e) {
     }
   }
 
+  // Свод бюджета для вкладки «Бюджет» (04.08.2026): статья -> суммарная стоимость.
+  // Считается по поэтажке (~20 сек на холодном кэше), ответ крошечный — кэш 6 часов.
+  if (action === 'budget') {
+    try {
+      var cacheB = CacheService.getScriptCache();
+      var cachedB = cacheB.get(CACHE_BUDGET);
+      if (cachedB) {
+        return ContentService.createTextOutput(cachedB)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB) });
+      cacheB.put(CACHE_BUDGET, payloadB, 21600);
+      return ContentService.createTextOutput(payloadB)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'budget_failed', message: String(err) });
+    }
+  }
+
   if (action === 'load') {
     try {
       var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
@@ -458,6 +484,41 @@ function buildVolumes_(ss) {
     });
   });
   return out;
+}
+
+/**
+ * Свод бюджета (04.08.2026): по листу «Поэтажка_работы» суммируем
+ * «Стоимость материалы + работа для бюджета» (кол. AG) в разрезе
+ * «Признак для бюджета основной» (кол. L — статья бюджета).
+ * Возвращает [[статья, сумма], ...] по убыванию суммы; строки без статьи,
+ * но с деньгами, собираются в «— без статьи —», чтобы итог сходился с листом.
+ */
+function buildBudget_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  if (!idx[CONFIG.FLOOR_BUDGET_FLAG] || !idx[CONFIG.FLOOR_BUDGET_COST]) return [];
+
+  var n = lastRow - 1;
+  var flag = sh.getRange(2, idx[CONFIG.FLOOR_BUDGET_FLAG], n, 1).getValues();
+  var cost = sh.getRange(2, idx[CONFIG.FLOOR_BUDGET_COST], n, 1).getValues();
+
+  var map = {};
+  for (var k = 0; k < n; k++) {
+    var v = typeof cost[k][0] === 'number' ? cost[k][0] : 0;
+    if (!v) continue;
+    var item = String(flag[k][0]).trim() || '— без статьи —';
+    map[item] = (map[item] || 0) + v;
+  }
+  return Object.keys(map)
+    .map(function (item) { return [item, Math.round(map[item])]; })
+    .sort(function (a, b) { return b[1] - a[1]; });
 }
 
 function sheetToObjects_(sheet) {

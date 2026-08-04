@@ -113,8 +113,13 @@
   thead th { width: 96px; }
   thead th.chev-col { width: 8px; }
   thead th.wname { width: 38%; }
+  /* «Объемы»: название забирает всё свободное место (просьба пользователя 04.08.2026). */
+  thead th.wauto { width: auto; }
   thead th.tags { width: 200px; }
-  thead th.volcell { width: 62px; }
+  thead th.volcell { width: 62px; white-space: normal; }
+  /* Корпуса на «Объемах» — вдвое уже обычных числовых, «Итого» чуть шире. */
+  thead th.corpcell { width: 48px; }
+  thead th.totcell { width: 64px; }
   tbody tr.work { cursor: pointer; }
   tbody tr.work:hover { background: var(--panel2); }
   tbody tr.work.open { background: var(--panel2); }
@@ -292,8 +297,15 @@
   #status { padding: 40px; text-align: center; color: var(--text-dim); }
   #status.error { color: var(--danger); }
 
-  /* Экран проверки. */
-  #check-screen { flex: 1; overflow: auto; padding: 14px 16px; }
+  /* Экраны проверок и бюджета. */
+  #check-screen, #budget-screen { flex: 1; overflow: auto; padding: 14px 16px; }
+  /* Свод бюджета: две колонки, таблицу не растягиваем на весь экран. */
+  table.check.budget { max-width: 760px; }
+  table.check.budget th.num, table.check.budget td.num { width: 200px; }
+  table.check.budget tfoot td {
+    font-weight: 700; background: var(--panel2);
+    border-top: 2px solid var(--border); padding: 7px 8px;
+  }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
   table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
@@ -339,6 +351,7 @@
     <div class="sb-brand">Отделка СБ3</div>
     <div class="sb-item active" data-screen="rates">Расценки</div>
     <div class="sb-item" data-screen="volumes">Объемы</div>
+    <div class="sb-item" data-screen="budget">Бюджет</div>
     <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
     <div id="sb-checks" style="display:none">
       <div class="sb-item sb-sub" data-screen="check-rates">Проверка расценки
@@ -371,6 +384,7 @@
       </table>
     </div>
     <div id="check-screen" style="display:none"></div>
+    <div id="budget-screen" style="display:none"></div>
     <div id="pane-bottom" style="display:none">
       <div id="pane-work"></div>
       <div id="bottom-cols">
@@ -468,6 +482,8 @@ const state = {
   ssMap: [],                   // лист «Справочник СС» — мэппинг Работа СС -> Работа для АР
   checkRates: [],              // лист «Проверки расценки» — готовая проверка «нет расценок»
   checkOpen: null,             // раскрытая строка в проверке «Расценки работ»
+  budget: null,                // свод статья -> стоимость (action=budget)
+  budgetStatus: 'idle',        // idle | loading | ready | error
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
@@ -485,10 +501,11 @@ const MONEY_HINT = /(расценк|цена|стоимост|руб)/i;
 const TAG_COLS = ['Локация'];
 const TAG_LABEL = 'Локация';
 
-// Работа участвует в расчёте генерального объёма, если этот признак заполнен
+// Работа участвует в расчёте лидерного объёма, если этот признак заполнен
 // (в колонке лежит не «да/нет», а название группы — 73 работы из 321).
+// «Ген. объем» переименован в «Лидерный объем» по просьбе пользователя 04.08.2026.
 const VOL_FLAG = 'Признак для бюджета дополнительный объем';
-const VOL_LABEL = 'Ген. объем';
+const VOL_LABEL = 'Лидерный объем';
 
 const VOL_COL = 'Объем работ';
 const UNIT_COL = 'Ед. изм. работа';
@@ -557,12 +574,15 @@ const COL_ORDER = [
 function workColumns(rows) {
   if (!rows.length) return [];
   if (state.screen === 'volumes') {
-    // Ед. изм. работы — сразу после названия (просьба пользователя 04.08.2026).
+    // Ед. изм. и галочка лидерного объёма — сразу после названия, справа «Итого»
+    // (просьбы пользователя 04.08.2026). Название занимает всё свободное место (auto).
     const cols = [
-      { label: WORK_KEY, key: WORK_KEY },
-      { label: 'Ед. изм', key: UNIT_COL, unit: true }
+      { label: WORK_KEY, key: WORK_KEY, auto: true },
+      { label: 'Ед. изм', key: UNIT_COL, unit: true },
+      { label: VOL_LABEL, vol: true }
     ];
     ALL_CORPS.forEach(c => cols.push({ label: c, corp: c, num: true }));
+    cols.push({ label: 'Итого', total: true, num: true });
     return cols;
   }
   const keys = Object.keys(rows[0]);
@@ -584,6 +604,13 @@ function cellHtml(col, r) {
     const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
     const v = t && t[col.corp];
     return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
+  }
+  // «Итого» справа — объём работы по всем корпусам разом (04.08.2026).
+  if (col.total) {
+    const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
+    let sum = 0;
+    if (t) ALL_CORPS.forEach(c => { sum += t[c] || 0; });
+    return '<td class="num gsum">' + (sum ? escapeHtml(fmtVol(sum)) : '') + '</td>';
   }
   if (col.vol) {
     return '<td class="volcell">' + (hasVolume(r) ? '<span class="check">&#10003;</span>' : '') + '</td>';
@@ -730,11 +757,14 @@ function renderTable() {
 
   const theadRow = document.getElementById('thead-row');
   theadRow.innerHTML = '<th class="chev-col"></th>' + cols.map(c => {
-    const cls = c.num ? ' class="num"'
+    const cls = c.corp ? ' class="num corpcell"'
+      : c.total ? ' class="num totcell"'
+      : c.num ? ' class="num"'
       : c.vol ? ' class="volcell"'
       : c.unit ? ' class="volcell"'
       : c.tags ? ' class="tags"'
-      : (c.key === WORK_KEY ? ' class="wname"' : '');
+      : (c.key !== WORK_KEY ? ''
+      : (c.auto ? ' class="wname wauto"' : ' class="wname"'));
     return '<th' + cls + '>' + escapeHtml(c.label) + '</th>';
   }).join('');
 
@@ -788,8 +818,31 @@ function renderTable() {
         const label = '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span>' +
           escapeHtml(n.name) + ' <span class="cnt">' + n.rows.length + '</span>';
 
+        // «Объемы»: в строке группы — сумма по каждому корпусу и итог справа (просьба
+        // пользователя 04.08.2026). Как и в «Расценках», считаются только работы
+        // с признаком лидерного объёма — иначе одна поверхность сложится дважды.
+        let corpSums = null, corpTotal = 0;
+        if (state.screen === 'volumes' && it.type === 'group' && n.flagged && state.volsTotals) {
+          corpSums = {};
+          n.rows.filter(hasVolume).forEach(r => {
+            const t = state.volsTotals.get(norm(r[WORK_KEY]));
+            if (!t) return;
+            ALL_CORPS.forEach(cc => {
+              const v = t[cc] || 0;
+              if (v) { corpSums[cc] = (corpSums[cc] || 0) + v; corpTotal += v; }
+            });
+          });
+        }
+
         tr.innerHTML = '<td class="chev-cell"></td>' + cols.map(c => {
           if (c.key === WORK_KEY) return '<td class="wname gname">' + label + '</td>';
+          if (corpSums && c.corp) {
+            const v = corpSums[c.corp];
+            return '<td class="num gsum">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
+          }
+          if (corpSums && c.total) {
+            return '<td class="num gsum">' + (corpTotal ? escapeHtml(fmtVol(corpTotal)) : '') + '</td>';
+          }
           if (volText && c.key === VOL_COL) return '<td class="num gsum">' + escapeHtml(volText) + '</td>';
           if (unitText && c.key === UNIT_COL) return '<td class="gsum">' + escapeHtml(unitText) + '</td>';
           return '<td' + (c.num ? ' class="num"' : (c.vol ? ' class="volcell"' : '')) + '></td>';
@@ -1032,6 +1085,55 @@ async function loadVols() {
   }
 }
 
+/**
+ * Вкладка «Бюджет» (04.08.2026): свод по «Поэтажка_работы» — статья бюджета
+ * («Признак для бюджета основной», кол. L) -> сумма «Стоимость материалы + работа
+ * для бюджета» (кол. AG). Считается на сервере (action=budget, кэш 6 часов),
+ * сюда приходит готовый список [[статья, сумма], ...] по убыванию.
+ */
+async function loadBudget() {
+  state.budgetStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=budget&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.budget = json.budget || [];
+    state.budgetStatus = 'ready';
+  } catch (e) {
+    state.budgetStatus = 'error';
+  }
+  if (state.screen === 'budget') renderBudget();
+}
+
+function renderBudget() {
+  const el = document.getElementById('budget-screen');
+  if (state.budgetStatus === 'idle') loadBudget();
+  if (state.budgetStatus !== 'ready') {
+    el.innerHTML = '<div class="check-head">Бюджет</div><div class="side-note">' +
+      (state.budgetStatus === 'error'
+        ? 'Не удалось загрузить бюджет. Обновите страницу.'
+        : 'Бюджет считается по поэтажке — на холодном кэше это до полуминуты…') + '</div>';
+    return;
+  }
+  const rows = state.budget;
+  const head = '<div class="check-head">Бюджет</div>' +
+    '<div class="check-desc">Свод по «Поэтажка_работы»: статья бюджета (признак для ' +
+    'бюджета основной) и стоимость материалы + работа для бюджета</div>';
+  if (!rows.length) {
+    el.innerHTML = head + '<div class="side-note">Данных для свода не нашлось</div>';
+    return;
+  }
+  const total = rows.reduce((acc, r) => acc + r[1], 0);
+  const table = '<table class="check budget"><thead><tr>' +
+    '<th>Статья бюджета</th><th class="num">Стоимость, руб</th></tr></thead><tbody>' +
+    rows.map(r =>
+      '<tr><td>' + escapeHtml(String(r[0])) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtInt(r[1])) + '</td></tr>'
+    ).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
+    '<td class="num">' + escapeHtml(fmtInt(total)) + '</td></tr></tfoot></table>';
+  el.innerHTML = head + table;
+}
+
 // Поэтажная ведомость по корпусам — модальное окно (вкладка «Объемы»).
 function openVolModal(key, name) {
   const work = state.works.find(r => norm(r[WORK_KEY]) === key);
@@ -1237,13 +1339,16 @@ function setScreen(screen) {
     el.classList.toggle('active', el.dataset.screen === screen));
 
   const isCheck = !!CHECK_SCREENS[screen];
-  document.querySelector('header').style.display = isCheck ? 'none' : '';
+  const isBudget = screen === 'budget';
+  document.querySelector('header').style.display = (isCheck || isBudget) ? 'none' : '';
   document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
-  if (isCheck) {
+  document.getElementById('budget-screen').style.display = isBudget ? 'block' : 'none';
+  if (isCheck || isBudget) {
     document.getElementById('pane-top').style.display = 'none';
     document.getElementById('pane-bottom').style.display = 'none';
     document.getElementById('status').style.display = 'none';
-    CHECK_SCREENS[screen]();
+    if (isCheck) CHECK_SCREENS[screen]();
+    else renderBudget();
     return;
   }
 
