@@ -331,6 +331,8 @@
      отклонения больше порога — красным, под строкой раскрывается список подрядчиков. */
   table.check th.num { text-align: center; width: 110px; }
   table.check td.num { text-align: center; white-space: nowrap; }
+  table.check tr.sect[data-grp] { cursor: pointer; }
+  table.check tr.sect .chev { color: var(--accent); }
   table.check tr.wrow { cursor: pointer; }
   table.check tr.wrow:hover td { background: var(--panel2); }
   table.check tr.wrow.open td { background: #dbe7ff; }
@@ -492,6 +494,7 @@ const state = {
   checkOpen: null,             // раскрытая строка в проверке «Расценки работ»
   budget: null,                // свод статья -> стоимость (action=budget)
   budgetStatus: 'idle',        // idle | loading | ready | error
+  checkCollapsed: new Set(),   // свёрнутые группы в проверке «Расценки работ»
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
@@ -1308,11 +1311,14 @@ function renderCheckWorkRates() {
     '<th class="cw-name">Работа</th><th class="num">Баз. расценка</th>' +
     '<th class="num">Ср. подрядчики</th><th class="num">Откл.</th>' +
     '<th class="num">Ср. СС</th><th class="num">Откл.</th></tr></thead><tbody>' +
-    groups.map(g =>
-      '<tr class="sect"><td colspan="6">' + escapeHtml(g.name) +
-      ' <span class="cnt">' + g.items.length + '</span></td></tr>' +
-      g.items.map(rowHtml).join('')
-    ).join('') + '</tbody></table>';
+    groups.map(g => {
+      // Группы можно сворачивать кликом по заголовку (просьба пользователя 04.08.2026).
+      const closed = state.checkCollapsed.has(g.name);
+      return '<tr class="sect" data-grp="' + escapeHtml(g.name) + '"><td colspan="6">' +
+        '<span class="chev">' + (closed ? '&#9656;' : '&#9662;') + '</span> ' +
+        escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td></tr>' +
+        (closed ? '' : g.items.map(rowHtml).join(''));
+    }).join('') + '</tbody></table>';
   el.innerHTML = head + table;
 }
 
@@ -1397,8 +1403,17 @@ document.querySelectorAll('.sb-item').forEach(el => {
   el.addEventListener('click', () => setScreen(el.dataset.screen));
 });
 
-// Проверка «Расценки работ»: клик по строке раскрывает/сворачивает список подрядчиков.
+// Проверка «Расценки работ»: клик по заголовку группы сворачивает/разворачивает её,
+// клик по строке работы раскрывает/сворачивает список подрядчиков.
 document.getElementById('check-screen').addEventListener('click', e => {
+  const sect = e.target.closest('tr.sect[data-grp]');
+  if (sect) {
+    const g = sect.dataset.grp;
+    if (state.checkCollapsed.has(g)) state.checkCollapsed.delete(g);
+    else state.checkCollapsed.add(g);
+    renderCheckWorkRates();
+    return;
+  }
   const tr = e.target.closest('tr.wrow');
   if (!tr) return;
   state.checkOpen = state.checkOpen === tr.dataset.key ? null : tr.dataset.key;
