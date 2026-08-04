@@ -76,6 +76,119 @@ function setup() {
   PropertiesService.getScriptProperties().setProperty('PASSWORD', 'otdelka2026');
 }
 
+/**
+ * Вопросы по работам (04.08.2026): хранятся в JSON-файле на Google Drive владельца
+ * скрипта (выбор пользователя — таблицу не трогаем). ID файла — в Script Properties
+ * (QUESTIONS_FILE_ID), файл создаётся при первом обращении.
+ * ⚠️ Доступ к Диску — новый scope: после деплоя владелец должен ОДИН РАЗ запустить
+ * setupQuestions() в редакторе GAS и принять права, иначе вопросы не работают.
+ */
+var QUESTIONS_FILE_NAME = 'otdelka_questions.json';
+
+/** Запустить один раз из редактора GAS — авторизует Drive и создаёт файл вопросов. */
+function setupQuestions() {
+  var file = questionsFile_();
+  Logger.log('Файл вопросов готов: ' + file.getId());
+}
+
+function questionsFile_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('QUESTIONS_FILE_ID');
+  if (id) {
+    try {
+      return DriveApp.getFileById(id);
+    } catch (e) { /* файл удалили — создаём заново */ }
+  }
+  var file = DriveApp.createFile(QUESTIONS_FILE_NAME, '[]', 'application/json');
+  props.setProperty('QUESTIONS_FILE_ID', file.getId());
+  return file;
+}
+
+function readQuestions_() {
+  // Ошибки прав доступа пробрасываются наверх — фронт покажет понятное сообщение.
+  var raw = questionsFile_().getBlob().getDataAsString();
+  try {
+    var list = JSON.parse(raw || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];   // битый JSON — не роняем сервис, начинаем с пустого списка
+  }
+}
+
+function writeQuestions_(list) {
+  questionsFile_().setContent(JSON.stringify(list));
+}
+
+/**
+ * Единственный POST в проекте (04.08.2026). Тело — JSON в text/plain (обход
+ * CORS-preflight, который GAS не обрабатывает): { t, action, ... }.
+ * addQuestion { work, text, author } — новый вопрос со статусом «Открыт»;
+ * setQuestionStatus { id, status, author } — «Открыт»/«Закрыт» + кто и когда сменил.
+ * Чтение-изменение-запись файла — под LockService: два одновременных вопроса
+ * не должны затереть друг друга.
+ */
+function doPost(e) {
+  var body;
+  try {
+    body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+  } catch (err) {
+    return jsonOut_({ ok: false, error: 'bad_json' });
+  }
+  var stored = PropertiesService.getScriptProperties().getProperty('PASSWORD');
+  if (!stored || body.t !== stored) {
+    return jsonOut_({ ok: false, error: 'unauthorized' });
+  }
+
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(20000);
+  } catch (err) {
+    return jsonOut_({ ok: false, error: 'busy' });
+  }
+  try {
+    var list = readQuestions_();
+
+    if (body.action === 'addQuestion') {
+      var work = String(body.work || '').trim();
+      var text = String(body.text || '').trim();
+      var author = String(body.author || '').trim();
+      if (!work || !text || !author) return jsonOut_({ ok: false, error: 'empty_fields' });
+      var q = {
+        id: new Date().getTime() + '-' + Math.floor(Math.random() * 100000),
+        work: work.slice(0, 500),
+        text: text.slice(0, 2000),
+        author: author.slice(0, 100),
+        created: new Date().toISOString(),
+        status: 'Открыт'
+      };
+      list.push(q);
+      writeQuestions_(list);
+      return jsonOut_({ ok: true, question: q });
+    }
+
+    if (body.action === 'setQuestionStatus') {
+      var id = String(body.id || '');
+      var status = body.status === 'Закрыт' ? 'Закрыт' : 'Открыт';
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === id) {
+          list[i].status = status;
+          list[i].statusBy = String(body.author || '').trim().slice(0, 100);
+          list[i].statusAt = new Date().toISOString();
+          writeQuestions_(list);
+          return jsonOut_({ ok: true, question: list[i] });
+        }
+      }
+      return jsonOut_({ ok: false, error: 'not_found' });
+    }
+
+    return jsonOut_({ ok: false, error: 'unknown_action' });
+  } catch (err) {
+    return jsonOut_({ ok: false, error: 'post_failed', message: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function doGet(e) {
   var params = (e && e.parameter) || {};
   var action = params.action || 'load';
@@ -296,6 +409,15 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return jsonOut_({ ok: false, error: 'volumes_failed', message: String(err) });
+    }
+  }
+
+  // Вопросы по работам — весь список (файл маленький, кэш не нужен).
+  if (action === 'questions') {
+    try {
+      return jsonOut_({ ok: true, questions: readQuestions_() });
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'questions_failed', message: String(err) });
     }
   }
 

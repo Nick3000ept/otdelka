@@ -302,6 +302,38 @@
   #status { padding: 40px; text-align: center; color: var(--text-dim); }
   #status.error { color: var(--danger); }
 
+  /* Вопросы по работам (04.08.2026): кнопка в строке, форма в модалке, статусы. */
+  .qbtn {
+    margin-left: 8px; padding: 1px 8px; font-size: 11px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text-dim);
+    cursor: pointer; vertical-align: middle;
+  }
+  .qbtn:hover { color: var(--accent); border-color: var(--accent); }
+  .q-form { min-width: min(460px, 80vw); }
+  .q-form label { display: block; font-size: 12px; color: var(--text-dim); margin: 10px 0 4px; }
+  .q-form input, .q-form textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel2); color: var(--text); font: inherit; resize: vertical;
+  }
+  .q-actions { margin-top: 12px; display: flex; gap: 10px; align-items: center; }
+  #q-send {
+    padding: 8px 16px; border-radius: 8px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  #q-send:disabled { opacity: .6; cursor: default; }
+  #q-err { font-size: 12px; color: var(--danger); }
+  .qstatus {
+    padding: 2px 10px; border-radius: 999px; border: 1px solid; cursor: pointer;
+    font-size: 12px; background: transparent;
+  }
+  .qstatus.open { color: #b42121; border-color: #f2c4c4; background: #fdeaea; }
+  .qstatus.closed { color: #1d7a3d; border-color: #bfe3cb; background: #e7f6ec; }
+  table.check.qtab th.c-st { width: 90px; }
+  table.check.qtab th.c-work { width: 26%; }
+  table.check.qtab th.c-auth { width: 110px; }
+  table.check.qtab th.c-date { width: 120px; }
+  table.check.qtab th.c-who { width: 170px; }
+
   /* Экраны проверок и бюджета. */
   #check-screen, #budget-screen { flex: 1; overflow: auto; padding: 14px 16px; }
   /* Свод бюджета: две колонки, таблицу не растягиваем на весь экран.
@@ -368,6 +400,8 @@
         <span class="sb-badge" id="badge-check-rates"></span></div>
       <div class="sb-item sb-sub" data-screen="check-work-rates">Отклонения расценок
         <span class="sb-badge" id="badge-check-work-rates"></span></div>
+      <div class="sb-item sb-sub" data-screen="check-questions">Вопросы
+        <span class="sb-badge" id="badge-check-questions"></span></div>
     </div>
   </aside>
   <div id="content">
@@ -494,7 +528,10 @@ const state = {
   checkOpen: null,             // раскрытая строка в проверке «Расценки работ»
   budget: null,                // свод статья -> стоимость (action=budget)
   budgetStatus: 'idle',        // idle | loading | ready | error
-  checkCollapsed: new Set(),   // свёрнутые группы в проверке «Расценки работ»
+  checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
+  questions: [],               // вопросы по работам (action=questions + POST)
+  questionsStatus: 'idle',     // idle | loading | ready | error
+  userName: localStorage.getItem('otdelka_user') || '',  // имя для вопросов/статусов
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
@@ -634,8 +671,12 @@ function cellHtml(col, r) {
       tags.map(t => '<span class="tag">' + escapeHtml(t) + '</span>').join('') + '</td>';
   }
   // Название с отступом (лесенка иерархии); раскрытия больше нет, клик выбирает работу.
+  // На «Расценках» рядом с названием — кнопка «Вопрос» (04.08.2026).
   if (col.key === WORK_KEY) {
-    return '<td class="wname">' + escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
+    const qbtn = state.screen === 'rates'
+      ? ' <button class="qbtn" type="button" title="Задать вопрос по работе">Вопрос</button>'
+      : '';
+    return '<td class="wname">' + escapeHtml(fmtCell(r[col.key], col.money)) + qbtn + '</td>';
   }
   // Объёмы работ — до десятых (решение пользователя 03.08.2026).
   if (col.key === VOL_COL) {
@@ -1353,19 +1394,184 @@ function checkDetailHtml(it) {
     'базовая — ' + escapeHtml(fmtInt(it.base)) + ' руб</div>';
 }
 
+/**
+ * Вопросы по работам (04.08.2026): кнопка «Вопрос» у работы -> модальное окно ->
+ * POST на бэкенд (text/plain, обход CORS-preflight), хранение — JSON-файл на Google
+ * Drive владельца скрипта (выбор пользователя). Статусы «Открыт»/«Закрыт», при любой
+ * записи фиксируются автор и время. Имя пользователя запоминается в localStorage.
+ */
+async function postJson(payload) {
+  payload.t = state.token;
+  const resp = await fetch(GAS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(payload)
+  });
+  const text = await resp.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error('сервер вернул не JSON');
+  }
+}
+
+async function loadQuestions() {
+  state.questionsStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=questions&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.questions = json.questions || [];
+    state.questionsStatus = 'ready';
+  } catch (e) {
+    state.questionsStatus = 'error';
+  }
+  updateCheckBadges();
+  if (state.screen === 'check-questions') renderCheckQuestions();
+}
+
+function openQuestionModal(workName) {
+  document.getElementById('modal-title').textContent = 'Вопрос по работе';
+  document.getElementById('modal-sub').textContent = workName;
+  document.getElementById('modal-body').innerHTML =
+    '<div class="q-form">' +
+    '<label for="q-name">Ваше имя</label>' +
+    '<input id="q-name" type="text" value="' + escapeHtml(state.userName) +
+      '" placeholder="Кто спрашивает — попадёт в список вопросов">' +
+    '<label for="q-text">Вопрос</label>' +
+    '<textarea id="q-text" rows="4" placeholder="Текст вопроса"></textarea>' +
+    '<div class="q-actions"><button id="q-send" type="button">Отправить</button>' +
+    '<span id="q-err"></span></div></div>';
+  document.getElementById('modal-overlay').style.display = 'flex';
+  document.getElementById('q-send').addEventListener('click', () => submitQuestion(workName));
+  document.getElementById(state.userName ? 'q-text' : 'q-name').focus();
+}
+
+async function submitQuestion(work) {
+  const name = document.getElementById('q-name').value.trim();
+  const text = document.getElementById('q-text').value.trim();
+  const err = document.getElementById('q-err');
+  if (!name) { err.textContent = 'Укажите имя'; return; }
+  if (!text) { err.textContent = 'Напишите вопрос'; return; }
+  state.userName = name;
+  try { localStorage.setItem('otdelka_user', name); } catch (e) {}
+  const btn = document.getElementById('q-send');
+  btn.disabled = true;
+  err.textContent = 'Отправка…';
+  try {
+    const json = await postJson({ action: 'addQuestion', work, text, author: name });
+    if (!json.ok) throw new Error(json.message || json.error);
+    if (json.question) state.questions.push(json.question);
+    updateCheckBadges();
+    closeModal();
+  } catch (e) {
+    err.textContent = 'Не отправилось: ' + e.message + '. Попробуйте ещё раз.';
+    btn.disabled = false;
+  }
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getDate()) + '.' + p(d.getMonth() + 1) + '.' + d.getFullYear() +
+    ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+
+function renderCheckQuestions() {
+  const el = document.getElementById('check-screen');
+  if (state.questionsStatus === 'idle') loadQuestions();
+  if (state.questionsStatus === 'loading' || state.questionsStatus === 'idle') {
+    el.innerHTML = '<div class="check-head">Вопросы</div>' +
+      '<div class="side-note">Вопросы загружаются…</div>';
+    return;
+  }
+  if (state.questionsStatus === 'error') {
+    el.innerHTML = '<div class="check-head">Вопросы</div>' +
+      '<div class="side-note">Не удалось загрузить вопросы. Если функция только что ' +
+      'включена — владельцу нужно один раз запустить setupQuestions() в редакторе GAS ' +
+      'и принять доступ к Диску. Потом обновите страницу.</div>';
+    return;
+  }
+  const list = state.questions.slice().sort((a, b) =>
+    ((a.status === 'Закрыт') - (b.status === 'Закрыт')) ||
+    String(b.created || '').localeCompare(String(a.created || '')));
+  const openCnt = list.filter(q => q.status !== 'Закрыт').length;
+  const head = '<div class="check-head">Вопросы: открытых — ' + openCnt +
+    (list.length ? ' из ' + list.length : '') + '</div>' +
+    '<div class="check-desc">Вопросы к работам, заданные кнопкой «Вопрос» на вкладке ' +
+    '«Расценки». Клик по статусу переключает Открыт/Закрыт — фиксируется, кто и когда.</div>';
+  if (!list.length) {
+    el.innerHTML = head + '<div class="side-note">Вопросов пока нет</div>';
+    return;
+  }
+  const table = '<table class="check qtab"><thead><tr>' +
+    '<th class="c-st">Статус</th><th class="c-work">Работа</th><th>Вопрос</th>' +
+    '<th class="c-auth">Автор</th><th class="c-date">Когда</th>' +
+    '<th class="c-who">Статус менял</th></tr></thead><tbody>' +
+    list.map(q => {
+      const closed = q.status === 'Закрыт';
+      return '<tr><td class="c-st"><button class="qstatus ' + (closed ? 'closed' : 'open') +
+        '" type="button" data-id="' + escapeHtml(String(q.id)) + '">' +
+        (closed ? 'Закрыт' : 'Открыт') + '</button></td>' +
+        '<td>' + escapeHtml(String(q.work || '')) + '</td>' +
+        '<td>' + escapeHtml(String(q.text || '')) + '</td>' +
+        '<td>' + escapeHtml(String(q.author || '')) + '</td>' +
+        '<td>' + escapeHtml(fmtDate(q.created)) + '</td>' +
+        '<td>' + (q.statusBy
+          ? escapeHtml(String(q.statusBy)) + ' · ' + escapeHtml(fmtDate(q.statusAt))
+          : '') + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  el.innerHTML = head + table;
+}
+
+async function toggleQuestionStatus(id) {
+  let name = state.userName;
+  if (!name) {
+    name = (window.prompt('Ваше имя (фиксируется при смене статуса):') || '').trim();
+    if (!name) return;
+    state.userName = name;
+    try { localStorage.setItem('otdelka_user', name); } catch (e) {}
+  }
+  const q = state.questions.find(x => String(x.id) === String(id));
+  if (!q) return;
+  const next = q.status === 'Закрыт' ? 'Открыт' : 'Закрыт';
+  const prev = { status: q.status, statusBy: q.statusBy, statusAt: q.statusAt };
+  // Optimistic UI: меняем сразу, при ошибке откатываем.
+  q.status = next;
+  q.statusBy = name;
+  q.statusAt = new Date().toISOString();
+  renderCheckQuestions();
+  updateCheckBadges();
+  try {
+    const json = await postJson({ action: 'setQuestionStatus', id, status: next, author: name });
+    if (!json.ok) throw new Error(json.message || json.error);
+    if (json.question) Object.assign(q, json.question);
+    renderCheckQuestions();
+  } catch (e) {
+    Object.assign(q, prev);
+    renderCheckQuestions();
+    updateCheckBadges();
+    alert('Статус не сохранился: ' + e.message + '. Попробуйте ещё раз.');
+  }
+}
+
 function updateCheckBadges() {
   document.getElementById('badge-check-rates').textContent =
     String(state.checkRates.length || '');
   const list = workRateChecks();
   document.getElementById('badge-check-work-rates').textContent =
     (list && list.length) ? String(list.length) : '';
+  const openQ = state.questions.filter(q => q.status !== 'Закрыт').length;
+  document.getElementById('badge-check-questions').textContent = openQ ? String(openQ) : '';
 }
 
 // Переключение вкладок боковой панели. Экраны проверок — в одном справочнике:
 // имя вкладки -> функция отрисовки (новые проверки добавлять сюда).
 const CHECK_SCREENS = {
   'check-rates': renderCheckRates,
-  'check-work-rates': renderCheckWorkRates
+  'check-work-rates': renderCheckWorkRates,
+  'check-questions': renderCheckQuestions
 };
 
 function setScreen(screen) {
@@ -1406,6 +1612,8 @@ document.querySelectorAll('.sb-item').forEach(el => {
 // Проверка «Расценки работ»: клик по заголовку группы сворачивает/разворачивает её,
 // клик по строке работы раскрывает/сворачивает список подрядчиков.
 document.getElementById('check-screen').addEventListener('click', e => {
+  const qs = e.target.closest('button.qstatus');
+  if (qs) { toggleQuestionStatus(qs.dataset.id); return; }
   const sect = e.target.closest('tr.sect[data-grp]');
   if (sect) {
     const g = sect.dataset.grp;
@@ -1520,6 +1728,13 @@ function toggleGroup(name) {
 }
 
 document.getElementById('tbody').addEventListener('click', e => {
+  // Кнопка «Вопрос» — раньше выбора работы, чтобы клик не проваливался в строку.
+  const qb = e.target.closest('button.qbtn');
+  if (qb) {
+    const trq = e.target.closest('tr.work');
+    if (trq) openQuestionModal(trq.dataset.name || '');
+    return;
+  }
   const hdr = e.target.closest('tr.plc, tr.srf, tr.grp');
   if (hdr) { toggleGroup(hdr.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
@@ -1615,7 +1830,8 @@ async function loadData() {
     fillFilters();
     renderTable();
     updateCheckBadges();
-    loadFloors();   // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
+    loadFloors();      // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
+    loadQuestions();   // вопросы — тоже фоном: файл маленький, нужен бейдж-счётчик
   } catch (e) {
     setStatus('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.', true);
   }
