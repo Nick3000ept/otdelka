@@ -1410,32 +1410,14 @@ function budgetWorkHtml(w) {
     ).join('') +
     '<td class="num gsum">' + (o.total ? escapeHtml(fmtInt(o.total)) : '') + '</td></tr>';
 
-  // После строк подрядчика с несколькими расценками — его сумматор
-  // «Итого <подрядчик>» (просьба пользователя 05.08.2026).
+  // Сумматоры «Итого <подрядчик>» убраны по просьбе пользователя 05.08.2026 —
+  // остались только колонка «Итого» справа и общий «Итого» внизу.
   const renderRows = rows => {
     let html = '';
     for (let i = 0; i < rows.length; i++) {
       const o = rows[i];
       const first = i === 0 || rows[i - 1].contr !== o.contr;
       html += rowHtml(o, first ? escapeHtml(o.contr) : '');
-      const last = i === rows.length - 1 || rows[i + 1].contr !== o.contr;
-      if (last && !first) {
-        const grp = rows.filter(r => r.contr === o.contr);
-        const corps = {};
-        let t = 0;
-        grp.forEach(r => {
-          t += r.total;
-          ALL_CORPS.forEach(c => {
-            if (r.corps[c]) corps[c] = (corps[c] || 0) + r.corps[c];
-          });
-        });
-        html += '<tr class="csub"><td>Итого ' + escapeHtml(o.contr) + '</td>' +
-          '<td class="num"></td><td class="num"></td>' +
-          ALL_CORPS.map(c =>
-            '<td class="num">' + (corps[c] ? escapeHtml(fmtInt(corps[c])) : '') + '</td>'
-          ).join('') +
-          '<td class="num">' + escapeHtml(fmtInt(t)) + '</td></tr>';
-      }
     }
     return html;
   };
