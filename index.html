@@ -247,6 +247,17 @@
   /* Заголовки обеих таблиц на одной высоте: убираем верхний отступ у таблиц. */
   #bottom-cols table.inner { margin-top: 0; }
 
+  /* Переключатель содержимого ячеек сводной: Работа / Материалы / Работа + материалы. */
+  .cmode { display: flex; margin-bottom: 6px; }
+  .cmode-btn {
+    padding: 3px 10px; font-size: 11px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text-dim);
+  }
+  .cmode-btn:first-child { border-radius: 6px 0 0 6px; }
+  .cmode-btn:last-child { border-radius: 0 6px 6px 0; }
+  .cmode-btn + .cmode-btn { border-left: none; }
+  .cmode-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
   table.inner.contractors { width: auto; margin: 0; }
   table.inner.contractors th.cname, table.inner.contractors td.cname {
     width: 220px; text-align: left; white-space: normal;
@@ -533,6 +544,7 @@ const state = {
   questionsStatus: 'idle',     // idle | loading | ready | error
   userName: localStorage.getItem('otdelka_user') || '',  // имя для вопросов/статусов
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
+  ctrMode: 'work',             // ячейки сводной: 'work' | 'mat' | 'both' (кнопки Работа/Материалы/Работа+материалы)
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
   query: '',
@@ -937,12 +949,28 @@ function fillFilters() {
 
 /**
  * Сводная «подрядчик × корпус» по одной работе.
- * Данные: state.floors[ключ работы] = [[подрядчик, корпус, расценка, признак СС], ...].
- * В ячейке — расценка за работу на единицу в бюджет (не сумма: складывать расценки нельзя).
+ * Данные: state.floors[ключ работы] = [[подрядчик, корпус, расценка, признак СС, мат. расценка], ...].
+ * Ячейка зависит от режима (кнопки над таблицей, state.ctrMode): расценка за работу
+ * на ед. в бюджет / стоимость материалов на ед. в бюджет / их сумма. Расценки разных
+ * корпусов по-прежнему не складываются — суммируются только работа+материалы одной ячейки.
  */
 // Корпуса всегда одни и те же — все 12, чтобы колонки не скакали между работами.
 const ALL_CORPS = ['К1','К2','К3','К4','К5','К6','К7','К8','К9','К10','К11','К12'];
 const BASE_RATE_COL = 'Базовая расценка работа в расчет, руб';
+const BASE_MAT_COL = 'Стоимость материалов базовая, за ед';
+const CTR_MODES = [['work','Работа'],['mat','Материалы'],['both','Работа + материалы']];
+const CTR_CAPTION = {
+  work: 'расценка за работу на ед. в бюджет, руб',
+  mat:  'стоимость материалов на ед. в бюджет, руб',
+  both: 'работа + материалы на ед. в бюджет, руб'
+};
+// Значение ячейки в текущем режиме; 0/пусто -> undefined (ячейка остаётся пустой)
+function ctrCellVal(rate, mat) {
+  const v = state.ctrMode === 'work' ? rate
+          : state.ctrMode === 'mat'  ? mat
+          : (rate || 0) + (mat || 0);
+  return v ? v : undefined;
+}
 const fmtInt = v => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(v);
 
 function contractorsHtml(workKey) {
@@ -959,11 +987,14 @@ function contractorsHtml(workKey) {
 
   // Базовая расценка из строки работы — всегда нижней строкой, но только в корпусах,
   // где не назначен ни подрядчик, ни собственные силы (решение пользователя 03.08.2026).
+  // В режимах «Материалы»/«Работа + материалы» берётся базовая мат. расценка работы.
   const work = state.works.find(r => norm(r[WORK_KEY]) === workKey);
-  const base = work && typeof work[BASE_RATE_COL] === 'number' ? work[BASE_RATE_COL] : null;
+  const baseWork = work && typeof work[BASE_RATE_COL] === 'number' ? work[BASE_RATE_COL] : 0;
+  const baseMat = work && typeof work[BASE_MAT_COL] === 'number' ? work[BASE_MAT_COL] : 0;
+  const base = ctrCellVal(baseWork, baseMat) ?? null;
   const occupied = new Set(rows.map(r => r[1]));
 
-  if (!rows.length && base === null) {
+  if (!rows.length && baseWork === 0 && baseMat === 0) {
     return '<div class="side-note">Подрядчики по этой работе в «Поэтажка_работы» не найдены</div>';
   }
 
@@ -971,10 +1002,10 @@ function contractorsHtml(workKey) {
   // «Расценка СС работа»). У одного подрядчика бывают и те, и другие расценки
   // (напр. Смирнов) — тогда его ячейки расходятся по обоим блокам.
   const regular = new Map(), own = new Map();
-  rows.forEach(([contr, corp, rate, ss]) => {
+  rows.forEach(([contr, corp, rate, ss, mat]) => {
     const map = ss ? own : regular;
     if (!map.has(contr)) map.set(contr, new Map());
-    map.get(contr).set(corp, rate);
+    map.get(contr).set(corp, ctrCellVal(rate, mat));
   });
 
   // Расценки в сводной — целыми рублями, без копеек (решение пользователя 03.08.2026).
@@ -1005,9 +1036,15 @@ function contractorsHtml(workKey) {
         (occupied.has(c) ? '' : escapeHtml(fmtInt(base))) + '</td>').join('') + '</tr>';
   }
 
-  return '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
+  // Переключатель содержимого ячеек: Работа / Материалы / Работа + материалы (04.08.2026).
+  const modeBtns = '<div class="cmode">' + CTR_MODES.map(([m, label]) =>
+    '<button type="button" class="cmode-btn' + (state.ctrMode === m ? ' on' : '') +
+    '" data-mode="' + m + '">' + label + '</button>').join('') + '</div>';
+
+  return modeBtns +
+    '<table class="inner contractors"><thead>' + head + '</thead><tbody>' + body +
     '</tbody></table>' +
-    '<div class="side-sub" style="margin-top:6px">расценка за работу на ед. в бюджет, руб</div>';
+    '<div class="side-sub" style="margin-top:6px">' + CTR_CAPTION[state.ctrMode] + '</div>';
 }
 
 // Нижняя панель: слева подрядчики × корпуса, справа материалы выбранной работы.
@@ -1637,7 +1674,14 @@ document.getElementById('sb-checks-toggle').addEventListener('click', () => {
 });
 
 // Клик по строке подрядчика: подсветка + модальное окно с деталями.
+// Там же — кнопки режима ячеек (Работа/Материалы/Работа+материалы): перерисовываем сводную.
 document.getElementById('ctr-body').addEventListener('click', e => {
+  const mb = e.target.closest('.cmode-btn');
+  if (mb && state.selected) {
+    state.ctrMode = mb.dataset.mode;
+    document.getElementById('ctr-body').innerHTML = contractorsHtml(state.selected);
+    return;
+  }
   const tr = e.target.closest('tr.crow');
   if (!tr || !state.selected) return;
   state.ctrSel = { name: tr.dataset.contr, ss: tr.dataset.ss === '1' };
