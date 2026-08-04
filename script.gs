@@ -34,7 +34,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v1';   // свод бюджета статья -> стоимость (см. action=budget)
+var CACHE_BUDGET = 'budget_v2';   // свод бюджета статья -> стоимость + работы (action=budget)
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
@@ -622,9 +622,10 @@ function buildVolumes_(ss) {
 /**
  * Свод бюджета (04.08.2026): по листу «Поэтажка_работы» суммируем
  * «Стоимость материалы + работа для бюджета» (кол. AG) в разрезе
- * «Признак для бюджета основной» (кол. L — статья бюджета).
- * Возвращает [[статья, сумма], ...] по убыванию суммы; строки без статьи,
- * но с деньгами, собираются в «— без статьи —», чтобы итог сходился с листом.
+ * «Признак для бюджета основной» (кол. L — статья бюджета), внутри статьи —
+ * разбивка по работам (кол. A) для раскрытия на витрине (просьба 04.08.2026).
+ * Возвращает [[статья, сумма, [[работа, сумма], ...]], ...] — всё по убыванию суммы;
+ * строки без статьи, но с деньгами, собираются в «— без статьи —».
  */
 function buildBudget_(ss) {
   var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
@@ -636,21 +637,31 @@ function buildBudget_(ss) {
   var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
   var idx = {};
   head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
-  if (!idx[CONFIG.FLOOR_BUDGET_FLAG] || !idx[CONFIG.FLOOR_BUDGET_COST]) return [];
+  if (!idx[CONFIG.FLOOR_BUDGET_FLAG] || !idx[CONFIG.FLOOR_BUDGET_COST] ||
+      !idx[CONFIG.FLOOR_WORK]) return [];
 
   var n = lastRow - 1;
   var flag = sh.getRange(2, idx[CONFIG.FLOOR_BUDGET_FLAG], n, 1).getValues();
   var cost = sh.getRange(2, idx[CONFIG.FLOOR_BUDGET_COST], n, 1).getValues();
+  var wrk = sh.getRange(2, idx[CONFIG.FLOOR_WORK], n, 1).getValues();
 
   var map = {};
   for (var k = 0; k < n; k++) {
     var v = typeof cost[k][0] === 'number' ? cost[k][0] : 0;
     if (!v) continue;
     var item = String(flag[k][0]).trim() || '— без статьи —';
-    map[item] = (map[item] || 0) + v;
+    var work = String(wrk[k][0]).trim() || '— без работы —';
+    if (!map[item]) map[item] = { total: 0, works: {} };
+    map[item].total += v;
+    map[item].works[work] = (map[item].works[work] || 0) + v;
   }
   return Object.keys(map)
-    .map(function (item) { return [item, Math.round(map[item])]; })
+    .map(function (item) {
+      var works = Object.keys(map[item].works)
+        .map(function (w) { return [w, Math.round(map[item].works[w])]; })
+        .sort(function (a, b) { return b[1] - a[1]; });
+      return [item, Math.round(map[item].total), works];
+    })
     .sort(function (a, b) { return b[1] - a[1]; });
 }
 

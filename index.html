@@ -357,6 +357,12 @@
     font-weight: 700; background: var(--panel2);
     border-top: 2px solid var(--border); padding: 7px 8px;
   }
+  /* Иерархия бюджета: статья кликабельна, работы — с отступом, приглушённые. */
+  table.check.budget tr.brow { cursor: pointer; }
+  table.check.budget tr.brow:hover td { background: var(--panel2); }
+  table.check.budget tr.brow .chev { color: var(--accent); }
+  table.check.budget tr.bwork td { color: var(--text-dim); font-size: 12px; }
+  table.check.budget tr.bwork td:first-child { padding-left: 28px; white-space: normal; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
   table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
@@ -539,8 +545,10 @@ const state = {
   ssMap: [],                   // лист «Справочник СС» — мэппинг Работа СС -> Работа для АР
   checkRates: [],              // лист «Проверки расценки» — готовая проверка «нет расценок»
   checkOpen: null,             // раскрытая строка в проверке «Расценки работ»
-  budget: null,                // свод статья -> стоимость (action=budget)
+  budget: null,                // свод статья -> стоимость + работы (action=budget)
   budgetStatus: 'idle',        // idle | loading | ready | error
+  budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
+  noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
   checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
   questions: [],               // вопросы по работам (action=questions + POST)
   questionsStatus: 'idle',     // idle | loading | ready | error
@@ -1209,15 +1217,37 @@ function renderBudget() {
     return;
   }
   const total = rows.reduce((acc, r) => acc + r[1], 0);
+  // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   const table = '<table class="check budget"><thead><tr>' +
     '<th>Статья бюджета</th><th class="num">Стоимость, руб</th></tr></thead><tbody>' +
-    rows.map(r =>
-      '<tr><td>' + escapeHtml(String(r[0])) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtInt(r[1])) + '</td></tr>'
-    ).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
+    rows.map((r, i) => {
+      const works = r[2] || [];
+      const open = state.budgetOpen.has(String(r[0]));
+      let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
+        (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
+        escapeHtml(String(r[0])) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtInt(r[1])) + '</td></tr>';
+      if (open) {
+        html += works.map(w =>
+          '<tr class="bwork"><td>' + escapeHtml(String(w[0])) + '</td>' +
+          '<td class="num">' + escapeHtml(fmtInt(w[1])) + '</td></tr>'
+        ).join('');
+      }
+      return html;
+    }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + table;
 }
+
+// Клик по статье бюджета — раскрыть/свернуть список входящих работ.
+document.getElementById('budget-screen').addEventListener('click', e => {
+  const tr = e.target.closest('tr.brow');
+  if (!tr) return;
+  const item = tr.dataset.item;
+  if (state.budgetOpen.has(item)) state.budgetOpen.delete(item);
+  else state.budgetOpen.add(item);
+  renderBudget();
+});
 
 // Поэтажная ведомость по корпусам — модальное окно (вкладка «Объемы»).
 function openVolModal(key, name) {
@@ -1455,26 +1485,43 @@ function renderCheckNoCost() {
   const list = noCostChecks();
   const head = '<div class="check-head">Без стоимости: найдено — ' + list.length + '</div>' +
     '<div class="check-desc">Работы из справочника «Работы», у которых не назначена ' +
-    'базовая расценка работ или базовая стоимость материалов. Сначала — работы, ' +
-    'где нет обеих стоимостей.</div>';
+    'базовая расценка работ или базовая стоимость материалов. Клик по группе — ' +
+    'список работ.</div>';
   if (!list.length) {
     el.innerHTML = head + '<div class="side-note">У всех работ обе стоимости заполнены</div>';
     return;
   }
+  // Группировка по «Группа работ», по умолчанию всё свернуто (просьба 04.08.2026);
+  // внутри группы первыми — работы без обеих стоимостей (list уже так отсортирован).
+  const groups = [];
+  const byGroup = new Map();
+  list.forEach(it => {
+    if (!byGroup.has(it.group)) {
+      const g = { name: it.group, items: [] };
+      byGroup.set(it.group, g);
+      groups.push(g);
+    }
+    byGroup.get(it.group).items.push(it);
+  });
+  groups.sort((a, b) => b.items.length - a.items.length);
   const cell = v => (v === null
     ? '<span class="flag">не задана</span>'
     : escapeHtml(fmtCell(v, true)));
   const table = '<table class="check"><thead><tr>' +
-    '<th class="cw-name">Работа</th><th>Группа работ</th><th class="num">Ед. изм</th>' +
+    '<th class="cw-name">Работа</th><th class="num">Ед. изм</th>' +
     '<th class="num">Баз. расценка раб.</th><th class="num">Баз. расценка мат.</th>' +
     '</tr></thead><tbody>' +
-    list.map(it =>
-      '<tr><td>' + escapeHtml(it.name) + '</td>' +
-      '<td>' + escapeHtml(it.group) + '</td>' +
-      '<td class="num">' + escapeHtml(it.unit) + '</td>' +
-      '<td class="num">' + cell(it.rateW) + '</td>' +
-      '<td class="num">' + cell(it.rateM) + '</td></tr>'
-    ).join('') + '</tbody></table>';
+    groups.map(g => {
+      const open = state.noCostOpen.has(g.name);
+      return '<tr class="sect" data-ncgrp="' + escapeHtml(g.name) + '"><td colspan="4">' +
+        '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' +
+        escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td></tr>' +
+        (open ? g.items.map(it =>
+          '<tr><td>' + escapeHtml(it.name) + '</td>' +
+          '<td class="num">' + escapeHtml(it.unit) + '</td>' +
+          '<td class="num">' + cell(it.rateW) + '</td>' +
+          '<td class="num">' + cell(it.rateM) + '</td></tr>').join('') : '');
+    }).join('') + '</tbody></table>';
   el.innerHTML = head + table;
 }
 
@@ -1701,6 +1748,14 @@ document.querySelectorAll('.sb-item').forEach(el => {
 document.getElementById('check-screen').addEventListener('click', e => {
   const qs = e.target.closest('button.qstatus');
   if (qs) { toggleQuestionStatus(qs.dataset.id); return; }
+  const nc = e.target.closest('tr.sect[data-ncgrp]');
+  if (nc) {
+    const g = nc.dataset.ncgrp;
+    if (state.noCostOpen.has(g)) state.noCostOpen.delete(g);
+    else state.noCostOpen.add(g);
+    renderCheckNoCost();
+    return;
+  }
   const sect = e.target.closest('tr.sect[data-grp]');
   if (sect) {
     const g = sect.dataset.grp;
