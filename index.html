@@ -412,6 +412,8 @@
         <span class="sb-badge" id="badge-check-rates"></span></div>
       <div class="sb-item sb-sub" data-screen="check-work-rates">Отклонения расценок
         <span class="sb-badge" id="badge-check-work-rates"></span></div>
+      <div class="sb-item sb-sub" data-screen="check-no-cost">Без стоимости
+        <span class="sb-badge" id="badge-check-no-cost"></span></div>
       <div class="sb-item sb-sub" data-screen="check-questions">Вопросы
         <span class="sb-badge" id="badge-check-questions"></span></div>
     </div>
@@ -1423,6 +1425,60 @@ function checkDetailHtml(it) {
 }
 
 /**
+ * Проверка «Без стоимости» (просьба пользователя 04.08.2026): работы из справочника
+ * «Работы», у которых не заполнена базовая расценка работ ИЛИ базовая стоимость
+ * материалов. Считается на странице по уже загруженным works, без запросов.
+ * Пустым считается всё, что не число, и ноль.
+ */
+function noCostChecks() {
+  const out = [];
+  state.works.forEach(w => {
+    const rw = (typeof w[BASE_RATE_COL] === 'number' && w[BASE_RATE_COL] !== 0)
+      ? w[BASE_RATE_COL] : null;
+    const rm = (typeof w[BASE_MAT_COL] === 'number' && w[BASE_MAT_COL] !== 0)
+      ? w[BASE_MAT_COL] : null;
+    if (rw !== null && rm !== null) return;
+    out.push({
+      name: String(w[WORK_KEY] || ''),
+      group: String(w[COL_GROUP] || '').trim() || NO_GROUP,
+      unit: String(w[UNIT_COL] || '').trim(),
+      rateW: rw, rateM: rm,
+      missing: (rw === null ? 1 : 0) + (rm === null ? 1 : 0)
+    });
+  });
+  out.sort((a, b) => b.missing - a.missing);   // сперва работы, где нет обеих стоимостей
+  return out;
+}
+
+function renderCheckNoCost() {
+  const el = document.getElementById('check-screen');
+  const list = noCostChecks();
+  const head = '<div class="check-head">Без стоимости: найдено — ' + list.length + '</div>' +
+    '<div class="check-desc">Работы из справочника «Работы», у которых не назначена ' +
+    'базовая расценка работ или базовая стоимость материалов. Сначала — работы, ' +
+    'где нет обеих стоимостей.</div>';
+  if (!list.length) {
+    el.innerHTML = head + '<div class="side-note">У всех работ обе стоимости заполнены</div>';
+    return;
+  }
+  const cell = v => (v === null
+    ? '<span class="flag">не задана</span>'
+    : escapeHtml(fmtCell(v, true)));
+  const table = '<table class="check"><thead><tr>' +
+    '<th class="cw-name">Работа</th><th>Группа работ</th><th class="num">Ед. изм</th>' +
+    '<th class="num">Баз. расценка раб.</th><th class="num">Баз. расценка мат.</th>' +
+    '</tr></thead><tbody>' +
+    list.map(it =>
+      '<tr><td>' + escapeHtml(it.name) + '</td>' +
+      '<td>' + escapeHtml(it.group) + '</td>' +
+      '<td class="num">' + escapeHtml(it.unit) + '</td>' +
+      '<td class="num">' + cell(it.rateW) + '</td>' +
+      '<td class="num">' + cell(it.rateM) + '</td></tr>'
+    ).join('') + '</tbody></table>';
+  el.innerHTML = head + table;
+}
+
+/**
  * Вопросы по работам (04.08.2026): кнопка «Вопрос» у работы -> модальное окно ->
  * POST на бэкенд (text/plain, обход CORS-preflight), хранение — JSON-файл на Google
  * Drive владельца скрипта (выбор пользователя). Статусы «Открыт»/«Закрыт», при любой
@@ -1592,6 +1648,8 @@ function updateCheckBadges() {
     (list && list.length) ? String(list.length) : '';
   const openQ = state.questions.filter(q => q.status !== 'Закрыт').length;
   document.getElementById('badge-check-questions').textContent = openQ ? String(openQ) : '';
+  const noCost = state.works.length ? noCostChecks().length : 0;
+  document.getElementById('badge-check-no-cost').textContent = noCost ? String(noCost) : '';
 }
 
 // Переключение вкладок боковой панели. Экраны проверок — в одном справочнике:
@@ -1599,6 +1657,7 @@ function updateCheckBadges() {
 const CHECK_SCREENS = {
   'check-rates': renderCheckRates,
   'check-work-rates': renderCheckWorkRates,
+  'check-no-cost': renderCheckNoCost,
   'check-questions': renderCheckQuestions
 };
 
