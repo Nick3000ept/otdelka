@@ -358,18 +358,30 @@
     font-weight: 700; background: var(--panel2);
     border-top: 2px solid var(--border); padding: 7px 8px;
   }
-  /* Иерархия бюджета: статья кликабельна, работы — с отступом, приглушённые. */
+  /* Иерархия бюджета (акценты — просьба пользователя 05.08.2026):
+     статья — жирный заголовок на сером, работы — с отступом, раскрытая работа
+     подсвечена синим, её сводная — с синей боковой полосой и отступом. */
   table.check.budget tr.brow { cursor: pointer; }
-  table.check.budget tr.brow:hover td { background: var(--panel2); }
+  table.check.budget tr.brow td {
+    background: var(--panel2); font-weight: 700;
+    border-top: 1px solid var(--border); padding: 8px;
+  }
+  table.check.budget tr.brow:hover td { background: #e2e5eb; }
   table.check.budget tr.brow .chev { color: var(--accent); }
-  table.check.budget tr.bwork td { color: var(--text-dim); font-size: 12px; }
+  table.check.budget tr.bwork td { color: var(--text); font-size: 12px; }
   table.check.budget tr.bwork td:first-child { padding-left: 28px; white-space: normal; }
   table.check.budget tr.bwork { cursor: pointer; }
-  table.check.budget tr.bwork:hover td { background: var(--panel2); color: var(--text); }
+  table.check.budget tr.bwork:hover td { background: var(--panel2); }
+  table.check.budget tr.bwork.open td { background: #dbe7ff; font-weight: 600; }
   /* Выпадающая сводная по работе: подрядчики × корпуса, скролл внутри своей ячейки. */
   table.check.budget tr.bdetail > td {
-    background: #fafbfc; padding: 10px 12px 14px; white-space: normal;
+    background: #f6f8fb; padding: 10px 14px 16px 25px; white-space: normal;
+    border-left: 3px solid var(--accent);
   }
+  .bdetail-title {
+    font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 8px;
+  }
+  .bdetail-title .bd-sum { color: var(--text-dim); font-weight: 600; }
   .bdetail-wrap { overflow-x: auto; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
@@ -1242,7 +1254,8 @@ function renderBudget() {
         html += works.map((w, wi) => {
           const key = i + '|' + wi;
           const wOpen = state.budgetWorkOpen === key;
-          let h = '<tr class="bwork" data-bi="' + i + '" data-wi="' + wi + '">' +
+          let h = '<tr class="bwork' + (wOpen ? ' open' : '') + '" data-bi="' + i +
+            '" data-wi="' + wi + '">' +
             '<td><span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(String(w[0])) + '</td>' +
             '<td class="num">' + escapeHtml(fmtInt(w[1])) + '</td></tr>';
@@ -1353,7 +1366,10 @@ function budgetWorkHtml(w) {
     ALL_CORPS.map(c =>
       '<td class="num">' + (totals[c] ? escapeHtml(fmtInt(totals[c])) : '') + '</td>'
     ).join('') + '</tr>';
-  return '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
+  // Заголовок сводной — чтобы было видно, к какой работе относятся данные.
+  return '<div class="bdetail-title">' + escapeHtml(name) +
+    ' <span class="bd-sum">· итого ' + escapeHtml(fmtInt(w[1])) + ' руб</span></div>' +
+    '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
     '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>' +
     '<div class="side-sub" style="margin-top:6px">в ячейках — стоимость работ и материалов ' +
     'итого для бюджета, руб' +
