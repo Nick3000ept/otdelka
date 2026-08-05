@@ -779,7 +779,11 @@ function cellHtml(col, r) {
     return '<td class="wname">' + escapeHtml(fmtCell(r[col.key], col.money)) + qbtn + '</td>';
   }
   // Объём работ — чистый из поэтажки (кол. D), не из справочника (05.08.2026).
+  // Пока объёмы грузятся фоном — «…», чтобы пустота не выглядела отсутствием данных.
   if (col.key === VOL_COL) {
+    if (state.volsStatus === 'loading' || state.volsStatus === 'idle') {
+      return '<td class="num" style="color:var(--text-dim)">…</td>';
+    }
     const v = workVolD(r);
     return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
   }
