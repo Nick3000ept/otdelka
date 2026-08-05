@@ -463,6 +463,8 @@
         <span class="sb-badge" id="badge-check-work-rates"></span></div>
       <div class="sb-item sb-sub" data-screen="check-no-cost">Без стоимости
         <span class="sb-badge" id="badge-check-no-cost"></span></div>
+      <div class="sb-item sb-sub" data-screen="check-formulas">Формулы
+        <span class="sb-badge" id="badge-check-formulas"></span></div>
       <div class="sb-item sb-sub" data-screen="check-questions">Вопросы
         <span class="sb-badge" id="badge-check-questions"></span></div>
     </div>
@@ -1846,6 +1848,84 @@ function renderCheckNoCost() {
 }
 
 /**
+ * Проверка «Формулы» (просьба пользователя 05.08.2026): работы, в строках которых
+ * остались ошибки формул — Google отдаёт их в выгрузке текстом (#N/A, #REF!,
+ * #DIV/0!, #VALUE!, #NAME?, #NUM!, #NULL!, #ERROR!). Смотрим строку работы в листе
+ * «Работы» И её материалы в листе «Расходы» (по данным на 05.08.2026 все ошибки —
+ * именно там). Считается на странице по уже загруженным данным, без запросов.
+ */
+const FORMULA_ERR_RE = /^#(N\/A|REF!|DIV\/0!|VALUE!|NAME\?|NUM!|NULL!|ERROR!?)$/i;
+
+function formulaChecks() {
+  const byName = new Map();   // norm(работа) -> { name, group, errs: [строки-описания] }
+  const add = (rawName, group, label) => {
+    const key = norm(rawName);
+    if (!key) return;
+    if (!byName.has(key)) {
+      byName.set(key, { name: String(rawName), group: group || '', errs: [] });
+    }
+    const it = byName.get(key);
+    if (group && !it.group) it.group = group;
+    it.errs.push(label);
+  };
+  state.works.forEach(w => {
+    Object.keys(w).forEach(col => {
+      const v = w[col];
+      if (typeof v === 'string' && FORMULA_ERR_RE.test(v.trim())) {
+        add(w[WORK_KEY], String(w[COL_GROUP] || '').trim() || NO_GROUP,
+          'Работы · ' + col + ': ' + v.trim());
+      }
+    });
+  });
+  state.byWork.forEach(rows => {
+    rows.forEach(r => {
+      Object.keys(r).forEach(col => {
+        const v = r[col];
+        if (typeof v === 'string' && FORMULA_ERR_RE.test(v.trim())) {
+          const mat = String(r['Материалы'] || '').trim();
+          add(r[WORK_KEY], '',
+            'Расходы' + (mat ? ' · ' + mat : '') + ' · ' + col + ': ' + v.trim());
+        }
+      });
+    });
+  });
+  const out = Array.from(byName.values());
+  // Группа для работ, найденных только через «Расходы», — из справочника «Работы».
+  out.forEach(it => {
+    if (!it.group) {
+      const w = state.works.find(r => norm(r[WORK_KEY]) === norm(it.name));
+      it.group = w ? (String(w[COL_GROUP] || '').trim() || NO_GROUP) : NO_GROUP;
+    }
+  });
+  out.sort((a, b) => b.errs.length - a.errs.length);
+  return out;
+}
+
+function renderCheckFormulas() {
+  const el = document.getElementById('check-screen');
+  const list = formulaChecks();
+  const head = '<div class="check-head">Формулы: работ с ошибками — ' + list.length + '</div>' +
+    '<div class="check-desc">Работы, в строках которых есть ошибки формул (#N/A, #REF! ' +
+    'и т.п.) — в самом справочнике «Работы» или в материалах работы (лист «Расходы»). ' +
+    'У каждой работы — где именно ошибка.</div>';
+  if (!list.length) {
+    el.innerHTML = head + '<div class="side-note">Ошибок формул не найдено</div>';
+    return;
+  }
+  const table = '<table class="check"><thead><tr>' +
+    '<th class="cw-name">Работа</th><th>Группа работ</th><th>Где ошибка</th>' +
+    '</tr></thead><tbody>' +
+    list.map(it =>
+      '<tr><td>' + escapeHtml(it.name) + '</td>' +
+      '<td>' + escapeHtml(it.group) + '</td>' +
+      '<td>' + it.errs.map(e =>
+        '<span class="flag">' + escapeHtml(e) + '</span>'
+      ).join(' ') + '</td></tr>'
+    ).join('') + '</tbody></table>';
+  el.innerHTML = head + table;
+}
+
+/**
  * Вопросы по работам (04.08.2026): кнопка «Вопрос» у работы -> модальное окно ->
  * POST на бэкенд (text/plain, обход CORS-preflight), хранение — JSON-файл на Google
  * Drive владельца скрипта (выбор пользователя). Статусы «Открыт»/«Закрыт», при любой
@@ -2017,6 +2097,8 @@ function updateCheckBadges() {
   document.getElementById('badge-check-questions').textContent = openQ ? String(openQ) : '';
   const noCost = state.works.length ? noCostChecks().length : 0;
   document.getElementById('badge-check-no-cost').textContent = noCost ? String(noCost) : '';
+  const frm = state.works.length ? formulaChecks().length : 0;
+  document.getElementById('badge-check-formulas').textContent = frm ? String(frm) : '';
 }
 
 // Переключение вкладок боковой панели. Экраны проверок — в одном справочнике:
@@ -2025,6 +2107,7 @@ const CHECK_SCREENS = {
   'check-rates': renderCheckRates,
   'check-work-rates': renderCheckWorkRates,
   'check-no-cost': renderCheckNoCost,
+  'check-formulas': renderCheckFormulas,
   'check-questions': renderCheckQuestions
 };
 
