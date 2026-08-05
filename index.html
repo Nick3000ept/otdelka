@@ -656,7 +656,15 @@ function hasVolume(r) {
 // фоном при старте); пока не загрузились — показываем пусто, потом перерисовка.
 function workVolD(r) {
   const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
-  if (!t) return 0;
+  if (!t) {
+    // Работы в поэтажке нет вовсе — единственный источник объёма остаётся
+    // справочник «Работы» (значение с коэффициентом; уточнение 05.08.2026,
+    // на витрине такие значения приглушены — см. cellHtml). Пока объёмы ещё
+    // грузятся, запасное значение не подставляем — иначе оно мелькнёт в сумматорах.
+    if (state.volsStatus !== 'ready') return 0;
+    const ref = r[VOL_COL];
+    return typeof ref === 'number' ? ref : 0;
+  }
   let s = 0;
   Object.keys(t).forEach(c => { s += t[c] || 0; });
   return s;
@@ -780,12 +788,21 @@ function cellHtml(col, r) {
   }
   // Объём работ — чистый из поэтажки (кол. D), не из справочника (05.08.2026).
   // Пока объёмы грузятся фоном — «…», чтобы пустота не выглядела отсутствием данных.
+  // Если работы в поэтажке нет — запасной объём из справочника «Работы»,
+  // приглушённый и с подсказкой: он с повышающим коэффициентом (05.08.2026).
   if (col.key === VOL_COL) {
     if (state.volsStatus === 'loading' || state.volsStatus === 'idle') {
       return '<td class="num" style="color:var(--text-dim)">…</td>';
     }
     const v = workVolD(r);
-    return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
+    if (!v) return '<td class="num"></td>';
+    const pure = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
+    if (!pure) {
+      return '<td class="num" style="color:var(--text-dim)" ' +
+        'title="Объём из справочника «Работы» (с коэффициентом) — в поэтажке этой работы нет">' +
+        escapeHtml(fmtVol(v)) + '</td>';
+    }
+    return '<td class="num">' + escapeHtml(fmtVol(v)) + '</td>';
   }
   const cls = col.num ? ' class="num"' : '';
   return '<td' + cls + '>' + escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
