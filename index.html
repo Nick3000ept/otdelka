@@ -436,6 +436,19 @@
     border-radius: 999px; font-size: 11px; font-weight: 600;
     background: #fdeaea; color: #b42121; border: 1px solid #f2c4c4;
   }
+  /* Проверка «Изменения»: метки типов и кнопка фиксации базового расчёта. */
+  .chg {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; border: 1px solid;
+  }
+  .chg-add { color: #1d7a3d; border-color: #bfe3cb; background: #e7f6ec; }
+  .chg-del { color: #b42121; border-color: #f2c4c4; background: #fdeaea; }
+  .chg-mod { color: #8a6d1a; border-color: #ecd9a0; background: #fbf3dc; }
+  .baseline-btn {
+    margin: 0 0 12px; padding: 8px 16px; border-radius: 8px; border: none;
+    background: var(--accent); color: #fff; cursor: pointer; font-size: 13px;
+  }
+  .baseline-btn:disabled { opacity: .6; cursor: default; }
 </style>
 </head>
 <body>
@@ -465,6 +478,8 @@
         <span class="sb-badge" id="badge-check-no-cost"></span></div>
       <div class="sb-item sb-sub" data-screen="check-formulas">Формулы
         <span class="sb-badge" id="badge-check-formulas"></span></div>
+      <div class="sb-item sb-sub" data-screen="check-changes">Изменения
+        <span class="sb-badge" id="badge-check-changes"></span></div>
       <div class="sb-item sb-sub" data-screen="check-questions">Вопросы
         <span class="sb-badge" id="badge-check-questions"></span></div>
     </div>
@@ -599,6 +614,8 @@ const state = {
   budgetFloorsStatus: 'idle',  // idle | loading | ready | error
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
   checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
+  changes: null,               // дифф против базового расчёта (action=changes)
+  changesStatus: 'idle',       // idle | loading | ready | error
   questions: [],               // вопросы по работам (action=questions + POST)
   questionsStatus: 'idle',     // idle | loading | ready | error
   userName: localStorage.getItem('otdelka_user') || '',  // имя для вопросов/статусов
@@ -1926,6 +1943,125 @@ function renderCheckFormulas() {
 }
 
 /**
+ * Проверка «Изменения» (просьба пользователя 05.08.2026): дифф текущей поэтажки
+ * против БАЗОВОГО РАСЧЁТА — слепка «работа|корпус|этаж -> [стоимость, объём,
+ * подрядчик, расц. работы, расц. материалов]», который хранится файлом на Google
+ * Диске. Разрез до этажа — видно смену подрядчика и точечные изменения объёмов
+ * и расценок. Кнопка на экране фиксирует текущее состояние как новую базу.
+ */
+const CHANGE_FIELDS = ['стоимость', 'объём', 'подрядчик', 'расц. работы', 'расц. материалов'];
+const fmtChangeVal = (i, v) => {
+  if (i === 0) return fmtInt(v || 0);
+  if (i === 1) return fmtCell(v || 0);
+  return String(v === '' || v === null || v === undefined ? '—' : v);
+};
+
+async function loadChanges() {
+  state.changesStatus = 'loading';
+  if (state.screen === 'check-changes') renderCheckChanges();
+  try {
+    const url = GAS_URL + '?action=changes&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.changes = json;
+    state.changesStatus = 'ready';
+  } catch (e) {
+    state.changesStatus = 'error';
+  }
+  updateCheckBadges();
+  if (state.screen === 'check-changes') renderCheckChanges();
+}
+
+function renderCheckChanges() {
+  const el = document.getElementById('check-screen');
+  if (state.changesStatus === 'idle') { loadChanges(); return; }
+  if (state.changesStatus === 'loading') {
+    el.innerHTML = '<div class="check-head">Изменения</div>' +
+      '<div class="side-note">Сравниваем поэтажку с базовым расчётом — на холодном ' +
+      'кэше это до полуминуты…</div>';
+    return;
+  }
+  if (state.changesStatus === 'error') {
+    el.innerHTML = '<div class="check-head">Изменения</div>' +
+      '<div class="side-note">Не удалось получить сравнение. Обновите страницу.</div>';
+    return;
+  }
+  const d = state.changes;
+  const btn = '<button id="baseline-save" type="button" class="baseline-btn">' +
+    '📌 Зафиксировать текущее состояние как базовый расчёт</button>';
+  if (d.noBaseline) {
+    el.innerHTML = '<div class="check-head">Изменения</div>' +
+      '<div class="check-desc">Базовый расчёт ещё не зафиксирован. Нажмите кнопку — ' +
+      'текущее состояние поэтажки станет базой, и проверка начнёт показывать все ' +
+      'отклонения от неё.</div>' + btn;
+    return;
+  }
+  const list = d.changes || [];
+  const head = '<div class="check-head">Изменения: ' + list.length + '</div>' +
+    '<div class="check-desc">Отличия актуальной поэтажки от базового расчёта, ' +
+    'зафиксированного ' + escapeHtml(fmtDate(d.date)) + ' (разрез: работа × корпус × ' +
+    'этаж; отслеживаются стоимость, объём, подрядчик и расценки; крупные изменения ' +
+    'стоимости сверху). Кнопка перезапишет базу текущим состоянием.</div>' + btn;
+  if (!list.length) {
+    el.innerHTML = head +
+      '<div class="side-note">Изменений нет — данные совпадают с базовым расчётом</div>';
+    return;
+  }
+  const typeTag = t => (t === 'add'
+    ? '<span class="chg chg-add">новое</span>'
+    : t === 'del'
+      ? '<span class="chg chg-del">удалено</span>'
+      : '<span class="chg chg-mod">изменение</span>');
+  const detail = ch => {
+    if (ch.t === 'add') {
+      return 'подрядчик ' + escapeHtml(fmtChangeVal(2, ch.n[2])) +
+        ' · объём ' + escapeHtml(fmtCell(ch.n[1])) +
+        ' · стоимость ' + escapeHtml(fmtInt(ch.n[0]));
+    }
+    if (ch.t === 'del') {
+      return 'было: подрядчик ' + escapeHtml(fmtChangeVal(2, ch.o[2])) +
+        ' · объём ' + escapeHtml(fmtCell(ch.o[1])) +
+        ' · стоимость ' + escapeHtml(fmtInt(ch.o[0]));
+    }
+    return ch.d.map(x =>
+      '<span class="flag">' + escapeHtml(CHANGE_FIELDS[x[0]] + ': ' +
+        fmtChangeVal(x[0], x[1]) + ' → ' + fmtChangeVal(x[0], x[2])) + '</span>'
+    ).join(' ');
+  };
+  const table = '<table class="check"><thead><tr>' +
+    '<th style="width:90px">Тип</th><th class="cw-name">Работа</th>' +
+    '<th style="width:70px">Корпус</th><th style="width:60px">Этаж</th>' +
+    '<th>Что изменилось</th></tr></thead><tbody>' +
+    list.map(ch => {
+      const parts = String(ch.k).split('|');
+      return '<tr><td>' + typeTag(ch.t) + '</td>' +
+        '<td>' + escapeHtml(parts[0] || '') + '</td>' +
+        '<td>' + escapeHtml(parts[1] || '') + '</td>' +
+        '<td>' + escapeHtml(parts[2] || '') + '</td>' +
+        '<td>' + detail(ch) + '</td></tr>';
+    }).join('') + '</tbody></table>';
+  el.innerHTML = head + table;
+}
+
+async function saveBaseline(btnEl) {
+  if (!window.confirm('Зафиксировать текущее состояние поэтажки как базовый расчёт? ' +
+    'Прежняя база будет перезаписана, список изменений обнулится.')) return;
+  btnEl.disabled = true;
+  btnEl.textContent = 'Фиксируем…';
+  try {
+    const json = await postJson({ action: 'saveBaseline' });
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.changes = null;
+    state.changesStatus = 'idle';
+    renderCheckChanges();
+  } catch (e) {
+    btnEl.disabled = false;
+    btnEl.textContent = '📌 Зафиксировать текущее состояние как базовый расчёт';
+    alert('Не получилось зафиксировать базу: ' + e.message);
+  }
+}
+
+/**
  * Вопросы по работам (04.08.2026): кнопка «Вопрос» у работы -> модальное окно ->
  * POST на бэкенд (text/plain, обход CORS-preflight), хранение — JSON-файл на Google
  * Drive владельца скрипта (выбор пользователя). Статусы «Открыт»/«Закрыт», при любой
@@ -2099,6 +2235,8 @@ function updateCheckBadges() {
   document.getElementById('badge-check-no-cost').textContent = noCost ? String(noCost) : '';
   const frm = state.works.length ? formulaChecks().length : 0;
   document.getElementById('badge-check-formulas').textContent = frm ? String(frm) : '';
+  const chg = state.changes && state.changes.changes ? state.changes.changes.length : 0;
+  document.getElementById('badge-check-changes').textContent = chg ? String(chg) : '';
 }
 
 // Переключение вкладок боковой панели. Экраны проверок — в одном справочнике:
@@ -2108,6 +2246,7 @@ const CHECK_SCREENS = {
   'check-work-rates': renderCheckWorkRates,
   'check-no-cost': renderCheckNoCost,
   'check-formulas': renderCheckFormulas,
+  'check-changes': renderCheckChanges,
   'check-questions': renderCheckQuestions
 };
 
@@ -2151,6 +2290,8 @@ document.querySelectorAll('.sb-item').forEach(el => {
 document.getElementById('check-screen').addEventListener('click', e => {
   const qs = e.target.closest('button.qstatus');
   if (qs) { toggleQuestionStatus(qs.dataset.id); return; }
+  const bl = e.target.closest('#baseline-save');
+  if (bl) { saveBaseline(bl); return; }
   const nc = e.target.closest('tr.sect[data-ncgrp]');
   if (nc) {
     const g = nc.dataset.ncgrp;

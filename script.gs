@@ -38,16 +38,18 @@ var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корп
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
 var CACHE_BUDGET = 'budget_v5';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
+var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
-  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n'];
+  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n'];
   for (var i = 0; i < 10; i++) {
     keys.push(CACHE_VOLS + '_' + i);
     keys.push(CACHE_BUDGET + '_' + i);
     keys.push(CACHE_BFL + '_' + i);
+    keys.push(CACHE_CHANGES + '_' + i);
   }
   cache.removeAll(keys);
 }
@@ -127,6 +129,143 @@ function writeQuestions_(list) {
 }
 
 /**
+ * Базовый расчёт (05.08.2026): слепок поэтажки в разрезе работа|корпус|этаж ->
+ * [стоимость AG, объём D, подрядчик, расц. работы AB, расц. материалов AC].
+ * Разрез до этажа — чтобы видеть смену подрядчика и точечные изменения объёмов
+ * и расценок (уточнение пользователя 05.08.2026). Если на этаже несколько
+ * подрядчиков/расценок — значения детерминированно склеиваются через « + » и « / ».
+ * Хранится JSON-файлом на Google Drive владельца (как вопросы), ID — в Script
+ * Properties BASELINE_FILE_ID. Перезаписывается кнопкой на экране «Изменения».
+ */
+var BASELINE_FILE_NAME = 'otdelka_baseline.json';
+
+function baselineFile_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('BASELINE_FILE_ID');
+  if (id) {
+    try {
+      return DriveApp.getFileById(id);
+    } catch (e) { /* файл удалили — создаём заново */ }
+  }
+  var file = DriveApp.createFile(BASELINE_FILE_NAME, '{}', 'application/json');
+  props.setProperty('BASELINE_FILE_ID', file.getId());
+  return file;
+}
+
+function readBaseline_() {
+  try {
+    var obj = JSON.parse(baselineFile_().getBlob().getDataAsString() || '{}');
+    return (obj && obj.data) ? obj : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Текущий агрегат поэтажки для базового расчёта и диффа (разрез работа|корпус|этаж). */
+function buildBaseline_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
+  if (!sh) return {};
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return {};
+
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  var need = [CONFIG.FLOOR_WORK, CONFIG.FLOOR_CORP, CONFIG.FLOOR_CONTRACTOR,
+              CONFIG.FLOOR_FLOOR, CONFIG.FLOOR_VOL, CONFIG.FLOOR_RATE,
+              CONFIG.FLOOR_RATE_MAT, CONFIG.FLOOR_BUDGET_COST];
+  for (var i = 0; i < need.length; i++) {
+    if (!idx[need[i]]) return {};
+  }
+
+  var n = lastRow - 1;
+  var col = function (name) { return sh.getRange(2, idx[name], n, 1).getValues(); };
+  var w = col(CONFIG.FLOOR_WORK);
+  var c = col(CONFIG.FLOOR_CORP);
+  var p = col(CONFIG.FLOOR_CONTRACTOR);
+  var fl = col(CONFIG.FLOOR_FLOOR);
+  var vv = col(CONFIG.FLOOR_VOL);
+  var rw = col(CONFIG.FLOOR_RATE);
+  var rm = col(CONFIG.FLOOR_RATE_MAT);
+  var cost = col(CONFIG.FLOOR_BUDGET_COST);
+
+  var acc = {};   // key -> { c: стоимость, v: объём, p/rw/rm: наборы значений }
+  for (var k = 0; k < n; k++) {
+    var costV = typeof cost[k][0] === 'number' ? cost[k][0] : 0;
+    var volV = typeof vv[k][0] === 'number' ? vv[k][0] : 0;
+    if (!costV && !volV) continue;
+    var work = String(w[k][0]).trim();
+    if (!work) continue;
+    var key = work + '|' + String(c[k][0]).trim() + '|' + String(fl[k][0]).trim();
+    if (!acc[key]) acc[key] = { c: 0, v: 0, p: {}, rw: {}, rm: {} };
+    var a = acc[key];
+    a.c += costV;
+    a.v += volV;
+    a.p[String(p[k][0]).trim() || '— без подрядчика —'] = 1;
+    var rwV = typeof rw[k][0] === 'number' ? rw[k][0] : 0;
+    var rmV = typeof rm[k][0] === 'number' ? rm[k][0] : 0;
+    if (rwV) a.rw[rwV] = 1;
+    if (rmV) a.rm[rmV] = 1;
+  }
+
+  var joinNums = function (set) {
+    return Object.keys(set).map(Number).sort(function (x, y) { return x - y; }).join(' / ');
+  };
+  var map = {};
+  Object.keys(acc).forEach(function (key) {
+    var a = acc[key];
+    map[key] = [
+      Math.round(a.c),
+      Math.round(a.v * 100) / 100,
+      Object.keys(a.p).sort().join(' + '),
+      joinNums(a.rw),
+      joinNums(a.rm)
+    ];
+  });
+  return map;
+}
+
+/**
+ * Дифф текущего агрегата против базового: t='add' (новая строка), 'del' (пропала),
+ * 'mod' (изменились значения; d = [[индексПоля, было, стало], ...], поля:
+ * 0 стоимость, 1 объём, 2 подрядчик, 3 расц. работы, 4 расц. материалов).
+ */
+function diffBaseline_(base, cur) {
+  var changes = [];
+  Object.keys(cur).forEach(function (key) {
+    if (!base[key]) {
+      changes.push({ t: 'add', k: key, n: cur[key] });
+      return;
+    }
+    var d = [];
+    for (var i = 0; i < 5; i++) {
+      var oldV = base[key][i];
+      var newV = cur[key][i];
+      var changed = (i < 2)
+        ? Math.abs((oldV || 0) - (newV || 0)) > 0.005
+        : String(oldV === undefined ? '' : oldV) !== String(newV === undefined ? '' : newV);
+      if (changed) d.push([i, oldV === undefined ? '' : oldV, newV === undefined ? '' : newV]);
+    }
+    if (d.length) changes.push({ t: 'mod', k: key, d: d });
+  });
+  Object.keys(base).forEach(function (key) {
+    if (!cur[key]) changes.push({ t: 'del', k: key, o: base[key] });
+  });
+  // Крупные изменения сверху: по модулю разницы стоимости (для add/del — по стоимости).
+  var weight = function (ch) {
+    if (ch.t === 'add') return ch.n[0] || 0;
+    if (ch.t === 'del') return ch.o[0] || 0;
+    for (var i = 0; i < ch.d.length; i++) {
+      if (ch.d[i][0] === 0) return Math.abs((ch.d[i][2] || 0) - (ch.d[i][1] || 0));
+    }
+    return 0;
+  };
+  changes.sort(function (a, b) { return weight(b) - weight(a); });
+  return changes;
+}
+
+/**
  * Единственный POST в проекте (04.08.2026). Тело — JSON в text/plain (обход
  * CORS-preflight, который GAS не обрабатывает): { t, action, ... }.
  * addQuestion { work, text, author } — новый вопрос со статусом «Открыт»;
@@ -171,6 +310,18 @@ function doPost(e) {
       list.push(q);
       writeQuestions_(list);
       return jsonOut_({ ok: true, question: q });
+    }
+
+    // Фиксация базового расчёта (05.08.2026): слепок текущей поэтажки -> файл на Диске.
+    if (body.action === 'saveBaseline') {
+      var ssBl = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var obj = { date: new Date().toISOString(), data: buildBaseline_(ssBl) };
+      baselineFile_().setContent(JSON.stringify(obj));
+      var cacheBl = CacheService.getScriptCache();
+      var keysBl = [CACHE_CHANGES + '_n'];
+      for (var q2 = 0; q2 < 10; q2++) keysBl.push(CACHE_CHANGES + '_' + q2);
+      cacheBl.removeAll(keysBl);
+      return jsonOut_({ ok: true, date: obj.date });
     }
 
     if (body.action === 'setQuestionStatus') {
@@ -445,6 +596,32 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return jsonOut_({ ok: false, error: 'budget_failed', message: String(err) });
+    }
+  }
+
+  // Проверка «Изменения» (05.08.2026): дифф текущей поэтажки против базового расчёта.
+  // Тяжёлый расчёт, кэш 6 ч; кэш сбрасывается при фиксации новой базы (saveBaseline).
+  if (action === 'changes') {
+    try {
+      var cacheC = CacheService.getScriptCache();
+      var cachedC = cacheGetBig_(cacheC, CACHE_CHANGES);
+      if (cachedC) {
+        return ContentService.createTextOutput(cachedC)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var bl = readBaseline_();
+      if (!bl) {
+        return jsonOut_({ ok: true, noBaseline: true });
+      }
+      var ssC = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadC = JSON.stringify({
+        ok: true, date: bl.date, changes: diffBaseline_(bl.data, buildBaseline_(ssC))
+      });
+      cachePutBig_(cacheC, CACHE_CHANGES, payloadC, 21600);
+      return ContentService.createTextOutput(payloadC)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'changes_failed', message: String(err) });
     }
   }
 
