@@ -650,6 +650,18 @@ function hasVolume(r) {
   return String(r[VOL_FLAG] === null || r[VOL_FLAG] === undefined ? '' : r[VOL_FLAG]).trim() !== '';
 }
 
+// Объём работы для показа — ЧИСТЫЙ объём из поэтажки (кол. D, сумма по корпусам),
+// без повышающего коэффициента, который заложен в «Объем работ» справочника
+// (просьба пользователя 05.08.2026). Данные — volsTotals (action=volumes, грузится
+// фоном при старте); пока не загрузились — показываем пусто, потом перерисовка.
+function workVolD(r) {
+  const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
+  if (!t) return 0;
+  let s = 0;
+  Object.keys(t).forEach(c => { s += t[c] || 0; });
+  return s;
+}
+
 // Короткие заголовки колонок работ (решение пользователя 03.08.2026).
 // Ключ — как в Sheets, значение — как показываем.
 const RENAME = {
@@ -766,9 +778,10 @@ function cellHtml(col, r) {
       : '';
     return '<td class="wname">' + escapeHtml(fmtCell(r[col.key], col.money)) + qbtn + '</td>';
   }
-  // Объёмы работ — до десятых (решение пользователя 03.08.2026).
+  // Объём работ — чистый из поэтажки (кол. D), не из справочника (05.08.2026).
   if (col.key === VOL_COL) {
-    return '<td class="num">' + escapeHtml(fmtVol(r[col.key])) + '</td>';
+    const v = workVolD(r);
+    return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
   }
   const cls = col.num ? ' class="num"' : '';
   return '<td' + cls + '>' + escapeHtml(fmtCell(r[col.key], col.money)) + '</td>';
@@ -831,24 +844,22 @@ function groupWorks(rows) {
   // измерения: сейчас внутри групп они однородны, но при изменении данных м2 и м.п.
   // не должны молча сложиться в одно число.
   places.forEach(p => p.surfaces.forEach(s => s.subgroups.forEach(g => {
-    // Работы без признака ген. объёма — вниз группы (решение пользователя 03.08.2026);
-    // работы с признаком сортируются по «Объем работ» на уменьшение, без признака —
-    // в порядке листа (sort стабильный).
-    const volOf = r => (typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0);
+    // Работы без признака лидерного объёма — вниз группы (решение 03.08.2026);
+    // работы с признаком сортируются по объёму на уменьшение, без признака —
+    // в порядке листа (sort стабильный). Объём — чистый из поэтажки (05.08.2026).
     g.rows.sort((a, b) => {
       const fa = hasVolume(a), fb = hasVolume(b);
       if (fa !== fb) return (fb ? 1 : 0) - (fa ? 1 : 0);
-      return fa ? volOf(b) - volOf(a) : 0;
+      return fa ? workVolD(b) - workVolD(a) : 0;
     });
     const flagged = g.rows.filter(hasVolume);
     g.flagged = flagged.length;
     const byUnit = new Map();
     flagged.forEach(r => {
       const u = String(r[UNIT_COL] || '').trim();
-      const v = typeof r[VOL_COL] === 'number' ? r[VOL_COL] : 0;
-      byUnit.set(u, (byUnit.get(u) || 0) + v);
+      byUnit.set(u, (byUnit.get(u) || 0) + workVolD(r));
     });
-    g.volParts = Array.from(byUnit.entries());
+    g.volParts = Array.from(byUnit.entries()).filter(p => p[1] > 0);
   })));
 
   return places;
@@ -1241,6 +1252,9 @@ async function loadVols() {
     setStatus(state.volsStatus === 'error' ? 'Не удалось загрузить объёмы. Обновите страницу.' : '',
       state.volsStatus === 'error');
     if (state.volsStatus === 'ready') renderTable();
+  } else if (state.screen === 'rates' && state.volsStatus === 'ready' && state.works.length) {
+    // На «Расценках» объёмы работ берутся из этих же данных — дорисовываем колонку.
+    renderTable();
   }
 }
 
@@ -2525,6 +2539,8 @@ async function loadData() {
     updateCheckBadges();
     loadFloors();      // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
     loadQuestions();   // вопросы — тоже фоном: файл маленький, нужен бейдж-счётчик
+    if (state.volsStatus === 'idle') loadVols();   // объёмы из поэтажки — для колонки
+                                                   // «Объем работ» на «Расценках» (05.08.2026)
   } catch (e) {
     setStatus('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.', true);
   }
