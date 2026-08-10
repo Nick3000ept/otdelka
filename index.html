@@ -449,6 +449,33 @@
     background: var(--accent); color: #fff; cursor: pointer; font-size: 13px;
   }
   .baseline-btn:disabled { opacity: .6; cursor: default; }
+
+  /* Вкладка «Факт» (10.08.2026): сетка отметок в модальном окне. */
+  table.factgrid th, table.factgrid td { padding: 4px 5px; }
+  table.factgrid td.fcell { white-space: nowrap; }
+  table.factgrid td.fcell.done { background: #e7f6ec; }
+  .fvol { font-size: 10px; color: var(--text-dim); margin-bottom: 2px; }
+  input.fpct {
+    width: 42px; padding: 2px 4px; font-size: 11px; text-align: center;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--text);
+  }
+  input.fpct::placeholder { color: #a9b1bd; }
+  td.fcell.done input.fpct { border-color: #bfe3cb; }
+  button.fdone {
+    border: 1px solid var(--border); background: var(--panel2); color: #1d7a3d;
+    border-radius: 6px; cursor: pointer; font-size: 11px; padding: 2px 5px;
+    margin-left: 3px; vertical-align: bottom;
+  }
+  button.fdone:hover { background: #e7f6ec; border-color: #bfe3cb; }
+  button.fcorp-done {
+    display: block; margin: 3px auto 0; border: 1px solid var(--border);
+    background: var(--panel2); color: #1d7a3d; border-radius: 6px; cursor: pointer;
+    font-size: 10px; padding: 1px 6px;
+  }
+  button.fcorp-done:hover { background: #e7f6ec; border-color: #bfe3cb; }
+  #fact-note { font-size: 12px; color: var(--text-dim); margin: 8px 0 0; min-height: 16px; }
+  #fact-note.err { color: var(--danger); }
 </style>
 </head>
 <body>
@@ -467,6 +494,7 @@
     <div class="sb-brand">Отделка СБ3</div>
     <div class="sb-item active" data-screen="rates">Расценки</div>
     <div class="sb-item" data-screen="volumes">Объемы</div>
+    <div class="sb-item" data-screen="fact">Факт</div>
     <div class="sb-item" data-screen="budget">Бюджет</div>
     <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
     <div id="sb-checks" style="display:none">
@@ -597,6 +625,14 @@ const state = {
   vols: null,                  // работа -> корпус -> [[этаж, объём], ...] (action=volumes)
   volsTotals: null,            // работа -> { корпус: суммарный объём }
   volsStatus: 'idle',          // idle | loading | ready | error
+  factMarks: null,             // Map 'работа|корпус|этаж' -> [процент, кто, когда] (action=fact)
+  factStatus: 'idle',          // idle | loading | ready | error
+  factRef: null,               // справочный факт из поэтажки: работа -> корпус -> [[этаж, %, к закрытию]]
+  factRefStatus: 'idle',       // idle | loading | ready | error
+  factPending: new Map(),      // несохранённые отметки: ключ -> {work, corp, floor, pct, prev}
+  factSaving: false,           // идёт POST saveFact
+  factModalKey: null,          // работа, открытая в сетке отметок (ключ lowercase)
+  factModalName: '',           // её название как в листе — уходит в журнал «Факт»
   floors: null,                // сводка подрядчик × корпус, грузится отдельным запросом
   floorsSS: null,              // работа -> названия работы СС из поэтажки (кол. J)
   floorsStatus: 'loading',     // loading | ready | error
@@ -729,7 +765,9 @@ const COL_ORDER = [
 // На вкладке «Объемы» вместо характеристик — 12 корпусов (иерархия та же).
 function workColumns(rows) {
   if (!rows.length) return [];
-  if (state.screen === 'volumes') {
+  // «Факт» (10.08.2026): те же колонки-корпуса, но в ячейках — процент готовности
+  // (средневзвешенный по объёмам этажей); отметки ставятся в модальном окне по работе.
+  if (state.screen === 'volumes' || state.screen === 'fact') {
     // Ед. изм. и галочка лидерного объёма — сразу после названия, справа «Итого»
     // (просьбы пользователя 04.08.2026). Название занимает всё свободное место (auto).
     const cols = [
@@ -754,15 +792,45 @@ function workColumns(rows) {
   return cols;
 }
 
+// «Факт» (10.08.2026): средневзвешенный процент готовности работы по корпусам из списка.
+// Веса — объёмы этажей из поэтажки (state.vols), проценты — отметки state.factMarks
+// (этаж без отметки считается за 0%). null — работы в поэтажке нет.
+function factPct(workKey, corps) {
+  if (!state.vols || !state.factMarks) return null;
+  const byCorp = state.vols[workKey];
+  if (!byCorp) return null;
+  let num = 0, den = 0;
+  corps.forEach(corp => {
+    (byCorp[corp] || []).forEach(p => {
+      const vol = p[1] || 0;
+      if (vol <= 0) return;
+      const mark = state.factMarks.get(workKey + '|' + corp + '|' + p[0]);
+      num += vol * (mark ? mark[0] : 0);
+      den += vol;
+    });
+  });
+  if (!den) return null;
+  return Math.round(num / den);
+}
+
 function cellHtml(col, r) {
-  // Вкладка «Объемы»: суммарный объём работы по корпусу.
+  // Вкладка «Объемы»: суммарный объём работы по корпусу. «Факт» — процент готовности.
   if (col.corp) {
+    if (state.screen === 'fact') {
+      const p = factPct(norm(r[WORK_KEY]), [col.corp]);
+      return '<td class="num">' + (p ? escapeHtml(fmtInt(p)) + '%' : '') + '</td>';
+    }
     const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
     const v = t && t[col.corp];
     return '<td class="num">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
   }
-  // «Итого» справа — объём работы по всем корпусам разом (04.08.2026).
+  // «Итого» справа — объём работы по всем корпусам разом (04.08.2026);
+  // на «Факте» — общий процент готовности работы.
   if (col.total) {
+    if (state.screen === 'fact') {
+      const p = factPct(norm(r[WORK_KEY]), ALL_CORPS);
+      return '<td class="num gsum">' + (p ? escapeHtml(fmtInt(p)) + '%' : '') + '</td>';
+    }
     const t = state.volsTotals && state.volsTotals.get(norm(r[WORK_KEY]));
     let sum = 0;
     if (t) ALL_CORPS.forEach(c => { sum += t[c] || 0; });
@@ -919,8 +987,9 @@ function renderTable() {
   // Счётчики рядом с поиском убраны по просьбе пользователя 04.08.2026.
   const places = groupWorks(filtered);
 
-  // На «Объемах» у таблицы свой класс — числа в ячейках рисуются мельче.
-  document.getElementById('table').classList.toggle('vols', state.screen === 'volumes');
+  // На «Объемах» и «Факте» у таблицы свой класс — числа в ячейках рисуются мельче.
+  document.getElementById('table').classList.toggle('vols',
+    state.screen === 'volumes' || state.screen === 'fact');
 
   const theadRow = document.getElementById('thead-row');
   theadRow.innerHTML = '<th class="chev-col"></th>' + cols.map(c => {
@@ -1004,8 +1073,47 @@ function renderTable() {
           });
         }
 
+        // «Факт»: в строке группы — средневзвешенный процент готовности по корпусу
+        // и общий. Как и в «Объемах», считаются только работы с лидерным объёмом —
+        // иначе одна поверхность сложится дважды (10.08.2026).
+        let factSums = null, factTot = null;
+        if (state.screen === 'fact' && it.type === 'group' && n.flagged &&
+            state.vols && state.factMarks) {
+          factSums = {};
+          const nums = {}, dens = {};
+          let tn = 0, td = 0;
+          n.rows.filter(hasVolume).forEach(r => {
+            const wk = norm(r[WORK_KEY]);
+            const byCorp = state.vols[wk];
+            if (!byCorp) return;
+            ALL_CORPS.forEach(cc => {
+              (byCorp[cc] || []).forEach(p => {
+                const vol = p[1] || 0;
+                if (vol <= 0) return;
+                const mark = state.factMarks.get(wk + '|' + cc + '|' + p[0]);
+                nums[cc] = (nums[cc] || 0) + vol * (mark ? mark[0] : 0);
+                dens[cc] = (dens[cc] || 0) + vol;
+              });
+            });
+          });
+          ALL_CORPS.forEach(cc => {
+            if (!dens[cc]) return;
+            factSums[cc] = Math.round(nums[cc] / dens[cc]);
+            tn += nums[cc];
+            td += dens[cc];
+          });
+          factTot = td ? Math.round(tn / td) : null;
+        }
+
         tr.innerHTML = '<td class="chev-cell"></td>' + cols.map(c => {
           if (c.key === WORK_KEY) return '<td class="wname gname">' + label + '</td>';
+          if (factSums && c.corp) {
+            const v = factSums[c.corp];
+            return '<td class="num gsum">' + (v ? escapeHtml(fmtInt(v)) + '%' : '') + '</td>';
+          }
+          if (factSums && c.total) {
+            return '<td class="num gsum">' + (factTot ? escapeHtml(fmtInt(factTot)) + '%' : '') + '</td>';
+          }
           if (corpSums && c.corp) {
             const v = corpSums[c.corp];
             return '<td class="num gsum">' + (v ? escapeHtml(fmtVol(v)) : '') + '</td>';
@@ -1273,6 +1381,9 @@ async function loadVols() {
     setStatus(state.volsStatus === 'error' ? 'Не удалось загрузить объёмы. Обновите страницу.' : '',
       state.volsStatus === 'error');
     if (state.volsStatus === 'ready') renderTable();
+  } else if (state.screen === 'fact') {
+    // На «Факте» объёмы — веса процентов готовности.
+    refreshFactScreen();
   } else if (state.screen === 'rates' && state.volsStatus === 'ready' && state.works.length) {
     // На «Расценках» объёмы работ берутся из этих же данных — дорисовываем колонку.
     renderTable();
@@ -1660,6 +1771,282 @@ function openVolModal(key, name) {
   document.getElementById('modal-body').innerHTML = html;
   document.getElementById('modal-overlay').style.display = 'flex';
 }
+
+/**
+ * Вкладка «Факт» (10.08.2026): отметка фактически выполненных работ поэтажно.
+ * Отметка — процент готовности (кнопка ✓ = 100%) на ячейку корпус × этаж.
+ * Хранение — журнал в листе «Факт» таблицы «Отделка ИИ» (строки только добавляются,
+ * последняя отметка по ключу актуальна); справочно показывается факт из поэтажки
+ * (V «Процент готовности», Z «Объем к закрытию») — в подсказках ячеек.
+ * Сохранение: optimistic UI + очередь с паузой 1,2 с, пакетом одним POST, при
+ * ошибке — откат значений и предупреждение (паттерн шахматки СБ3).
+ */
+async function loadFact() {
+  state.factStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=fact&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.factMarks = new Map(Object.entries(json.marks || {}));
+    state.factStatus = 'ready';
+  } catch (e) {
+    state.factStatus = 'error';
+  }
+  if (state.screen === 'fact') refreshFactScreen();
+}
+
+async function loadFactRef() {
+  state.factRefStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=factRef&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.factRef = json.ref || {};
+    state.factRefStatus = 'ready';
+  } catch (e) {
+    state.factRefStatus = 'error';
+  }
+  // Справка пришла — обновляем подсказки в открытой сетке (если пользователь не печатает).
+  const overlayOpen = document.getElementById('modal-overlay').style.display !== 'none';
+  const typing = document.activeElement && document.activeElement.classList &&
+    document.activeElement.classList.contains('fpct');
+  if (state.factRefStatus === 'ready' && overlayOpen && state.factModalKey &&
+      state.screen === 'fact' && !typing) {
+    openFactModal(state.factModalKey, state.factModalName);
+  }
+}
+
+// Экран «Факт» готов, когда загружены объёмы поэтажки и отметки из журнала.
+function refreshFactScreen() {
+  if (state.volsStatus === 'error' || state.factStatus === 'error') {
+    setStatus('Не удалось загрузить данные факта. Обновите страницу.', true);
+    return;
+  }
+  if (state.volsStatus !== 'ready' || state.factStatus !== 'ready') {
+    setStatus('Данные факта загружаются…');
+    return;
+  }
+  setStatus('');
+  if (state.works.length) renderTable();
+}
+
+// Готовность по корпусу для строки «Готовность» в сетке — текстом ('85%' или '').
+function factFootTxt(workKey, corp) {
+  const p = factPct(workKey, [corp]);
+  return p ? fmtInt(p) + '%' : '';
+}
+
+// Сетка отметок: строки — этажи, столбцы — корпуса; в ячейке план-объём,
+// поле процента и кнопка «готово».
+function openFactModal(key, name) {
+  state.factModalKey = key;
+  state.factModalName = name;
+  const work = state.works.find(r => norm(r[WORK_KEY]) === key);
+  const unit = String((work && work[UNIT_COL]) || '').trim();
+  document.getElementById('modal-title').textContent = name;
+  document.getElementById('modal-sub').textContent =
+    'Отметка факта' + (unit ? ' · объёмы в ' + unit : '') +
+    ' · процент готовности, ✓ — выполнено (100%)';
+  const byCorp = (state.vols && state.vols[key]) || {};
+  const corps = ALL_CORPS;
+  const floorSet = new Set();
+  corps.forEach(c => (byCorp[c] || []).forEach(p => floorSet.add(p[0])));
+  let html;
+  if (!floorSet.size) {
+    html = '<div class="side-note">Объёмов по этой работе в «Поэтажка_работы» нет — ' +
+      'отмечать факт не по чему</div>';
+  } else {
+    const floors = Array.from(floorSet).sort((a, b) => a - b);
+    const volByCorpFloor = {};
+    corps.forEach(c => {
+      volByCorpFloor[c] = new Map((byCorp[c] || []).map(p => [p[0], p[1]]));
+    });
+    const ref = (state.factRefStatus === 'ready' && state.factRef && state.factRef[key]) || null;
+    const refByCorpFloor = {};
+    corps.forEach(c => {
+      refByCorpFloor[c] = new Map(((ref && ref[c]) || []).map(p => [p[0], p]));
+    });
+    const head = '<tr><th>Этаж</th>' + corps.map(c =>
+      '<th class="num">' + escapeHtml(c) +
+      '<button class="fcorp-done" type="button" data-corp="' + escapeHtml(c) +
+      '" title="Отметить весь корпус выполненным (100%)">&#10003; все</button></th>'
+    ).join('') + '</tr>';
+    const body = floors.map(fl =>
+      '<tr><td class="num">' + escapeHtml(fmtCell(fl)) + '</td>' +
+      corps.map(c => {
+        const v = volByCorpFloor[c].get(fl);
+        if (!v) return '<td></td>';
+        const mark = state.factMarks && state.factMarks.get(key + '|' + c + '|' + fl);
+        const pct = mark ? mark[0] : null;
+        const refRow = refByCorpFloor[c].get(fl);
+        const title = refRow
+          ? 'По поэтажке: готовность ' + fmtCell(refRow[1]) + '%' +
+            (refRow[2] ? ' · объём к закрытию ' + fmtCell(refRow[2]) : '') +
+            (mark ? ' · отметка: ' + mark[1] + ' ' + fmtDate(mark[2]) : '')
+          : (mark ? 'Отметка: ' + mark[1] + ' ' + fmtDate(mark[2]) : '');
+        const ph = (pct === null && refRow && refRow[1]) ? String(Math.round(refRow[1])) : '';
+        return '<td class="fcell' + (pct === 100 ? ' done' : '') +
+          '" data-corp="' + escapeHtml(c) + '" data-floor="' + fl + '"' +
+          (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' +
+          '<div class="fvol">' + escapeHtml(fmtVol(v)) + '</div>' +
+          '<input class="fpct" type="text" inputmode="numeric" value="' +
+          (pct === null ? '' : pct) + '"' + (ph ? ' placeholder="' + ph + '"' : '') + '>' +
+          '<button class="fdone" type="button" title="Готово — 100%">&#10003;</button></td>';
+      }).join('') + '</tr>').join('');
+    const foot = '<tr class="total"><td>Готовность</td>' + corps.map(c =>
+      '<td class="num" data-ffoot="' + escapeHtml(c) + '">' +
+      escapeHtml(factFootTxt(key, c)) + '</td>').join('') + '</tr>';
+    html = '<table class="inner mini factgrid"><thead>' + head + '</thead><tbody>' + body +
+      '</tbody><tfoot>' + foot + '</tfoot></table>' +
+      '<div id="fact-note">' +
+      (state.factRefStatus === 'ready'
+        ? 'Серый процент в пустом поле и подсказка при наведении — данные поэтажки (справочно).'
+        : (state.factRefStatus === 'error' ? ''
+          : 'Справка из поэтажки ещё загружается — подсказки в ячейках появятся чуть позже.')) +
+      '</div>';
+  }
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-overlay').style.display = 'flex';
+}
+
+// Имя для журнала отметок — то же, что для вопросов (localStorage otdelka_user).
+function ensureUserName() {
+  if (state.userName) return true;
+  const name = (window.prompt('Ваше имя (запишется в журнал отметок):') || '').trim();
+  if (!name) return false;
+  state.userName = name;
+  try { localStorage.setItem('otdelka_user', name); } catch (e) {}
+  return true;
+}
+
+// Введённый процент: проверка, optimistic-обновление и постановка в очередь на сохранение.
+function applyFactInput(inp) {
+  const td = inp.closest('td.fcell');
+  if (!td || !state.factModalKey) return;
+  const corp = td.dataset.corp;
+  const fl = parseFloat(td.dataset.floor);
+  const key = state.factModalKey + '|' + corp + '|' + fl;
+  const prevMark = state.factMarks.get(key) || null;
+  const raw = inp.value.trim().replace(',', '.').replace('%', '');
+  let pct;
+  if (raw === '') {
+    if (!prevMark) return;          // пусто и отметки не было — нечего сохранять
+    pct = 0;                        // стирание отметки = 0%
+  } else {
+    pct = Math.round(parseFloat(raw));
+    if (isNaN(pct)) {               // не число — возвращаем прежнее значение
+      inp.value = prevMark ? prevMark[0] : '';
+      return;
+    }
+    pct = Math.max(0, Math.min(100, pct));
+    inp.value = String(pct);
+  }
+  if (prevMark && prevMark[0] === pct) return;   // не изменилось
+  if (!ensureUserName()) {
+    inp.value = prevMark ? prevMark[0] : '';
+    return;
+  }
+  if (!state.factPending.has(key)) {
+    state.factPending.set(key, {
+      work: state.factModalName, corp, floor: fl,
+      prev: prevMark ? prevMark.slice() : null
+    });
+  }
+  state.factPending.get(key).pct = pct;
+  state.factMarks.set(key, [pct, state.userName, new Date().toISOString()]);
+  td.classList.toggle('done', pct === 100);
+  const footCell = document.querySelector('#modal-body td[data-ffoot="' + corp + '"]');
+  if (footCell) footCell.textContent = factFootTxt(state.factModalKey, corp);
+  setFactNote('Сохраняем…');
+  scheduleFactFlush();
+}
+
+function setFactNote(text, isErr) {
+  const el = document.getElementById('fact-note');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = isErr ? 'err' : '';
+}
+
+let factFlushTimer = null;
+function scheduleFactFlush() {
+  clearTimeout(factFlushTimer);
+  factFlushTimer = setTimeout(flushFactMarks, 1200);
+}
+
+async function flushFactMarks() {
+  if (state.factSaving || !state.factPending.size) return;
+  const batch = state.factPending;
+  state.factPending = new Map();
+  state.factSaving = true;
+  const marks = Array.from(batch.values()).map(m =>
+    ({ work: m.work, corp: m.corp, floor: m.floor, pct: m.pct }));
+  try {
+    let json = null, lastErr = null;
+    for (let i = 0; i < 3; i++) {
+      try {
+        json = await postJson({ action: 'saveFact', author: state.userName, marks });
+        break;
+      } catch (e) {
+        lastErr = e;
+        await new Promise(r => setTimeout(r, 1000 * (i + 1)));
+      }
+    }
+    if (!json) throw lastErr;
+    if (!json.ok) throw new Error(json.message || json.error);
+    setFactNote('Сохранено ✓');
+    if (state.screen === 'fact') renderTable();
+  } catch (e) {
+    // Откат: отметки возвращаются к прежним, сетка и таблица перерисовываются.
+    batch.forEach((m, key) => {
+      if (m.prev) state.factMarks.set(key, m.prev);
+      else state.factMarks.delete(key);
+    });
+    if (state.screen === 'fact') renderTable();
+    const overlayOpen = document.getElementById('modal-overlay').style.display !== 'none';
+    if (overlayOpen && state.factModalKey) {
+      openFactModal(state.factModalKey, state.factModalName);
+      setFactNote('Не сохранилось: ' + e.message, true);
+    }
+    alert('Отметки факта не сохранились: ' + e.message +
+      '. Значения возвращены как были — попробуйте ещё раз.');
+  } finally {
+    state.factSaving = false;
+    if (state.factPending.size) scheduleFactFlush();
+  }
+}
+
+// Пока есть несохранённые отметки — предупреждаем при закрытии страницы.
+window.addEventListener('beforeunload', e => {
+  if (state.factPending.size || state.factSaving) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
+// Обработчики сетки отметок — делегированием (модальное окно переиспользуется).
+document.getElementById('modal-body').addEventListener('change', e => {
+  const inp = e.target.closest('input.fpct');
+  if (inp && state.factModalKey) applyFactInput(inp);
+});
+document.getElementById('modal-body').addEventListener('click', e => {
+  const done = e.target.closest('button.fdone');
+  if (done && state.factModalKey) {
+    const td = done.closest('td.fcell');
+    const inp = td && td.querySelector('input.fpct');
+    if (inp) { inp.value = '100'; applyFactInput(inp); }
+    return;
+  }
+  const all = e.target.closest('button.fcorp-done');
+  if (all && state.factModalKey) {
+    const corp = all.dataset.corp;
+    if (!window.confirm('Отметить все этажи корпуса ' + corp + ' выполненными (100%)?')) return;
+    document.querySelectorAll('#modal-body td.fcell[data-corp="' + corp + '"] input.fpct')
+      .forEach(inp => {
+        if (inp.value.trim() !== '100') { inp.value = '100'; applyFactInput(inp); }
+      });
+  }
+});
 
 /**
  * Проверка «Расценки» — готовые данные из листа «Проверки расценки» (решение
@@ -2305,6 +2692,16 @@ function setScreen(screen) {
     return;
   }
 
+  // «Факт»: нужны объёмы поэтажки (веса) и отметки из журнала; справка из поэтажки —
+  // фоном, она только для подсказок в ячейках.
+  if (screen === 'fact') {
+    if (state.volsStatus === 'idle') loadVols();
+    if (state.factStatus === 'idle') loadFact();
+    if (state.factRefStatus === 'idle') loadFactRef();
+    refreshFactScreen();
+    return;
+  }
+
   if (screen === 'volumes' && state.volsStatus === 'idle') loadVols();
   if (screen === 'volumes' && state.volsStatus !== 'ready') {
     setStatus(state.volsStatus === 'error'
@@ -2381,6 +2778,11 @@ document.getElementById('ctr-body').addEventListener('click', e => {
 
 function closeModal() {
   document.getElementById('modal-overlay').style.display = 'none';
+  // Закрыли сетку отметок — несохранённое отправляем сразу, не дожидаясь паузы.
+  if (state.factPending.size && !state.factSaving) {
+    clearTimeout(factFlushTimer);
+    flushFactMarks();
+  }
 }
 document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal-overlay').addEventListener('click', e => {
@@ -2467,8 +2869,10 @@ document.getElementById('tbody').addEventListener('click', e => {
   if (hdr) { toggleGroup(hdr.dataset.grp); return; }
   const tr = e.target.closest('tr.work');
   if (!tr) return;
-  // В «Объемах» клик по работе открывает поэтажную ведомость, в «Расценках» — выбор.
+  // В «Объемах» клик по работе открывает поэтажную ведомость, в «Факте» — сетку
+  // отметок, в «Расценках» — выбор.
   if (state.screen === 'volumes') openVolModal(tr.dataset.key, tr.dataset.name || '');
+  else if (state.screen === 'fact') openFactModal(tr.dataset.key, tr.dataset.name || '');
   else selectWork(tr);
 });
 

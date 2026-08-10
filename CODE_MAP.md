@@ -2,7 +2,8 @@
 
 Карта кода `index.html` и `script.gs` — **читать перед правкой вместо чтения всего файла**;
 после правки актуализировать сдвинувшиеся номера строк затронутых секций.
-Номера строк — на конец 2026-08-05 (index.html ~2627 строк, script.gs ~1015 строк).
+Номера строк — на конец 2026-08-10 (index.html ~3040 строк, script.gs ~1210 строк).
+Из-за вкладки «Факт» (10.08) секции ниже строки ~450 index.html и ~40 script.gs сдвинуты.
 
 > Вопрос «не показывает объёмы» (05.08) закрыт: пусто было у работ, которых нет
 > в поэтажке (46 из 137; объём в справочнике был у 2 — «Дверные откосы» и «Лифтовые
@@ -53,6 +54,22 @@
   при старте (нужен для колонки «Объем работ» на Расценках); по готовности перерисовка
 - 1624 `openVolModal` — поэтажная ведомость (модалка)
 
+## index.html — Факт (отметки выполнения, 10.08.2026)
+
+- 497 сайдбар `data-screen="fact"`; 454 CSS `.factgrid/.fcell/.fpct/.fdone/.fcorp-done`
+- 628 state: `factMarks/factStatus/factRef/factRefStatus/factPending/factSaving/factModalKey`
+- 798 `factPct` — средневзвешенный % готовности (веса — объёмы этажей vols);
+  816 `cellHtml` (ветки corp/total для fact); 1079 `factSums` в renderTable (группы —
+  только лидерные работы)
+- 1784 `loadFact` (action=fact); 1798 `loadFactRef` (action=factRef, по готовности
+  перерисовывает открытую сетку, если пользователь не печатает); 1820 `refreshFactScreen`
+- 1841 `openFactModal` — сетка этажи×корпуса (план-объём, input, ✓, «✓ все» на корпус,
+  строка «Готовность», подсказки из factRef); 1913 `ensureUserName`
+- 1923 `applyFactInput` (валидация 0..100, optimistic, очередь); 1972 `scheduleFactFlush`
+  (пауза 1,2 с); 1977 `flushFactMarks` (POST saveFact пакетом, 3 ретрая, откат + alert);
+  2020 beforeunload; 2779 `closeModal` — немедленный flush несохранённого
+- 2697 setScreen ветка fact; клик tbody: fact -> openFactModal
+
 ## index.html — Бюджет
 
 - 1288 `loadBudget`; 1302 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
@@ -97,23 +114,29 @@
 
 - 1 `CONFIG` — ID таблицы, листы, колонки поэтажки FLOOR_* (WORK A, CORP B, FLOOR C,
   VOL D, GROUP F, SS_NAME J, BUDGET_FLAG L, REDO Q, CONTRACTOR S, SS W, RATE AB,
-  RATE_MAT AC, BUDGET_COST AG)
-- 37–41 ключи кэша (`floors_v3`, `vols_v1`, `budget_v5`, `bfloors_v1`, `changes_v1` —
-  все кроме floors чанкованные); 44 `clearCache` (⚠️ новый ключ добавлять сюда)
-- 58/68 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
-- 84 `setup` (пароль); 95–127 вопросы: `setupQuestions` (разовая авторизация Drive —
+  RATE_MAT AC, BUDGET_COST AG); 41 SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
+- 47–51 ключи кэша (`floors_v3`, `vols_v1`, `budget_v5`, `bfloors_v1`, `changes_v1`,
+  `factref_v1` — все кроме floors чанкованные); 54 `clearCache` (⚠️ новый ключ добавлять сюда)
+- ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
+- ~96 `setup` (пароль); ~107–140 вопросы: `setupQuestions` (разовая авторизация Drive —
   ВЫПОЛНЕНА), `questionsFile_/readQuestions_/writeQuestions_` (QUESTIONS_FILE_ID)
-- 140–155 базовый расчёт: `baselineFile_/readBaseline_` (otdelka_baseline.json,
+- ~152–167 базовый расчёт: `baselineFile_/readBaseline_` (otdelka_baseline.json,
   BASELINE_FILE_ID; первая база зафиксирована 2026-08-05)
-- 165 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
-  расц.раб, расц.мат]; 234 `diffBaseline_` (add/del/mod)
-- 276 `doPost` — addQuestion / saveBaseline / setQuestionStatus (LockService, пароль)
-- 350 `doGet`: 360 ping · 366 meta (безопасно из чата) · 390 probe (агрегаты) ·
-  534 floors · 555 volumes · 574 questions · 584 budget · 604 changes ·
-  631 budgetFloors · 649 load
-- 694 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
+- ~177 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
+  расц.раб, расц.мат]; ~246 `diffBaseline_` (add/del/mod)
+- 288 `doPost` — 310 saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
+  ветка ДО чтения вопросов) / addQuestion / saveBaseline / setQuestionStatus
+  (LockService, пароль)
+- 393 `doGet`: ping · meta (безопасно из чата) · probe (агрегаты) · floors · volumes ·
+  questions · budget · changes · budgetFloors · 694 fact (отметки, без кэша) ·
+  705 factRef (справка V/Z, кэш factref_v1) · load
+- ~737 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
   ⚠️ ключ склеен через НЕВИДИМЫЙ символ (код 1) — Edit его не находит, править вокруг
-- 775 `buildVolumes_`; 837 `buildBudget_` (статья → работы (+группа F) → ячейки
+- ~818 `buildVolumes_`; ~880 `buildBudget_` (статья → работы (+группа F) → ячейки
   [подрядчик, корпус, стоимость, объём, коэф]; тот же невидимый символ);
-  916 `buildBudgetFloors_` (работа → 'подрядчик|корпус' → {r:[расц], f:[[этаж,объём,стоимость]]})
-- 991 `sheetToObjects_`; 1010 `jsonOut_`
+  ~959 `buildBudgetFloors_` (работа → 'подрядчик|корпус' → {r:[расц], f:[[этаж,объём,стоимость]]})
+- 1070 `safeCell_` (экранирование =+-@, лимит 1000); 1078 `ensureFactSheet_` (создаёт
+  лист «Факт» с заголовками); 1092 `readFactMarks_` (журнал → последняя отметка по
+  ключу); 1118 `buildFactRef_` (поэтажка V/Z → работа|корпус|этаж, % средневзв. по
+  объёму, доли ×100 по максимуму колонки)
+- ~1186 `sheetToObjects_`; ~1205 `jsonOut_`

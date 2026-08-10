@@ -31,7 +31,16 @@ var CONFIG = {
   FLOOR_BUDGET_FLAG: 'Признак для бюджета основной',             // кол. L — статья бюджета
   FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета', // кол. AG — что суммируем
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
-  FLOOR_GROUP: 'Группа работ'                                    // кол. F — группировка работ
+  FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
+
+  // Вкладка «Факт» (10.08.2026): отметки фактического выполнения работ.
+  // Отметки пишутся ЖУРНАЛОМ в отдельный лист «Факт» этой же таблицы (строки только
+  // добавляются, последняя отметка по ключу работа|корпус|этаж — актуальная).
+  // В поэтажку НЕ пишем никогда — она собрана IMPORTRANGE, запись затрётся формулами.
+  // Справочно показываем факт из поэтажки: «Процент готовности» (V) и «Объем к закрытию» (Z).
+  SHEET_FACT: 'Факт',
+  FLOOR_READY: 'Процент готовности',
+  FLOOR_CLOSE: 'Объем к закрытию'
 };
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
@@ -39,17 +48,20 @@ var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. actio
 var CACHE_BUDGET = 'budget_v5';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
+var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
-  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n'];
+  var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
+              CACHE_FACTREF + '_n'];
   for (var i = 0; i < 10; i++) {
     keys.push(CACHE_VOLS + '_' + i);
     keys.push(CACHE_BUDGET + '_' + i);
     keys.push(CACHE_BFL + '_' + i);
     keys.push(CACHE_CHANGES + '_' + i);
+    keys.push(CACHE_FACTREF + '_' + i);
   }
   cache.removeAll(keys);
 }
@@ -292,6 +304,37 @@ function doPost(e) {
     return jsonOut_({ ok: false, error: 'busy' });
   }
   try {
+    // Отметки факта (10.08.2026): пакет { author, marks: [{work, corp, floor, pct}, …] }
+    // дописывается журналом в лист «Факт» — существующие строки не трогаем никогда.
+    // Ветка ДО чтения файла вопросов: Диск для записи факта не нужен.
+    if (body.action === 'saveFact') {
+      var factAuthor = safeCell_(String(body.author || '').trim().slice(0, 100));
+      var marksIn = body.marks;
+      if (!factAuthor || !Array.isArray(marksIn) || !marksIn.length) {
+        return jsonOut_({ ok: false, error: 'empty_fields' });
+      }
+      if (marksIn.length > 300) {
+        return jsonOut_({ ok: false, error: 'too_many_marks' });
+      }
+      var now = new Date();
+      var factRows = [];
+      for (var mi = 0; mi < marksIn.length; mi++) {
+        var m = marksIn[mi] || {};
+        var mWork = safeCell_(String(m.work || '').trim().slice(0, 300));
+        var mCorp = safeCell_(String(m.corp || '').trim().slice(0, 10));
+        var mFloor = parseFloat(m.floor);
+        var mPct = parseFloat(m.pct);
+        if (!mWork || !mCorp || isNaN(mFloor) || isNaN(mPct)) continue;
+        mPct = Math.max(0, Math.min(100, Math.round(mPct)));
+        factRows.push([now, factAuthor, mWork, mCorp, mFloor, mPct]);
+      }
+      if (!factRows.length) return jsonOut_({ ok: false, error: 'no_valid_marks' });
+      var ssFact = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var shFact = ensureFactSheet_(ssFact);
+      shFact.getRange(shFact.getLastRow() + 1, 1, factRows.length, 6).setValues(factRows);
+      return jsonOut_({ ok: true, saved: factRows.length });
+    }
+
     var list = readQuestions_();
 
     if (body.action === 'addQuestion') {
@@ -646,6 +689,37 @@ function doGet(e) {
     }
   }
 
+  // Актуальные отметки факта из журнала «Факт» (10.08.2026). Без кэша — лист
+  // небольшой, а после записи отметки должны приходить свежими.
+  if (action === 'fact') {
+    try {
+      var ssFa = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      return jsonOut_({ ok: true, marks: readFactMarks_(ssFa) });
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'fact_failed', message: String(err) });
+    }
+  }
+
+  // Справочный факт из поэтажки (V «Процент готовности», Z «Объем к закрытию») —
+  // тяжёлый расчёт по 25 тыс. строк, кэш чанкованный на 6 часов (10.08.2026).
+  if (action === 'factRef') {
+    try {
+      var cacheFR = CacheService.getScriptCache();
+      var cachedFR = cacheGetBig_(cacheFR, CACHE_FACTREF);
+      if (cachedFR) {
+        return ContentService.createTextOutput(cachedFR)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssFR = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadFR = JSON.stringify({ ok: true, ref: buildFactRef_(ssFR) });
+      cachePutBig_(cacheFR, CACHE_FACTREF, payloadFR, 21600);
+      return ContentService.createTextOutput(payloadFR)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'factref_failed', message: String(err) });
+    }
+  }
+
   if (action === 'load') {
     try {
       var ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
@@ -986,6 +1060,129 @@ function buildBudgetFloors_(ss) {
     });
   });
   return map;
+}
+
+/**
+ * Вкладка «Факт» (10.08.2026): защита пользовательского ввода перед записью в Sheets —
+ * значения, начинающиеся с =, +, -, @, экранируются апострофом (formula injection),
+ * длина ограничена (паттерн из шахматки СБ3).
+ */
+function safeCell_(v) {
+  if (typeof v !== 'string') return v;
+  var s = v.slice(0, 1000);
+  if (/^[=+\-@]/.test(s)) s = "'" + s;
+  return s;
+}
+
+/** Лист «Факт» (журнал отметок): найти или создать с заголовками. */
+function ensureFactSheet_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FACT);
+  if (sh) return sh;
+  sh = ss.insertSheet(CONFIG.SHEET_FACT);
+  sh.getRange(1, 1, 1, 6).setValues([['Дата', 'Кто', 'Работа', 'Корпус', 'Этаж', 'Процент']]);
+  sh.setFrozenRows(1);
+  return sh;
+}
+
+/**
+ * Актуальные отметки факта из журнала «Факт»: строки читаются по порядку, последняя
+ * отметка по ключу работа|корпус|этаж побеждает. Ключ — как во vols: работа lowercase,
+ * этаж нормализован через parseFloat. Возвращает { ключ: [процент, кто, когдаISO] }.
+ */
+function readFactMarks_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FACT);
+  if (!sh) return {};
+  var lastRow = sh.getLastRow();
+  if (lastRow < 2) return {};
+  var data = sh.getRange(2, 1, lastRow - 1, 6).getValues();
+  var marks = {};
+  for (var i = 0; i < data.length; i++) {
+    var work = String(data[i][2]).trim().toLowerCase();
+    var corp = String(data[i][3]).trim();
+    var fl = parseFloat(String(data[i][4]).replace(',', '.'));
+    var pct = data[i][5];
+    if (!work || !corp || isNaN(fl) || typeof pct !== 'number') continue;
+    var when = data[i][0] instanceof Date ? data[i][0].toISOString() : String(data[i][0]);
+    marks[work + '|' + corp + '|' + fl] = [pct, String(data[i][1]).trim(), when];
+  }
+  return marks;
+}
+
+/**
+ * Справочный факт из поэтажки для вкладки «Факт» (10.08.2026): «Процент готовности»
+ * (кол. V) и «Объем к закрытию» (кол. Z) в разрезе работа|корпус|этаж.
+ * Процент по этажу — средневзвешенный по объёму (кол. D); проценты в Sheets могут
+ * лежать долями (0.5 = 50%) — если максимум по колонке <= 1.01, умножаем всё на 100.
+ * Возвращает { работа(lowercase): { корпус: [[этаж, готовность %, объём к закрытию], …] } }.
+ */
+function buildFactRef_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
+  if (!sh) return {};
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return {};
+
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  var need = [CONFIG.FLOOR_WORK, CONFIG.FLOOR_CORP, CONFIG.FLOOR_FLOOR, CONFIG.FLOOR_VOL,
+              CONFIG.FLOOR_READY, CONFIG.FLOOR_CLOSE];
+  for (var i = 0; i < need.length; i++) {
+    if (!idx[need[i]]) return {};
+  }
+
+  var n = lastRow - 1;
+  var col = function (name) { return sh.getRange(2, idx[name], n, 1).getValues(); };
+  var w = col(CONFIG.FLOOR_WORK);
+  var c = col(CONFIG.FLOOR_CORP);
+  var f = col(CONFIG.FLOOR_FLOOR);
+  var v = col(CONFIG.FLOOR_VOL);
+  var ready = col(CONFIG.FLOOR_READY);
+  var close = col(CONFIG.FLOOR_CLOSE);
+
+  var maxReady = 0;
+  var map = {};   // работа -> корпус -> этаж -> { num, den, cnt, sum, close }
+  for (var k = 0; k < n; k++) {
+    var readyV = typeof ready[k][0] === 'number' ? ready[k][0] : 0;
+    var closeV = typeof close[k][0] === 'number' ? close[k][0] : 0;
+    if (!readyV && !closeV) continue;
+    var work = String(w[k][0]).trim().toLowerCase();
+    if (!work) continue;
+    var corp = String(c[k][0]).trim();
+    if (!corp) continue;
+    var fl = typeof f[k][0] === 'number' ? f[k][0] : parseFloat(String(f[k][0]).replace(',', '.'));
+    if (isNaN(fl)) continue;
+    if (readyV > maxReady) maxReady = readyV;
+    var vol = typeof v[k][0] === 'number' ? v[k][0] : 0;
+    if (!map[work]) map[work] = {};
+    if (!map[work][corp]) map[work][corp] = {};
+    if (!map[work][corp][fl]) map[work][corp][fl] = { num: 0, den: 0, cnt: 0, sum: 0, close: 0 };
+    var a = map[work][corp][fl];
+    a.num += vol * readyV;
+    a.den += vol;
+    a.sum += readyV;
+    a.cnt++;
+    a.close += closeV;
+  }
+
+  var scale = maxReady > 0 && maxReady <= 1.01 ? 100 : 1;   // доли -> проценты
+  var out = {};
+  Object.keys(map).forEach(function (work) {
+    out[work] = {};
+    Object.keys(map[work]).forEach(function (corp) {
+      var byFloor = map[work][corp];
+      out[work][corp] = Object.keys(byFloor)
+        .map(function (fl) {
+          var a = byFloor[fl];
+          var pct = a.den > 0 ? a.num / a.den : (a.cnt ? a.sum / a.cnt : 0);
+          return [parseFloat(fl),
+                  Math.round(pct * scale * 10) / 10,
+                  Math.round(a.close * 100) / 100];
+        })
+        .sort(function (a, b) { return a[0] - b[0]; });
+    });
+  });
+  return out;
 }
 
 function sheetToObjects_(sheet) {
