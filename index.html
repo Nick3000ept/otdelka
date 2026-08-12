@@ -408,6 +408,36 @@
   .bdetail-wrap { overflow-x: auto; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
+  /* Фильтр «Бюджета» по подрядчикам (2026-08-12) */
+  .bfilter { position: relative; display: inline-block; margin-bottom: 12px; }
+  .bfilter-btn {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer;
+  }
+  .bfilter-btn:hover { background: var(--panel2); }
+  .bfilter-btn.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .bfilter-dd {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.15); min-width: 260px; max-height: 320px;
+    overflow: auto; padding: 4px 0;
+  }
+  .bfilter-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .bfilter-item:hover { background: var(--panel2); }
+  .bfilter-item .box {
+    flex: none; width: 14px; height: 14px; border: 1px solid var(--border);
+    border-radius: 3px; background: #fff; text-align: center;
+    line-height: 13px; font-size: 11px; color: #fff;
+  }
+  .bfilter-item.on .box { background: var(--accent); border-color: var(--accent); }
+  .bfilter-reset {
+    padding: 6px 12px; font-size: 12px; color: var(--accent); cursor: pointer;
+    border-top: 1px solid var(--border);
+  }
+  .bfilter-reset:hover { background: var(--panel2); }
   table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
   table.check th {
     text-align: left; padding: 7px 8px; border-bottom: 2px solid var(--border);
@@ -646,6 +676,8 @@ const state = {
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetGrpCollapsed: new Set(), // свёрнутые группы работ внутри статей бюджета
+  budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
+  budgetContrOpen: false,      // открыт ли выпадающий список выбора подрядчиков
   budgetFloors: null,          // расшифровка ячеек бюджета по этажам (action=budgetFloors)
   budgetFloorsStatus: 'idle',  // idle | loading | ready | error
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
@@ -1428,7 +1460,46 @@ function renderBudget() {
     el.innerHTML = head + '<div class="side-note">Данных для свода не нашлось</div>';
     return;
   }
-  const total = rows.reduce((acc, r) => acc + r[1], 0);
+  // Фильтр по подрядчикам (просьба 12.08.2026): можно отметить нескольких, суммы
+  // статей/групп/работ пересчитываются только по выбранным, пустые строки скрываются.
+  // Пустой выбор = показывать всех (как раньше). Считается на странице — данные
+  // подрядчик × корпус уже есть в каждой ячейке бюджета.
+  const UNDEF_KEY = '— без подрядчика —';
+  const contrAll = new Set();
+  rows.forEach(r => (r[2] || []).forEach(w =>
+    (w[2] || []).forEach(c => contrAll.add(String(c[0])))));
+  // Выбор, которого больше нет в данных (после обновления кэша), молча снимаем.
+  state.budgetContr.forEach(n => { if (!contrAll.has(n)) state.budgetContr.delete(n); });
+  const sel = state.budgetContr;
+  const active = sel.size > 0;
+  const cellOk = c => !active || sel.has(String(c[0]));
+  const wSum = w => active
+    ? (w[2] || []).reduce((acc, c) => acc + (sel.has(String(c[0])) ? c[2] : 0), 0)
+    : w[1];
+  const shownName = n => n === UNDEF_KEY ? 'Не определен' : n;
+  const contrList = Array.from(contrAll).sort((a, b) => {
+    if (a === UNDEF_KEY) return -1;
+    if (b === UNDEF_KEY) return 1;
+    return a.localeCompare(b, 'ru');
+  });
+  const btnLabel = !active ? 'Подрядчики: все'
+    : sel.size === 1 ? 'Подрядчик: ' + shownName(Array.from(sel)[0])
+    : 'Подрядчики: выбрано ' + sel.size;
+  const filterHtml = '<div class="bfilter">' +
+    '<button type="button" id="bfilter-btn" class="bfilter-btn' + (active ? ' on' : '') +
+    '">' + escapeHtml(btnLabel) + ' &#9662;</button>' +
+    (state.budgetContrOpen
+      ? '<div class="bfilter-dd">' + contrList.map(n =>
+          '<div class="bfilter-item' + (sel.has(n) ? ' on' : '') + '" data-contr="' +
+          escapeHtml(n) + '"><span class="box">' + (sel.has(n) ? '&#10003;' : '') +
+          '</span>' + escapeHtml(shownName(n)) + '</div>').join('') +
+        (active ? '<div class="bfilter-reset" id="bfilter-reset">Сбросить выбор</div>' : '') +
+        '</div>'
+      : '') +
+    '</div>';
+  const total = active
+    ? rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) => a + wSum(w), 0), 0)
+    : rows.reduce((acc, r) => acc + r[1], 0);
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
   // значения заполняются на уровне работ.
@@ -1442,12 +1513,16 @@ function renderBudget() {
     order.map(pair => {
       const r = pair[0], i = pair[1];
       const works = r[2] || [];
+      // Суммы работ считаем по исходным индексам wi — на них завязаны ключи раскрытий.
+      const sums = works.map(wSum);
+      const rSum = active ? sums.reduce((acc, v) => acc + v, 0) : r[1];
+      if (active && !rSum) return '';   // у выбранных подрядчиков в статье пусто
       const open = state.budgetOpen.has(String(r[0]));
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
         '<td class="num"></td><td class="num"></td>' +
-        '<td class="num">' + escapeHtml(fmtInt(r[1])) + '</td></tr>';
+        '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td></tr>';
       if (open) {
         // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
         // группы сортируются по сумме. Клик по работе — выпадающая сводная
@@ -1458,6 +1533,7 @@ function renderBudget() {
           const wOpen = state.budgetWorkOpen.has(key);
           let vol = 0, redo = 0;
           (w[2] || []).forEach(cell => {
+            if (!cellOk(cell)) return;   // объём и коэф. — тоже по выбранным подрядчикам
             vol += cell[3] || 0;
             if (!redo && cell[4]) redo = cell[4];
           });
@@ -1470,7 +1546,7 @@ function renderBudget() {
             '<td class="num">' +
             (vol ? escapeHtml(fmtVol(vol) + (unit ? ' ' + unit : '')) : '') + '</td>' +
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
-            '<td class="num">' + escapeHtml(fmtInt(w[1])) + '</td></tr>';
+            '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td></tr>';
           if (wOpen) {
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
               '"><td colspan="4">' + budgetWorkHtml(w) + '</td></tr>';
@@ -1480,6 +1556,7 @@ function renderBudget() {
         const grps = [];
         const byG = new Map();
         works.forEach((w, wi) => {
+          if (active && !sums[wi]) return;   // работа без сумм у выбранных подрядчиков
           const g = String(w[3] || '— без группы —');
           if (!byG.has(g)) {
             const o = { name: g, total: 0, items: [] };
@@ -1487,7 +1564,7 @@ function renderBudget() {
             grps.push(o);
           }
           const o = byG.get(g);
-          o.total += w[1];
+          o.total += sums[wi];
           o.items.push([w, wi]);
         });
         grps.sort((a, b) => b.total - a.total);
@@ -1507,7 +1584,7 @@ function renderBudget() {
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
     '<td class="num"></td><td class="num"></td>' +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td></tr></tfoot></table>';
-  el.innerHTML = head + table;
+  el.innerHTML = head + filterHtml + table;
 }
 
 /**
@@ -1527,9 +1604,14 @@ function budgetWorkHtml(w) {
   const rateByCorp = new Map();   // подрядчик|корпус -> [раб/ед, мат/ед, признак СС]
   fl.forEach(r => rateByCorp.set(r[0] + '|' + r[1], [r[2] || 0, r[4] || 0, r[3] ? 1 : 0]));
 
+  // Фильтр по подрядчикам с экрана «Бюджет» действует и здесь (12.08.2026).
+  const fSel = state.budgetContr;
+  const fActive = fSel.size > 0;
+
   const contrTotal = new Map();   // подрядчик -> сумма (для порядка строк)
   const rowsMap = new Map();      // подрядчик|раб|мат|СС -> строка сводной
   (w[2] || []).forEach(cell => {
+    if (fActive && !fSel.has(String(cell[0]))) return;
     const p = cell[0], c = cell[1], v = cell[2];
     contrTotal.set(p, (contrTotal.get(p) || 0) + v);
     const rk = rateByCorp.get(p + '|' + c) || [0, 0, 0];
@@ -1699,6 +1781,31 @@ async function openBudgetCellModal(bi, wi, contr, corp) {
 // Клик по статье бюджета — раскрыть/свернуть работы; по группе работ — её работы;
 // по работе — выпадающая сводная; по сумме в сводной — расшифровка по этажам.
 document.getElementById('budget-screen').addEventListener('click', e => {
+  // Панель фильтра по подрядчикам (12.08.2026) — обрабатываем раньше строк таблицы.
+  const fi = e.target.closest('.bfilter-item');
+  if (fi) {
+    const n = fi.dataset.contr;
+    if (state.budgetContr.has(n)) state.budgetContr.delete(n);
+    else state.budgetContr.add(n);
+    renderBudget();   // список остаётся открытым — можно отметить нескольких подряд
+    return;
+  }
+  if (e.target.closest('#bfilter-reset')) {
+    state.budgetContr.clear();
+    renderBudget();
+    return;
+  }
+  if (e.target.closest('#bfilter-btn')) {
+    state.budgetContrOpen = !state.budgetContrOpen;
+    renderBudget();
+    return;
+  }
+  if (state.budgetContrOpen) {
+    // Клик мимо открытого списка — просто закрыть его, строки таблицы не трогаем.
+    state.budgetContrOpen = false;
+    renderBudget();
+    return;
+  }
   const bc = e.target.closest('td.bcell');
   if (bc) {
     const det = e.target.closest('tr.bdetail');
