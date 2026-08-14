@@ -684,6 +684,9 @@ const state = {
   checkCollapsed: new Set(),   // свёрнутые группы в проверке «Отклонения расценок»
   changes: null,               // дифф против базового расчёта (action=changes)
   changesStatus: 'idle',       // idle | loading | ready | error
+  chgOpen: new Set(),          // «Изменения»: раскрытые статьи бюджета (по умолчанию свернуто)
+  chgGrpCollapsed: new Set(),  // «Изменения»: свёрнутые группы работ внутри статей
+  chgWorkOpen: new Set(),      // «Изменения»: работы с раскрытыми строками корпус × этаж
   questions: [],               // вопросы по работам (action=questions + POST)
   questionsStatus: 'idle',     // idle | loading | ready | error
   userName: localStorage.getItem('otdelka_user') || '',  // имя для вопросов/статусов
@@ -1440,6 +1443,9 @@ async function loadBudget() {
     state.budgetStatus = 'error';
   }
   if (state.screen === 'budget') renderBudget();
+  // Свод бюджета нужен и проверке «Изменения» — там из него берётся
+  // соответствие «работа -> статья/группа» для группировки (14.08.2026).
+  if (state.screen === 'check-changes') renderCheckChanges();
 }
 
 function renderBudget() {
@@ -2528,12 +2534,21 @@ function renderCheckChanges() {
   const list = d.changes || [];
   const head = '<div class="check-head">Изменения: ' + list.length + '</div>' +
     '<div class="check-desc">Отличия актуальной поэтажки от базового расчёта, ' +
-    'зафиксированного ' + escapeHtml(fmtDate(d.date)) + ' (разрез: работа × корпус × ' +
-    'этаж; отслеживаются стоимость, объём, подрядчик и расценки; крупные изменения ' +
-    'стоимости сверху). Кнопка перезапишет базу текущим состоянием.</div>' + btn;
+    'зафиксированного ' + escapeHtml(fmtDate(d.date)) + '. Сгруппированы как во ' +
+    'вкладке «Бюджет»: статья бюджета → группа работ → работа; клик по работе ' +
+    'раскрывает строки корпус × этаж. «Δ стоимости» — на сколько изменилась ' +
+    'стоимость против базы. Кнопка перезапишет базу текущим состоянием.</div>' + btn;
   if (!list.length) {
     el.innerHTML = head +
       '<div class="side-note">Изменений нет — данные совпадают с базовым расчётом</div>';
+    return;
+  }
+  // Группировка как во вкладке «Бюджет» (просьба 14.08.2026): соответствие
+  // «работа -> статья/группа» берём из свода бюджета — грузим его, если ещё не.
+  if (state.budgetStatus === 'idle') loadBudget();
+  if (state.budgetStatus === 'loading') {
+    el.innerHTML = head +
+      '<div class="side-note">Загружаем свод бюджета для группировки…</div>';
     return;
   }
   const typeTag = t => (t === 'add'
@@ -2557,18 +2572,117 @@ function renderCheckChanges() {
         fmtChangeVal(x[0], x[1]) + ' → ' + fmtChangeVal(x[0], x[2])) + '</span>'
     ).join(' ');
   };
-  const table = '<table class="check"><thead><tr>' +
-    '<th style="width:90px">Тип</th><th class="cw-name">Работа</th>' +
+  if (state.budgetStatus === 'error') {
+    // Свод не загрузился — показываем изменения плоским списком, как раньше.
+    const flat = '<table class="check"><thead><tr>' +
+      '<th style="width:90px">Тип</th><th class="cw-name">Работа</th>' +
+      '<th style="width:70px">Корпус</th><th style="width:60px">Этаж</th>' +
+      '<th>Что изменилось</th></tr></thead><tbody>' +
+      list.map(ch => {
+        const parts = String(ch.k).split('|');
+        return '<tr><td>' + typeTag(ch.t) + '</td>' +
+          '<td>' + escapeHtml(parts[0] || '') + '</td>' +
+          '<td>' + escapeHtml(parts[1] || '') + '</td>' +
+          '<td>' + escapeHtml(parts[2] || '') + '</td>' +
+          '<td>' + detail(ch) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    el.innerHTML = head + '<div class="side-note">Свод бюджета не загрузился — ' +
+      'изменения показаны без группировки, плоским списком.</div>' + flat;
+    return;
+  }
+  // Работа (нормализованная) -> [статья бюджета, группа работ] из свода бюджета.
+  const wMap = new Map();
+  (state.budget || []).forEach(r => (r[2] || []).forEach(w => {
+    const k = norm(String(w[0]));
+    if (!wMap.has(k)) wMap.set(k, [String(r[0]), String(w[3] || '— без группы —')]);
+  }));
+  // Сдвиг стоимости по одной записи диффа: новое +, удалённое −, у изменений —
+  // разница по полю «стоимость» (индекс 0 в CHANGE_FIELDS).
+  const chDelta = ch => {
+    if (ch.t === 'add') return ch.n[0] || 0;
+    if (ch.t === 'del') return -(ch.o[0] || 0);
+    const c = ch.d.find(x => x[0] === 0);
+    return c ? (c[2] || 0) - (c[1] || 0) : 0;
+  };
+  const OUTSIDE = '— вне бюджета —';
+  const arts = [], byArt = new Map();
+  list.forEach(ch => {
+    const parts = String(ch.k).split('|');
+    const wName = parts[0] || '';
+    const m = wMap.get(norm(wName)) || [OUTSIDE, '— без группы —'];
+    let a = byArt.get(m[0]);
+    if (!a) { a = { name: m[0], cnt: 0, delta: 0, grps: [], byG: new Map() }; byArt.set(m[0], a); arts.push(a); }
+    let g = a.byG.get(m[1]);
+    if (!g) { g = { name: m[1], cnt: 0, delta: 0, works: [], byW: new Map() }; a.byG.set(m[1], g); a.grps.push(g); }
+    let w = g.byW.get(wName);
+    if (!w) { w = { name: wName, cnt: 0, delta: 0, rows: [] }; g.byW.set(wName, w); g.works.push(w); }
+    const dv = chDelta(ch);
+    a.cnt++; g.cnt++; w.cnt++;
+    a.delta += dv; g.delta += dv; w.delta += dv;
+    w.rows.push({ ch, corp: parts[1] || '', floor: parts[2] || '' });
+  });
+  // Статьи — по алфавиту (как в «Бюджете»), «вне бюджета» — в конец;
+  // группы и работы — крупные сдвиги стоимости сверху.
+  arts.sort((x, y) => {
+    if (x.name === OUTSIDE) return 1;
+    if (y.name === OUTSIDE) return -1;
+    return x.name.localeCompare(y.name, 'ru');
+  });
+  const byImpact = (x, y) => Math.abs(y.delta) - Math.abs(x.delta) || y.cnt - x.cnt;
+  const fmtDelta = v => Math.round(v) ? (v > 0 ? '+' : '') + fmtInt(v) : '';
+  const rowsTable = rows => '<div class="bdetail-wrap">' +
+    '<table class="inner mini"><thead><tr><th style="width:90px">Тип</th>' +
     '<th style="width:70px">Корпус</th><th style="width:60px">Этаж</th>' +
     '<th>Что изменилось</th></tr></thead><tbody>' +
-    list.map(ch => {
-      const parts = String(ch.k).split('|');
-      return '<tr><td>' + typeTag(ch.t) + '</td>' +
-        '<td>' + escapeHtml(parts[0] || '') + '</td>' +
-        '<td>' + escapeHtml(parts[1] || '') + '</td>' +
-        '<td>' + escapeHtml(parts[2] || '') + '</td>' +
-        '<td>' + detail(ch) + '</td></tr>';
-    }).join('') + '</tbody></table>';
+    rows.map(rw => '<tr><td>' + typeTag(rw.ch.t) + '</td>' +
+      '<td class="num">' + escapeHtml(rw.corp) + '</td>' +
+      '<td class="num">' + escapeHtml(rw.floor) + '</td>' +
+      '<td>' + detail(rw.ch) + '</td></tr>').join('') +
+    '</tbody></table></div>';
+  const table = '<table class="check budget"><thead><tr>' +
+    '<th>Статья бюджета / группа / работа</th>' +
+    '<th class="num" style="width:110px">Изменений</th>' +
+    '<th class="num" style="width:150px">Δ стоимости, руб</th></tr></thead><tbody>' +
+    arts.map(a => {
+      const open = state.chgOpen.has(a.name);
+      let h = '<tr class="brow" data-chgart="' + escapeHtml(a.name) + '"><td>' +
+        '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' +
+        escapeHtml(a.name) + '</td>' +
+        '<td class="num">' + a.cnt + '</td>' +
+        '<td class="num">' + escapeHtml(fmtDelta(a.delta)) + '</td></tr>';
+      if (!open) return h;
+      a.grps.sort(byImpact);
+      h += a.grps.map(g => {
+        const gKey = a.name + '|' + g.name;
+        const gOpen = !state.chgGrpCollapsed.has(gKey);
+        let gh = '<tr class="bgrp" data-chggrp="' + escapeHtml(gKey) + '"><td>' +
+          '<span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
+          escapeHtml(g.name) + '</td>' +
+          '<td class="num">' + g.cnt + '</td>' +
+          '<td class="num">' + escapeHtml(fmtDelta(g.delta)) + '</td></tr>';
+        if (!gOpen) return gh;
+        g.works.sort(byImpact);
+        gh += g.works.map(w => {
+          const wKey = gKey + '|' + w.name;
+          const wOpen = state.chgWorkOpen.has(wKey);
+          let wh = '<tr class="bwork' + (wOpen ? ' open' : '') + '" data-chgwork="' +
+            escapeHtml(wKey) + '"><td>' +
+            '<span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') + '</span> ' +
+            escapeHtml(w.name) + '</td>' +
+            '<td class="num">' + w.cnt + '</td>' +
+            '<td class="num">' + escapeHtml(fmtDelta(w.delta)) + '</td></tr>';
+          if (wOpen) {
+            wh += '<tr class="bdetail"><td colspan="3">' + rowsTable(w.rows) + '</td></tr>';
+          }
+          return wh;
+        }).join('');
+        return gh;
+      }).join('');
+      return h;
+    }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
+    '<td class="num">' + list.length + '</td>' +
+    '<td class="num">' + escapeHtml(fmtDelta(arts.reduce((s, a) => s + a.delta, 0))) +
+    '</td></tr></tfoot></table>';
   el.innerHTML = head + table;
 }
 
@@ -2831,6 +2945,30 @@ document.getElementById('check-screen').addEventListener('click', e => {
   if (qs) { toggleQuestionStatus(qs.dataset.id); return; }
   const bl = e.target.closest('#baseline-save');
   if (bl) { saveBaseline(bl); return; }
+  // Иерархия на «Изменениях» (статья / группа / работа) — как во вкладке «Бюджет».
+  const ca = e.target.closest('tr.brow[data-chgart]');
+  if (ca) {
+    const k = ca.dataset.chgart;
+    if (state.chgOpen.has(k)) state.chgOpen.delete(k); else state.chgOpen.add(k);
+    renderCheckChanges();
+    return;
+  }
+  const cg = e.target.closest('tr.bgrp[data-chggrp]');
+  if (cg) {
+    const k = cg.dataset.chggrp;
+    if (state.chgGrpCollapsed.has(k)) state.chgGrpCollapsed.delete(k);
+    else state.chgGrpCollapsed.add(k);
+    renderCheckChanges();
+    return;
+  }
+  const cw = e.target.closest('tr.bwork[data-chgwork]');
+  if (cw) {
+    const k = cw.dataset.chgwork;
+    if (state.chgWorkOpen.has(k)) state.chgWorkOpen.delete(k);
+    else state.chgWorkOpen.add(k);
+    renderCheckChanges();
+    return;
+  }
   const nc = e.target.closest('tr.sect[data-ncgrp]');
   if (nc) {
     const g = nc.dataset.ncgrp;

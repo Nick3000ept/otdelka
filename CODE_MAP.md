@@ -100,8 +100,12 @@
   (группы, всё свернуто по умолчанию)
 - 1909 `FORMULA_ERR_RE`; 1911 `formulaChecks`; 1956 `renderCheckFormulas` — «Формулы»
   (ошибки #N/A и т.п. в листе «Работы» И в «Расходах»; ошибки приходят текстом)
-- 1987 `CHANGE_FIELDS`; 1994 `loadChanges`; 2010 `renderCheckChanges` — «Изменения»
-  (дифф против базового расчёта; кнопка `#baseline-save`); 2081 `saveBaseline`
+- ~2489 `CHANGE_FIELDS`; ~2496 `loadChanges`; ~2512 `renderCheckChanges` — «Изменения»:
+  с 14.08 иерархия как в «Бюджете» (статья → группа → работа, соответствие из
+  state.budget w[3]; state `chgOpen/chgGrpCollapsed/chgWorkOpen`; классы строк
+  brow/bgrp/bwork с data-chgart/chggrp/chgwork — стили бюджета переиспользованы,
+  клики в обработчике #check-screen; работы «— вне бюджета —» отдельной статьёй;
+  budget error → плоский список); кнопка `#baseline-save`; ~2690 `saveBaseline`
 - 2183 `renderCheckQuestions` — «Вопросы» (кнопка статуса qstatus)
 - 2261 `updateCheckBadges`; 2279 `CHECK_SCREENS` (экран → рендер; новые проверки сюда);
   2325 клик `#check-screen` (qstatus/baseline-save/ncgrp/grp/wrow)
