@@ -45,8 +45,9 @@
 
 ## index.html — нижняя панель (Расценки)
 
-- 1064 `contractorsHtml` — сводная подрядчик×корпус; режимы `ctrMode` work|mat|both;
-  блоки Подрядчики/СС; «Базовая расценка» в незанятых корпусах
+- ~1207 `contractorsHtml` — сводная подрядчик×корпус; режимы `ctrMode` work|mat|both;
+  блоки Подрядчики/СС; «Базовая расценка» в незанятых корпусах; с 14.08 сверка
+  ячеек с contrRates (`vedom`/`misTxt`, класс `rate-bad` красным, СС не сверяется)
 - 1152 `renderBottomPane`; 1179 `contractorDetailHtml` (СС — через ssNames поэтажки +
   Справочник СС); 1237 `miniTable`; 2362 клик `#ctr-body`; 2394 `materialsHtml`
 

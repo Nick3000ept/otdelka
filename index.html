@@ -272,6 +272,10 @@
   table.inner.mini { width: auto; margin: 0 0 10px; }
   table.inner.mini th, table.inner.mini td { font-size: 11px; }
   table.inner.mini th.num, table.inner.mini td.num { width: 90px; }
+  /* Расценка из поэтажки разошлась с «Расценками подрядчиков» (14.08.2026). */
+  table.inner.contractors td.rate-bad {
+    background: #fdeaea; color: #b42121; font-weight: 700;
+  }
 
   /* Модальное окно с деталями по подрядчику. */
   #modal-overlay {
@@ -1250,6 +1254,39 @@ function contractorsHtml(workKey) {
     map.get(contr).set(corp, [rate || 0, mat || 0]);
   });
 
+  // Сверка с «Расценками подрядчиков» (просьба 14.08.2026): расценка в ячейке —
+  // из поэтажки; если по работе+подрядчику+корпусу ведомость даёт другое значение,
+  // ячейка подсвечивается красным (подсказка при наведении — что в ведомости).
+  // У одной комбинации в ведомости бывает несколько строк (этажные диапазоны) —
+  // совпадение хотя бы с одной считается «сходится». СС-блок не сверяется:
+  // собственных сил в «Расценках подрядчиков» нет.
+  const vedom = new Map();   // подрядчик|корпус -> { w: [расценки работ], m: [материалов] }
+  state.contrRates.forEach(r => {
+    if (norm(r['Работа']) !== workKey) return;
+    const k = norm(r['Подрядчик']) + '|' + String(r['Корпус'] || '').trim();
+    let e = vedom.get(k);
+    if (!e) { e = { w: [], m: [] }; vedom.set(k, e); }
+    if (typeof r['Стоимость работ подрядчика, за ед'] === 'number') {
+      e.w.push(r['Стоимость работ подрядчика, за ед']);
+    }
+    if (typeof r['Стоимость материалов подрядчика, за ед'] === 'number') {
+      e.m.push(r['Стоимость материалов подрядчика, за ед']);
+    }
+  });
+  const near = (a, b) => Math.abs(a - b) < 0.005;
+  const misTxt = (name, corp, pair) => {   // текст подсказки или null, если сходится
+    const e = vedom.get(norm(name) + '|' + corp);
+    if (!e) return null;
+    const badW = e.w.length && !e.w.some(v => near(v, pair[0] || 0));
+    const badM = e.m.length && !e.m.some(v => near(v, pair[1] || 0));
+    const bad = mode === 'work' ? badW : (mode === 'mat' ? badM : (badW || badM));
+    if (!bad) return null;
+    const parts = [];
+    if (badW && mode !== 'mat') parts.push('работы ' + e.w.map(fmtInt).join(' / '));
+    if (badM && mode !== 'work') parts.push('материалы ' + e.m.map(fmtInt).join(' / '));
+    return 'Не сходится с «Расценками подрядчиков», там: ' + parts.join(' · ');
+  };
+
   // Расценки в сводной — целыми рублями, без копеек (решение пользователя 03.08.2026).
   // Строки кликабельны (class crow): обычный подрядчик -> «Расценки подрядчиков»,
   // из блока собственных сил -> «Расценки СС».
@@ -1264,7 +1301,10 @@ function contractorsHtml(workKey) {
         corps.map(corp => {
           const pair = cells.get(corp);
           const v = pair ? pick(pair[0], pair[1]) : null;
-          return '<td class="num">' + (v === null ? '' : escapeHtml(fmtInt(v))) + '</td>';
+          const bad = pair && !isSS ? misTxt(name, corp, pair) : null;
+          return '<td class="num' + (bad ? ' rate-bad' : '') + '"' +
+            (bad ? ' title="' + escapeHtml(bad) + '"' : '') + '>' +
+            (v === null ? '' : escapeHtml(fmtInt(v))) + '</td>';
         }).join('') + '</tr>';
     }).join('');
 
