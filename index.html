@@ -66,6 +66,13 @@
     font-size: 11px; font-weight: 700; padding: 1px 7px; min-width: 14px; text-align: center;
   }
   .sb-badge:empty { display: none; }
+  /* Кнопка «Обновить данные» — прижата к низу панели (14.08.2026). */
+  .sb-refresh {
+    margin-top: auto; padding: 9px 12px; border-radius: 8px; color: #c7cfdd;
+    cursor: pointer; font-size: 13px; border: 1px solid #2a3b57; text-align: center;
+  }
+  .sb-refresh:hover { background: #1a2940; color: #fff; }
+  .sb-refresh.busy { opacity: .6; cursor: default; }
 
   #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
@@ -545,6 +552,8 @@
       <div class="sb-item sb-sub" data-screen="check-questions">Вопросы
         <span class="sb-badge" id="badge-check-questions"></span></div>
     </div>
+    <div id="sb-refresh" class="sb-refresh"
+      title="Сбросить кэш и перечитать данные из таблицы заново">&#10227; Обновить данные</div>
   </aside>
   <div id="content">
   <header>
@@ -3053,6 +3062,26 @@ document.getElementById('check-screen').addEventListener('click', e => {
   if (!tr) return;
   state.checkOpen = state.checkOpen === tr.dataset.key ? null : tr.dataset.key;
   renderCheckWorkRates();
+});
+
+// Кнопка «Обновить данные» (14.08.2026): сбрасывает серверный кэш (action=clearCache)
+// и перезагружает страницу — все данные перечитываются из таблицы заново.
+// Первая загрузка после сброса медленнее обычного (кэш собирается заново).
+document.getElementById('sb-refresh').addEventListener('click', async () => {
+  const el = document.getElementById('sb-refresh');
+  if (el.classList.contains('busy')) return;
+  el.classList.add('busy');
+  el.textContent = 'Обновляем…';
+  try {
+    const url = GAS_URL + '?action=clearCache&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    location.reload();
+  } catch (e) {
+    el.classList.remove('busy');
+    el.innerHTML = '&#10227; Обновить данные';
+    alert('Не получилось обновить: ' + e.message);
+  }
 });
 
 // Раскрывающийся блок «Проверки» в боковой панели.

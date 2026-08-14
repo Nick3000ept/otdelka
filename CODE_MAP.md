@@ -142,9 +142,10 @@
 - 288 `doPost` — 310 saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
   ветка ДО чтения вопросов) / addQuestion / saveBaseline / setQuestionStatus
   (LockService, пароль)
-- 393 `doGet`: ping · meta (безопасно из чата) · probe (агрегаты) · floors · volumes ·
-  questions · budget · changes · budgetFloors · 694 fact (отметки, без кэша) ·
-  705 factRef (справка V/Z, кэш factref_v1) · load
+- ~393 `doGet`: ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
+  `#sb-refresh` «Обновить данные» внизу сайдбара) · meta (безопасно из чата) ·
+  probe (агрегаты) · floors · volumes · questions · budget · changes ·
+  budgetFloors · fact (отметки, без кэша) · factRef (справка V/Z) · load
 - ~737 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
   ⚠️ ключ склеен через НЕВИДИМЫЙ символ (код 1) — Edit его не находит, править вокруг
 - ~818 `buildVolumes_`; ~880 `buildBudget_` (статья → работы (+группа F) → ячейки
