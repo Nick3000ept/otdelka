@@ -2630,14 +2630,38 @@ function renderCheckChanges() {
   });
   const byImpact = (x, y) => Math.abs(y.delta) - Math.abs(x.delta) || y.cnt - x.cnt;
   const fmtDelta = v => Math.round(v) ? (v > 0 ? '+' : '') + fmtInt(v) : '';
+  // Изменения — отдельными столбцами (просьба 14.08.2026): подрядчик, стоимость
+  // материалов/работ (за ед., как в поэтажке), объём и итоговая стоимость.
+  // Индексы полей — как в CHANGE_FIELDS; «было → стало» красным, у новых
+  // и удалённых строк — просто значения.
+  const CH_COLS = [
+    [2, 'Подрядчик', 220],
+    [4, 'Стоимость материалов, за ед.', 170],
+    [3, 'Стоимость работ, за ед.', 170],
+    [1, 'Объём', 140],
+    [0, 'Стоимость, руб', 180]
+  ];
+  const fieldCell = (ch, fi) => {
+    if (ch.t === 'mod') {
+      const x = ch.d.find(p => p[0] === fi);
+      if (!x) return '';
+      return '<span class="dev-bad">' +
+        escapeHtml(fmtChangeVal(fi, x[1]) + ' → ' + fmtChangeVal(fi, x[2])) + '</span>';
+    }
+    const arr = ch.t === 'add' ? ch.n : ch.o;
+    const txt = fmtChangeVal(fi, arr ? arr[fi] : null);
+    return txt === '—' ? '' : escapeHtml(txt);
+  };
   const rowsTable = rows => '<div class="bdetail-wrap">' +
     '<table class="inner mini"><thead><tr><th style="width:90px">Тип</th>' +
     '<th style="width:140px">Корпус</th><th style="width:120px">Этаж</th>' +
-    '<th style="width:700px">Что изменилось</th></tr></thead><tbody>' +
+    CH_COLS.map(c => '<th style="width:' + c[2] + 'px">' + c[1] + '</th>').join('') +
+    '</tr></thead><tbody>' +
     rows.map(rw => '<tr><td>' + typeTag(rw.ch.t) + '</td>' +
       '<td class="num">' + escapeHtml(rw.corp) + '</td>' +
       '<td class="num">' + escapeHtml(rw.floor) + '</td>' +
-      '<td>' + detail(rw.ch) + '</td></tr>').join('') +
+      CH_COLS.map(c => '<td class="num">' + fieldCell(rw.ch, c[0]) + '</td>').join('') +
+      '</tr>').join('') +
     '</tbody></table></div>';
   const table = '<table class="check budget"><thead><tr>' +
     '<th>Статья бюджета / группа / работа</th>' +
