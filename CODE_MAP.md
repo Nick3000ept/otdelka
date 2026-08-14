@@ -105,7 +105,9 @@
   state.budget w[3]; state `chgOpen/chgGrpCollapsed/chgWorkOpen`; классы строк
   brow/bgrp/bwork с data-chgart/chggrp/chgwork — стили бюджета переиспользованы,
   клики в обработчике #check-screen; работы «— вне бюджета —» отдельной статьёй;
-  budget error → плоский список); кнопка `#baseline-save`; ~2690 `saveBaseline`
+  budget error → плоский список; детали строк — столбцами CH_COLS/fieldCell:
+  Подрядчик · Стоимость мат./работ за ед. · Объём · Стоимость, mod красным);
+  кнопка `#baseline-save`; ~2720 `saveBaseline`
 - 2183 `renderCheckQuestions` — «Вопросы» (кнопка статуса qstatus)
 - 2261 `updateCheckBadges`; 2279 `CHECK_SCREENS` (экран → рендер; новые проверки сюда);
   2325 клик `#check-screen` (qstatus/baseline-save/ncgrp/grp/wrow)
