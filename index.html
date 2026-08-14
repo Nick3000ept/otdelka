@@ -92,6 +92,12 @@
     background: var(--panel2); color: var(--text-dim); font-size: 12px; cursor: pointer;
   }
   #f-reset:hover, #f-toggle-all:hover { color: var(--text); }
+  /* Кнопки масштаба текста таблиц А− / 100% / А+ (14.08.2026). */
+  .zbtn {
+    padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel2); color: var(--text-dim); font-size: 12px; cursor: pointer;
+  }
+  .zbtn:hover { color: var(--text); }
   .search-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   #search {
     padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
@@ -564,6 +570,10 @@
       <button id="f-toggle-all" type="button">Развернуть все</button>
       <button id="f-reset" type="button">Сбросить</button>
       <div class="search-wrap">
+        <button id="zoom-out" type="button" class="zbtn"
+          title="Мельче — чтобы длинные значения помещались в ячейки">А−</button>
+        <button id="zoom-reset" type="button" class="zbtn" title="Обычный масштаб">100%</button>
+        <button id="zoom-in" type="button" class="zbtn" title="Крупнее">А+</button>
         <input id="search" type="text" placeholder="Поиск...">
       </div>
     </div>
@@ -708,6 +718,7 @@ const state = {
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
   selectedName: '',
   query: '',
+  zoom: 1,                     // масштаб текста таблиц (кнопки А−/А+ в шапке)
   filters: { group: '', place: '', surface: '' },
   collapsed: new Set()         // свёрнутые группы работ
 };
@@ -3221,6 +3232,28 @@ document.getElementById('tbody').addEventListener('click', e => {
     if (state.works.length) renderTable();
   });
 });
+
+// Масштаб текста таблиц (просьба 14.08.2026): А− / А+ меняют размер шрифта ячеек
+// (60–120% шагом 10%), чтобы длинные значения помещались в узкие колонки целиком;
+// 100% — исходный вид (правило убирается). Ширины колонок не меняются — меняется
+// только шрифт. Значение хранится в localStorage и действует на всех экранах
+// (на «Бюджете» и «Проверках» шапка скрыта, но масштаб применяется и там).
+const zoomStyle = document.createElement('style');
+document.head.appendChild(zoomStyle);
+function applyZoom(z) {
+  z = Math.round(z * 10) / 10;
+  z = Math.min(1.2, Math.max(0.6, z));
+  state.zoom = z;
+  zoomStyle.textContent = z === 1 ? '' :
+    'main table th, main table td, main .fpct { font-size: ' +
+    Math.round(12 * z) + 'px !important; }';
+  document.getElementById('zoom-reset').textContent = Math.round(z * 100) + '%';
+  try { localStorage.setItem('otdelka_zoom', String(z)); } catch (e) {}
+}
+document.getElementById('zoom-out').addEventListener('click', () => applyZoom(state.zoom - 0.1));
+document.getElementById('zoom-in').addEventListener('click', () => applyZoom(state.zoom + 0.1));
+document.getElementById('zoom-reset').addEventListener('click', () => applyZoom(1));
+applyZoom(parseFloat(localStorage.getItem('otdelka_zoom')) || 1);
 
 document.getElementById('f-toggle-all').addEventListener('click', e => {
   const expandAll = state.collapsed.size > 0;

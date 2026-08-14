@@ -17,7 +17,9 @@
   `#sb-checks`: `check-rates|check-work-rates|check-no-cost|check-formulas|check-changes|check-questions`,
   бейджи `#badge-check-*`) + `#content`
 - `#content`: `header` (фильтры `#f-group/#f-place/#f-surface`, `#f-toggle-all`, `#f-reset`,
-  `#search`) → `main`: `#status`, `#pane-top` (`#table/#thead-row/#tbody`), `#check-screen`,
+  кнопки масштаба `#zoom-out/#zoom-reset/#zoom-in` (`applyZoom`, localStorage
+  `otdelka_zoom`, 14.08), `#search`) → `main`: `#status`, `#pane-top`
+  (`#table/#thead-row/#tbody`), `#check-screen`,
   `#budget-screen`, `#pane-bottom` (`#pane-work`, `#ctr-body` + `#mat-body`)
 - `#modal-overlay` (`#modal-title/#modal-sub/#modal-body`) — ведомости, детали, форма вопроса
 

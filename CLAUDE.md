@@ -247,6 +247,13 @@ clasp update-deployment AKfycbyo6f-OGca1loM1aBXtHkcx7nq8tlJWBreGepxp0KTwq7GvDdDP
 
 ## Архитектура коротко
 
+- **Масштаб текста таблиц** (2026-08-14): кнопки **А− / 100% / А+** в шапке справа
+  (перед поиском) меняют размер шрифта всех ячеек th/td от 60% до 120% шагом 10%
+  (единый размер `12px × масштаб` через `!important`-правило в динамическом `<style>`,
+  `applyZoom`); ширины колонок не меняются — уменьшение шрифта позволяет увидеть
+  длинные значения целиком. Хранится в localStorage `otdelka_zoom`, действует на всех
+  экранах (на «Бюджете»/«Проверках» шапка скрыта, но масштаб применяется).
+
 - **Auth**: общий пароль (не индивидуальные токены) → localStorage (`otdelka_token`) → бэк сверяет `t=` с Script Properties `PASSWORD` на каждый запрос.
 - **doGet?action=load** — единственный эндпоинт с данными:
   `{ works, expenses, materials, contrRates, ssRates, ssMap, checkRates }`, ~800 КБ
