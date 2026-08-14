@@ -2632,8 +2632,8 @@ function renderCheckChanges() {
   const fmtDelta = v => Math.round(v) ? (v > 0 ? '+' : '') + fmtInt(v) : '';
   const rowsTable = rows => '<div class="bdetail-wrap">' +
     '<table class="inner mini"><thead><tr><th style="width:90px">Тип</th>' +
-    '<th style="width:70px">Корпус</th><th style="width:60px">Этаж</th>' +
-    '<th>Что изменилось</th></tr></thead><tbody>' +
+    '<th style="width:140px">Корпус</th><th style="width:120px">Этаж</th>' +
+    '<th style="width:700px">Что изменилось</th></tr></thead><tbody>' +
     rows.map(rw => '<tr><td>' + typeTag(rw.ch.t) + '</td>' +
       '<td class="num">' + escapeHtml(rw.corp) + '</td>' +
       '<td class="num">' + escapeHtml(rw.floor) + '</td>' +
