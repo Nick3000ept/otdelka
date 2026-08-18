@@ -30,6 +30,7 @@ var CONFIG = {
   // Вкладка «Бюджет» (04.08.2026): свод по поэтажке статья -> стоимость.
   FLOOR_BUDGET_FLAG: 'Признак для бюджета основной',             // кол. L — статья бюджета
   FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета', // кол. AG — что суммируем
+  FLOOR_COST_WORK: 'Стоимость работ итого для бюджета',          // кол. AE — работы отдельно (18.08.2026)
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
   FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
 
@@ -45,7 +46,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v5';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
+var CACHE_BUDGET = 'budget_v6';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -940,6 +941,9 @@ function buildBudget_(ss) {
   var redo = idx[CONFIG.FLOOR_REDO] ? sh.getRange(2, idx[CONFIG.FLOOR_REDO], n, 1).getValues() : null;
   // Группа работ (кол. F) — группировка работ внутри статьи (просьба 05.08.2026).
   var grp = idx[CONFIG.FLOOR_GROUP] ? sh.getRange(2, idx[CONFIG.FLOOR_GROUP], n, 1).getValues() : null;
+  // Стоимость работ отдельно (кол. AE, 18.08.2026) — чтобы сводная делила итог
+  // на работы и материалы (материалы фронт считает как AG − AE).
+  var cw = idx[CONFIG.FLOOR_COST_WORK] ? sh.getRange(2, idx[CONFIG.FLOOR_COST_WORK], n, 1).getValues() : null;
 
   var map = {};
   for (var k = 0; k < n; k++) {
@@ -961,11 +965,12 @@ function buildBudget_(ss) {
       if (gName) w[work].grp = gName;
     }
     var cellKey = p + '' + c;
-    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0 };
+    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0 };
     var cellObj = w[work].cells[cellKey];
     cellObj.c += v;                       // стоимость (кол. AG)
     cellObj.v += vv;                      // объём (кол. D)
     if (!cellObj.r && rr) cellObj.r = rr; // коэф. переделки — первое непустое
+    if (cw && typeof cw[k][0] === 'number') cellObj.w += cw[k][0]; // работы (кол. AE)
   }
   return Object.keys(map)
     .map(function (item) {
@@ -976,7 +981,7 @@ function buildBudget_(ss) {
             var parts = key.split('');
             var cell = w.cells[key];
             return [parts[0], parts[1], Math.round(cell.c),
-                    Math.round(cell.v * 100) / 100, cell.r];
+                    Math.round(cell.v * 100) / 100, cell.r, Math.round(cell.w)];
           });
           return [wName, Math.round(w.total), cells, w.grp || '— без группы —'];
         })

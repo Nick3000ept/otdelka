@@ -417,6 +417,8 @@
   tr.bdetail table.inner tr.csub td { font-weight: 700; }
   /* Суммы в ячейках кликабельны — расшифровка по этажам. */
   tr.bdetail table.inner td.bcell { cursor: pointer; text-decoration: underline dotted; }
+  /* Раздельные суммы в сводной бюджета: нижняя строка — материалы (18.08.2026). */
+  .bmat { color: var(--text-dim); font-size: 10px; }
   tr.bdetail table.inner td.bcell:hover { color: var(--accent); }
   /* Заголовки «Подрядчики» / «Собственные силы» — выделены плашкой (05.08.2026). */
   tr.bdetail table.inner tr.sect td {
@@ -455,6 +457,11 @@
     border-top: 1px solid var(--border);
   }
   .bfilter-reset:hover { background: var(--panel2); }
+  /* Фильтр «Бюджета» по названию работы (18.08.2026). */
+  .bfilter #bsearch {
+    margin-left: 8px; padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel); font-size: 12px; width: 280px;
+  }
   table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
   table.check th {
     text-align: left; padding: 7px 8px; border-bottom: 2px solid var(--border);
@@ -701,6 +708,7 @@ const state = {
   budgetGrpCollapsed: new Set(), // свёрнутые группы работ внутри статей бюджета
   budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
   budgetContrOpen: false,      // открыт ли выпадающий список выбора подрядчиков
+  budgetQuery: '',             // фильтр «Бюджета» по названию работы (18.08.2026)
   budgetFloors: null,          // расшифровка ячеек бюджета по этажам (action=budgetFloors)
   budgetFloorsStatus: 'idle',  // idle | loading | ready | error
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
@@ -1562,9 +1570,17 @@ function renderBudget() {
         (active ? '<div class="bfilter-reset" id="bfilter-reset">Сбросить выбор</div>' : '') +
         '</div>'
       : '') +
+    '<input id="bsearch" type="text" placeholder="Фильтр по работе..." value="' +
+    escapeHtml(state.budgetQuery) + '">' +
     '</div>';
-  const total = active
-    ? rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) => a + wSum(w), 0), 0)
+  // Фильтр по названию работы (просьба 18.08.2026, как поиск в «Расценках»):
+  // совпавшие работы показываются с раскрытыми статьями и группами, суммы статей,
+  // групп и «Итого» пересчитываются только по совпавшим работам.
+  const q = norm(state.budgetQuery);
+  const wMatch = w => !q || norm(String(w[0])).includes(q);
+  const total = (active || q)
+    ? rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+        a + (wMatch(w) ? wSum(w) : 0), 0), 0)
     : rows.reduce((acc, r) => acc + r[1], 0);
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
@@ -1580,10 +1596,12 @@ function renderBudget() {
       const r = pair[0], i = pair[1];
       const works = r[2] || [];
       // Суммы работ считаем по исходным индексам wi — на них завязаны ключи раскрытий.
-      const sums = works.map(wSum);
-      const rSum = active ? sums.reduce((acc, v) => acc + v, 0) : r[1];
-      if (active && !rSum) return '';   // у выбранных подрядчиков в статье пусто
-      const open = state.budgetOpen.has(String(r[0]));
+      // Работы, не прошедшие фильтр по названию, дают 0 и скрываются ниже.
+      const sums = works.map(w => wMatch(w) ? wSum(w) : 0);
+      const rSum = (active || q) ? sums.reduce((acc, v) => acc + v, 0) : r[1];
+      if ((active || q) && !rSum) return '';   // по фильтрам в статье пусто
+      // При активном фильтре по работе статьи раскрыты сами (как поиск в «Расценках»).
+      const open = q ? true : state.budgetOpen.has(String(r[0]));
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
@@ -1622,7 +1640,7 @@ function renderBudget() {
         const grps = [];
         const byG = new Map();
         works.forEach((w, wi) => {
-          if (active && !sums[wi]) return;   // работа без сумм у выбранных подрядчиков
+          if ((active || q) && !sums[wi]) return;   // не прошла фильтры — скрываем
           const g = String(w[3] || '— без группы —');
           if (!byG.has(g)) {
             const o = { name: g, total: 0, items: [] };
@@ -1636,7 +1654,7 @@ function renderBudget() {
         grps.sort((a, b) => b.total - a.total);
         html += grps.map(g => {
           const gKey = i + '|' + g.name;
-          const gOpen = !state.budgetGrpCollapsed.has(gKey);
+          const gOpen = q ? true : !state.budgetGrpCollapsed.has(gKey);
           let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
@@ -1674,21 +1692,27 @@ function budgetWorkHtml(w) {
   const fSel = state.budgetContr;
   const fActive = fSel.size > 0;
 
+  // С 18.08.2026 в каждой ячейке две суммы: работы (кол. AE, приходит в cell[5])
+  // и материалы (итог AG минус работы). Старый кэш без cell[5] — показываем
+  // одной суммой, как раньше (hasSplit).
+  const hasSplit = (w[2] || []).some(cell => cell.length > 5);
   const contrTotal = new Map();   // подрядчик -> сумма (для порядка строк)
   const rowsMap = new Map();      // подрядчик|раб|мат|СС -> строка сводной
   (w[2] || []).forEach(cell => {
     if (fActive && !fSel.has(String(cell[0]))) return;
-    const p = cell[0], c = cell[1], v = cell[2];
+    const p = cell[0], c = cell[1], v = cell[2], vw = cell[5] || 0;
     contrTotal.set(p, (contrTotal.get(p) || 0) + v);
     const rk = rateByCorp.get(p + '|' + c) || [0, 0, 0];
     const key = p + '|' + rk[0] + '|' + rk[1] + '|' + rk[2];
     if (!rowsMap.has(key)) {
       rowsMap.set(key, { contr: p, src: p, rw: rk[0], rm: rk[1], ss: rk[2],
-        corps: {}, total: 0 });
+        corps: {}, corpsW: {}, total: 0, totalW: 0 });
     }
     const o = rowsMap.get(key);
     o.corps[c] = (o.corps[c] || 0) + v;
+    o.corpsW[c] = (o.corpsW[c] || 0) + vw;
     o.total += v;
+    o.totalW += vw;
   });
   if (!rowsMap.size) {
     return '<div class="side-note">Разбивки по подрядчикам для этой работы нет</div>';
@@ -1713,12 +1737,14 @@ function budgetWorkHtml(w) {
     if (o.contr !== UNDEF) return true;
     if (!undef) {
       undef = { contr: 'Не определен', src: UNDEF, rw: baseW, rm: baseM, ss: 0,
-        corps: {}, total: 0 };
+        corps: {}, corpsW: {}, total: 0, totalW: 0 };
     }
     Object.keys(o.corps).forEach(c => {
       undef.corps[c] = (undef.corps[c] || 0) + o.corps[c];
+      undef.corpsW[c] = (undef.corpsW[c] || 0) + (o.corpsW[c] || 0);
     });
     undef.total += o.total;
+    undef.totalW += o.totalW;
     return false;
   });
   // Справа — сумматор «Итого» по строке (просьба 05.08.2026). Объём и коэффициент
@@ -1728,6 +1754,16 @@ function budgetWorkHtml(w) {
     ALL_CORPS.map(c => '<th class="num">' + escapeHtml(c) + '</th>').join('') +
     '<th class="num">Итого</th></tr>';
   // Ячейки с суммами кликабельны: расшифровка по этажам (просьба 05.08.2026).
+  // Раздельные суммы (просьба 18.08.2026): сверху — работы, снизу приглушённо —
+  // материалы; подсказка при наведении расшифровывает.
+  const splitHtml = (v, vw) => hasSplit
+    ? '<div>' + escapeHtml(fmtInt(vw)) + '</div><div class="bmat">' +
+      escapeHtml(fmtInt(v - vw)) + '</div>'
+    : escapeHtml(fmtInt(v));
+  const splitTitle = (v, vw) => hasSplit
+    ? ' title="' + escapeHtml('Работы ' + fmtInt(vw) + ' · материалы ' +
+      fmtInt(v - vw) + ' · итого ' + fmtInt(v)) + '"'
+    : '';
   const rowHtml = (o, nameCell) =>
     '<tr><td>' + nameCell + '</td>' +
     '<td class="num">' + (o.rw ? escapeHtml(fmtInt(o.rw)) : '') + '</td>' +
@@ -1736,9 +1772,11 @@ function budgetWorkHtml(w) {
       const v = o.corps[c];
       if (!v) return '<td class="num"></td>';
       return '<td class="num bcell" data-contr="' + escapeHtml(o.src) +
-        '" data-corp="' + escapeHtml(c) + '">' + escapeHtml(fmtInt(v)) + '</td>';
+        '" data-corp="' + escapeHtml(c) + '"' + splitTitle(v, o.corpsW[c] || 0) + '>' +
+        splitHtml(v, o.corpsW[c] || 0) + '</td>';
     }).join('') +
-    '<td class="num gsum">' + (o.total ? escapeHtml(fmtInt(o.total)) : '') + '</td></tr>';
+    '<td class="num gsum"' + (o.total ? splitTitle(o.total, o.totalW) : '') + '>' +
+    (o.total ? splitHtml(o.total, o.totalW) : '') + '</td></tr>';
 
   // Сумматоры «Итого <подрядчик>» убраны по просьбе пользователя 05.08.2026 —
   // остались только колонка «Итого» справа и общий «Итого» внизу.
@@ -1761,23 +1799,34 @@ function budgetWorkHtml(w) {
   if (own.length) body += sect('Собственные силы') + renderRows(own);
 
   // Сумматор по корпусам (просьба 05.08.2026) — по всем строкам, включая «Не определен».
-  const totals = {};
-  let grand = 0;
+  const totals = {}, totalsW = {};
+  let grand = 0, grandW = 0;
   (undef ? [undef] : []).concat(reg, own).forEach(o => {
     grand += o.total;
+    grandW += o.totalW;
     ALL_CORPS.forEach(c => {
-      if (o.corps[c]) totals[c] = (totals[c] || 0) + o.corps[c];
+      if (o.corps[c]) {
+        totals[c] = (totals[c] || 0) + o.corps[c];
+        totalsW[c] = (totalsW[c] || 0) + (o.corpsW[c] || 0);
+      }
     });
   });
   const foot = '<tr class="total"><td>Итого</td><td class="num"></td><td class="num"></td>' +
     ALL_CORPS.map(c =>
-      '<td class="num">' + (totals[c] ? escapeHtml(fmtInt(totals[c])) : '') + '</td>'
+      '<td class="num"' + (totals[c] ? splitTitle(totals[c], totalsW[c] || 0) : '') + '>' +
+      (totals[c] ? splitHtml(totals[c], totalsW[c] || 0) : '') + '</td>'
     ).join('') +
-    '<td class="num">' + (grand ? escapeHtml(fmtInt(grand)) : '') + '</td></tr>';
-  // Без заголовка и подписи под таблицей (просьба 05.08.2026) — принадлежность
-  // видна по подсветке строки работы и общей синей заливке блока.
+    '<td class="num"' + (grand ? splitTitle(grand, grandW) : '') + '>' +
+    (grand ? splitHtml(grand, grandW) : '') + '</td></tr>';
+  // Заголовка и названия работы у блока нет (просьба 05.08.2026); легенда раздельных
+  // сумм — одной строкой под таблицей (18.08.2026).
+  const legend = hasSplit
+    ? '<div class="side-sub" style="margin-top:4px">в ячейках: сверху — работы, ' +
+      'снизу — материалы, руб</div>'
+    : '';
   return '<div class="bdetail-wrap"><table class="inner mini"><thead>' + head +
-    '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table></div>';
+    '</thead><tbody>' + body + '</tbody><tfoot>' + foot + '</tfoot></table>' +
+    legend + '</div>';
 }
 
 /**
@@ -1843,6 +1892,24 @@ async function openBudgetCellModal(bi, wi, contr, corp) {
   bodyEl.innerHTML = '<table class="inner mini"><thead>' + head + '</thead><tbody>' +
     body + '</tbody><tfoot>' + foot + '</tfoot></table>';
 }
+
+// Фильтр по названию работы (18.08.2026): перерисовка с задержкой, фокус и курсор
+// возвращаются в поле (перерисовка пересоздаёт input).
+let bsearchTimer = null;
+document.getElementById('budget-screen').addEventListener('input', e => {
+  if (e.target.id !== 'bsearch') return;
+  const v = e.target.value;
+  clearTimeout(bsearchTimer);
+  bsearchTimer = setTimeout(() => {
+    state.budgetQuery = v;
+    renderBudget();
+    const inp = document.getElementById('bsearch');
+    if (inp) {
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }
+  }, 200);
+});
 
 // Клик по статье бюджета — раскрыть/свернуть работы; по группе работ — её работы;
 // по работе — выпадающая сводная; по сумме в сводной — расшифровка по этажам.
