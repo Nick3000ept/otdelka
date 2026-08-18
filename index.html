@@ -1582,6 +1582,19 @@ function renderBudget() {
     ? rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
         a + (wMatch(w) ? wSum(w) : 0), 0), 0)
     : rows.reduce((acc, r) => acc + r[1], 0);
+  // Разбивка на работы/материалы столбцами (просьба 18.08.2026): «Работы» — сумма
+  // cell[5] (кол. AE поэтажки) с учётом фильтра подрядчиков, «Материалы» — стоимость
+  // минус работы. Старый кэш без cell[5] — колонок разбивки просто нет (hasSplit).
+  const hasSplit = rows.some(r => (r[2] || []).some(w =>
+    (w[2] || []).some(cell => cell.length > 5)));
+  const wSumW = w => (w[2] || []).reduce((acc, cell) =>
+    acc + (cellOk(cell) ? (cell[5] || 0) : 0), 0);
+  const splitTd = (cost, workCost) => hasSplit
+    ? '<td class="num">' + escapeHtml(fmtInt(workCost)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtInt(cost - workCost)) + '</td>'
+    : '';
+  const totalW = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+    a + (wMatch(w) ? wSumW(w) : 0), 0), 0);
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
   // значения заполняются на уровне работ.
@@ -1591,6 +1604,7 @@ function renderBudget() {
     .sort((a, b) => String(a[0][0]).localeCompare(String(b[0][0]), 'ru'));
   const table = '<table class="check budget"><thead><tr>' +
     '<th>Статья бюджета</th><th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
+    (hasSplit ? '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
     '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
     order.map(pair => {
       const r = pair[0], i = pair[1];
@@ -1598,14 +1612,16 @@ function renderBudget() {
       // Суммы работ считаем по исходным индексам wi — на них завязаны ключи раскрытий.
       // Работы, не прошедшие фильтр по названию, дают 0 и скрываются ниже.
       const sums = works.map(w => wMatch(w) ? wSum(w) : 0);
+      const sumsW = works.map(w => wMatch(w) ? wSumW(w) : 0);
       const rSum = (active || q) ? sums.reduce((acc, v) => acc + v, 0) : r[1];
+      const rSumW = sumsW.reduce((acc, v) => acc + v, 0);
       if ((active || q) && !rSum) return '';   // по фильтрам в статье пусто
       // При активном фильтре по работе статьи раскрыты сами (как поиск в «Расценках»).
       const open = q ? true : state.budgetOpen.has(String(r[0]));
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
-        '<td class="num"></td><td class="num"></td>' +
+        '<td class="num"></td><td class="num"></td>' + splitTd(rSum, rSumW) +
         '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td></tr>';
       if (open) {
         // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
@@ -1630,10 +1646,11 @@ function renderBudget() {
             '<td class="num">' +
             (vol ? escapeHtml(fmtVol(vol) + (unit ? ' ' + unit : '')) : '') + '</td>' +
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
+            splitTd(sums[wi], sumsW[wi]) +
             '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td></tr>';
           if (wOpen) {
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
-              '"><td colspan="4">' + budgetWorkHtml(w) + '</td></tr>';
+              '"><td colspan="' + (hasSplit ? 6 : 4) + '">' + budgetWorkHtml(w) + '</td></tr>';
           }
           return h;
         };
@@ -1643,12 +1660,13 @@ function renderBudget() {
           if ((active || q) && !sums[wi]) return;   // не прошла фильтры — скрываем
           const g = String(w[3] || '— без группы —');
           if (!byG.has(g)) {
-            const o = { name: g, total: 0, items: [] };
+            const o = { name: g, total: 0, totalW: 0, items: [] };
             byG.set(g, o);
             grps.push(o);
           }
           const o = byG.get(g);
           o.total += sums[wi];
+          o.totalW += sumsW[wi];
           o.items.push([w, wi]);
         });
         grps.sort((a, b) => b.total - a.total);
@@ -1658,7 +1676,7 @@ function renderBudget() {
           let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
-            '<td class="num"></td><td class="num"></td>' +
+            '<td class="num"></td><td class="num"></td>' + splitTd(g.total, g.totalW) +
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td></tr>';
           if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
           return h;
@@ -1666,7 +1684,7 @@ function renderBudget() {
       }
       return html;
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
-    '<td class="num"></td><td class="num"></td>' +
+    '<td class="num"></td><td class="num"></td>' + splitTd(total, totalW) +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + filterHtml + table;
 }
