@@ -462,6 +462,13 @@
     margin-left: 8px; padding: 6px 10px; border-radius: 6px;
     border: 1px solid var(--border); background: var(--panel); font-size: 12px; width: 280px;
   }
+  /* Галочка «Собственные силы» (18.08.2026). */
+  .bss {
+    margin-left: 10px; font-size: 12px; color: var(--text);
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    vertical-align: middle;
+  }
+  .bss input { cursor: pointer; }
   table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
   table.check th {
     text-align: left; padding: 7px 8px; border-bottom: 2px solid var(--border);
@@ -709,6 +716,7 @@ const state = {
   budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
   budgetContrOpen: false,      // открыт ли выпадающий список выбора подрядчиков
   budgetQuery: '',             // фильтр «Бюджета» по названию работы (18.08.2026)
+  budgetSS: false,             // галочка «Собственные силы» — фильтр по СС-четвёрке
   budgetFloors: null,          // расшифровка ячеек бюджета по этажам (action=budgetFloors)
   budgetFloorsStatus: 'idle',  // idle | loading | ready | error
   noCostOpen: new Set(),       // раскрытые группы в проверке «Без стоимости»
@@ -1516,6 +1524,16 @@ async function loadBudget() {
   if (state.screen === 'check-changes') renderCheckChanges();
 }
 
+// СС-подрядчики для галочки «Собственные силы» на «Бюджете» (просьба 18.08.2026;
+// имена — как в поэтажке, список зашит: Джамал, Овчинников, Элшод, Смирнов).
+const BUDGET_SS_CONTRS = ['Джамал', 'Овчинников', 'Элшод', 'Смирнов'];
+// Действующий фильтр по подрядчикам: ручной выбор из списка + СС-четвёрка при галочке.
+function budgetSelSet() {
+  const s = new Set(state.budgetContr);
+  if (state.budgetSS) BUDGET_SS_CONTRS.forEach(n => s.add(n));
+  return s;
+}
+
 function renderBudget() {
   const el = document.getElementById('budget-screen');
   if (state.budgetStatus === 'idle') loadBudget();
@@ -1544,11 +1562,14 @@ function renderBudget() {
     (w[2] || []).forEach(c => contrAll.add(String(c[0])))));
   // Выбор, которого больше нет в данных (после обновления кэша), молча снимаем.
   state.budgetContr.forEach(n => { if (!contrAll.has(n)) state.budgetContr.delete(n); });
-  const sel = state.budgetContr;
-  const active = sel.size > 0;
-  const cellOk = c => !active || sel.has(String(c[0]));
+  const sel = state.budgetContr;          // ручной выбор в выпадающем списке
+  // Галочка «Собственные силы» (просьба 18.08.2026): добавляет к фильтру
+  // СС-подрядчиков (BUDGET_SS_CONTRS); суммы считаются по объединённому набору eSel.
+  const eSel = budgetSelSet();
+  const active = eSel.size > 0;
+  const cellOk = c => !active || eSel.has(String(c[0]));
   const wSum = w => active
-    ? (w[2] || []).reduce((acc, c) => acc + (sel.has(String(c[0])) ? c[2] : 0), 0)
+    ? (w[2] || []).reduce((acc, c) => acc + (eSel.has(String(c[0])) ? c[2] : 0), 0)
     : w[1];
   const shownName = n => n === UNDEF_KEY ? 'Не определен' : n;
   const contrList = Array.from(contrAll).sort((a, b) => {
@@ -1556,7 +1577,7 @@ function renderBudget() {
     if (b === UNDEF_KEY) return 1;
     return a.localeCompare(b, 'ru');
   });
-  const btnLabel = !active ? 'Подрядчики: все'
+  const btnLabel = !sel.size ? 'Подрядчики: все'
     : sel.size === 1 ? 'Подрядчик: ' + shownName(Array.from(sel)[0])
     : 'Подрядчики: выбрано ' + sel.size;
   const filterHtml = '<div class="bfilter">' +
@@ -1572,6 +1593,8 @@ function renderBudget() {
       : '') +
     '<input id="bsearch" type="text" placeholder="Фильтр по работе..." value="' +
     escapeHtml(state.budgetQuery) + '">' +
+    '<label class="bss"><input type="checkbox" id="bss-check"' +
+    (state.budgetSS ? ' checked' : '') + '> Собственные силы</label>' +
     '</div>';
   // Фильтр по названию работы (просьба 18.08.2026, как поиск в «Расценках»):
   // совпавшие работы показываются с раскрытыми статьями и группами, суммы статей,
@@ -1706,8 +1729,9 @@ function budgetWorkHtml(w) {
   const rateByCorp = new Map();   // подрядчик|корпус -> [раб/ед, мат/ед, признак СС]
   fl.forEach(r => rateByCorp.set(r[0] + '|' + r[1], [r[2] || 0, r[4] || 0, r[3] ? 1 : 0]));
 
-  // Фильтр по подрядчикам с экрана «Бюджет» действует и здесь (12.08.2026).
-  const fSel = state.budgetContr;
+  // Фильтр по подрядчикам с экрана «Бюджет» действует и здесь (12.08.2026),
+  // включая галочку «Собственные силы» (18.08.2026).
+  const fSel = budgetSelSet();
   const fActive = fSel.size > 0;
 
   // С 18.08.2026 в каждой ячейке две суммы: работы (кол. AE, приходит в cell[5])
@@ -1929,9 +1953,18 @@ document.getElementById('budget-screen').addEventListener('input', e => {
   }, 200);
 });
 
+// Галочка «Собственные силы» (18.08.2026) — фильтр по СС-четвёрке.
+document.getElementById('budget-screen').addEventListener('change', e => {
+  if (e.target.id !== 'bss-check') return;
+  state.budgetSS = e.target.checked;
+  renderBudget();
+});
+
 // Клик по статье бюджета — раскрыть/свернуть работы; по группе работ — её работы;
 // по работе — выпадающая сводная; по сумме в сводной — расшифровка по этажам.
 document.getElementById('budget-screen').addEventListener('click', e => {
+  // Галочку СС обрабатывает change-обработчик — клику здесь делать нечего.
+  if (e.target.closest('.bss')) return;
   // Панель фильтра по подрядчикам (12.08.2026) — обрабатываем раньше строк таблицы.
   const fi = e.target.closest('.bfilter-item');
   if (fi) {
