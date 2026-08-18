@@ -2889,13 +2889,29 @@ function renderCheckChanges() {
 }
 
 async function saveBaseline(btnEl) {
+  // Фиксация базы — только для администратора (просьба 18.08.2026): бэкенд требует
+  // отдельный пароль (Script Properties ADMIN_PASSWORD). Спрашиваем один раз,
+  // после удачной фиксации держим в localStorage; неверный — стираем и просим снова.
+  let admin = '';
+  try { admin = localStorage.getItem('otdelka_admin') || ''; } catch (e) {}
+  if (!admin) {
+    admin = (window.prompt('Фиксировать базовый расчёт может только администратор.\n' +
+      'Пароль администратора:') || '').trim();
+    if (!admin) return;
+  }
   if (!window.confirm('Зафиксировать текущее состояние поэтажки как базовый расчёт? ' +
     'Прежняя база будет перезаписана, список изменений обнулится.')) return;
   btnEl.disabled = true;
   btnEl.textContent = 'Фиксируем…';
   try {
-    const json = await postJson({ action: 'saveBaseline' });
-    if (!json.ok) throw new Error(json.message || json.error);
+    const json = await postJson({ action: 'saveBaseline', at: admin });
+    if (!json.ok) {
+      if (json.error === 'admin_only') {
+        try { localStorage.removeItem('otdelka_admin'); } catch (e) {}
+      }
+      throw new Error(json.message || json.error);
+    }
+    try { localStorage.setItem('otdelka_admin', admin); } catch (e) {}
     state.changes = null;
     state.changesStatus = 'idle';
     renderCheckChanges();

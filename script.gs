@@ -358,6 +358,20 @@ function doPost(e) {
 
     // Фиксация базового расчёта (05.08.2026): слепок текущей поэтажки -> файл на Диске.
     if (body.action === 'saveBaseline') {
+      // С 18.08.2026 фиксация базы — только для администратора: общий пароль
+      // витрины один на всех, а перезапись базы — действие владельца. Отдельный
+      // пароль лежит в Script Properties (ключ ADMIN_PASSWORD, задаётся вручную
+      // в редакторе GAS: Настройки проекта -> Свойства скрипта). Пока свойство
+      // не задано — фиксация закрыта для всех (fail closed).
+      var adminPass = PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
+      if (!adminPass) {
+        return jsonOut_({ ok: false, error: 'admin_not_configured',
+          message: 'пароль администратора ещё не настроен (свойство ADMIN_PASSWORD в GAS)' });
+      }
+      if (String(body.at || '') !== adminPass) {
+        return jsonOut_({ ok: false, error: 'admin_only',
+          message: 'фиксировать базовый расчёт может только администратор' });
+      }
       var ssBl = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
       var obj = { date: new Date().toISOString(), data: buildBaseline_(ssBl) };
       baselineFile_().setContent(JSON.stringify(obj));
