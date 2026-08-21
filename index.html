@@ -1514,6 +1514,7 @@ async function loadBudget() {
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.budget = json.budget || [];
+    state.budgetLk = json.lk || [];   // «Личные_кабинеты»: [[МОЛ, статья, выполнено], …] (21.08.2026)
     state.budgetStatus = 'ready';
   } catch (e) {
     state.budgetStatus = 'error';
@@ -1648,6 +1649,27 @@ function renderBudget() {
     a + (wMatch(w) ? wSumFW(w) : 0), 0), 0);
   const totalFM = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumFM(w) : 0), 0), 0);
+  // «Выполнено (ЛК)» из листа «Личные_кабинеты» (просьба 21.08.2026): данные
+  // МОЛ × статья -> выполнено, поэтому значения — только в строках статей и в
+  // «Итого». Фильтр по подрядчикам сопоставляет МОЛ с именем подрядчика (norm);
+  // фильтр по работе на колонку не влияет — по работам ЛК не разложить.
+  const lkRows = state.budgetLk || [];
+  const hasLk = lkRows.length > 0;
+  const lkByItem = {};
+  if (hasLk) {
+    const selNorm = new Set(Array.from(eSel).map(n => norm(String(n))));
+    lkRows.forEach(row => {
+      if (active && !selNorm.has(norm(String(row[0])))) return;
+      const key = norm(String(row[1]));
+      lkByItem[key] = (lkByItem[key] || 0) + (row[2] || 0);
+    });
+  }
+  const lkTd = v => hasLk
+    ? '<td class="num">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
+    : '';
+  const itemsNorm = new Set(rows.map(r => norm(String(r[0]))));
+  const totalLk = Object.keys(lkByItem).reduce((a, k) =>
+    a + (itemsNorm.has(k) ? lkByItem[k] : 0), 0);
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
   // значения заполняются на уровне работ.
@@ -1662,7 +1684,8 @@ function renderBudget() {
     (hasFactSplit
       ? '<th class="num">Факт работы, руб</th><th class="num">Факт материалы, руб</th>'
       : '') +
-    (hasFact ? '<th class="num">Факт, руб</th>' : '') + '</tr></thead><tbody>' +
+    (hasFact ? '<th class="num">Факт, руб</th>' : '') +
+    (hasLk ? '<th class="num">Выполнено (ЛК), руб</th>' : '') + '</tr></thead><tbody>' +
     order.map(pair => {
       const r = pair[0], i = pair[1];
       const works = r[2] || [];
@@ -1686,7 +1709,8 @@ function renderBudget() {
         escapeHtml(String(r[0])) + '</td>' +
         '<td class="num"></td><td class="num"></td>' + splitTd(rSum, rSumW) +
         '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td>' +
-        factSplitTd(rSumFW, rSumFM) + factTd(rSumF) + '</tr>';
+        factSplitTd(rSumFW, rSumFM) + factTd(rSumF) +
+        lkTd(lkByItem[norm(String(r[0]))] || 0) + '</tr>';
       if (open) {
         // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
         // группы сортируются по сумме. Клик по работе — выпадающая сводная
@@ -1712,11 +1736,11 @@ function renderBudget() {
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
             splitTd(sums[wi], sumsW[wi]) +
             '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td>' +
-            factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + '</tr>';
+            factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + lkTd(0) + '</tr>';
           if (wOpen) {
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
               '"><td colspan="' + (4 + (hasSplit ? 2 : 0) + (hasFactSplit ? 2 : 0) +
-              (hasFact ? 1 : 0)) + '">' +
+              (hasFact ? 1 : 0) + (hasLk ? 1 : 0)) + '">' +
               budgetWorkHtml(w) + '</td></tr>';
           }
           return h;
@@ -1748,7 +1772,7 @@ function renderBudget() {
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
             '<td class="num"></td><td class="num"></td>' + splitTd(g.total, g.totalW) +
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td>' +
-            factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + '</tr>';
+            factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + lkTd(0) + '</tr>';
           if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
           return h;
         }).join('');
@@ -1757,7 +1781,7 @@ function renderBudget() {
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
     '<td class="num"></td><td class="num"></td>' + splitTd(total, totalW) +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td>' +
-    factSplitTd(totalFW, totalFM) + factTd(totalF) +
+    factSplitTd(totalFW, totalFM) + factTd(totalF) + lkTd(totalLk) +
     '</tr></tfoot></table>';
   el.innerHTML = head + filterHtml + table;
 }

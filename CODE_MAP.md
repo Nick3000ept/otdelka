@@ -83,7 +83,9 @@
   Стоимость·Факт работы·Факт материалы·Факт (21.08: итог — «К оплате» AA, cell[6],
   `hasFact`/`factTd`/`wSumF`; разбивка — Z×AB и Z×AC, cell[7]/cell[8],
   `hasFactSplit`/`factSplitTd`/`wSumFW`/`wSumFM`; все уровни + Итого, оба фильтра;
-  старый кэш без этих элементов — колонок нет);
+  старый кэш без этих элементов — колонок нет)·Выполнено (ЛК) (21.08: лист
+  «Личные_кабинеты» из ответа budget `lk`/`state.budgetLk`, `hasLk`/`lkTd`/`lkByItem`,
+  значения ТОЛЬКО в строках статей и Итого, МОЛ↔подрядчик по norm);
   иерархия статья (brow) → группа работ (bgrp) → работа
   (bwork, можно много открытых) → сводная (bdetail, синяя заливка, colspan 6)
 - **Фильтр по подрядчикам** (12.08.2026, внутри renderBudget): кнопка `#bfilter-btn` +
@@ -145,7 +147,7 @@
   VOL D, GROUP F, SS_NAME J, BUDGET_FLAG L, REDO Q, CONTRACTOR S, SS W,
   FACT_PAID AA «К оплате», RATE AB, RATE_MAT AC, COST_WORK AE, BUDGET_COST AG);
   SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
-- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v8`, `bfloors_v1`, `changes_v1`,
+- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v9`, `bfloors_v1`, `changes_v1`,
   `factref_v1` — все кроме floors чанкованные); ~55 `clearCache` (⚠️ новый ключ добавлять сюда)
 - ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
 - ~96 `setup` (пароль); ~107–140 вопросы: `setupQuestions` (разовая авторизация Drive —
@@ -163,7 +165,9 @@
   budgetFloors · fact (отметки, без кэша) · factRef (справка V/Z) · load
 - ~737 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
   ⚠️ ключ склеен через НЕВИДИМЫЙ символ (код 1) — Edit его не находит, править вокруг
-- ~818 `buildVolumes_`; ~935 `buildBudget_` (статья → работы (+группа F) → ячейки
+- ~818 `buildVolumes_`; ~935 `readLk_` («Личные_кабинеты» → [[МОЛ, статья,
+  выполнено], …], отдаётся в ответе budget как `lk`); ~965 `buildBudget_`
+  (статья → работы (+группа F) → ячейки
   [подрядчик, корпус, стоимость AG, объём, коэф, работы AE, факт AA,
   факт работы Z×AB, факт материалы Z×AC];
   строки без стоимости AG пропускаются; тот же невидимый символ);

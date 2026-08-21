@@ -32,6 +32,13 @@ var CONFIG = {
   FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета', // кол. AG — что суммируем
   FLOOR_COST_WORK: 'Стоимость работ итого для бюджета',          // кол. AE — работы отдельно (18.08.2026)
   FLOOR_FACT_PAID: 'К оплате',                                   // кол. AA — факт выполненных работ (21.08.2026)
+
+  // Лист «Личные_кабинеты» (21.08.2026): МОЛ × статья бюджета -> выполнено итого.
+  // Отдаётся вместе со сводом бюджета (колонка «Выполнено (ЛК)» на витрине).
+  SHEET_LK: 'Личные_кабинеты',
+  LK_MOL: 'МОЛ',
+  LK_ITEM: 'Статья бюждет',       // опечатка «бюждет» — так в заголовке листа
+  LK_DONE: 'Выполнено итого',
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
   FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
 
@@ -47,7 +54,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v8';   // свод бюджета: статья -> работы -> подрядчик×корпус; чанкованный
+var CACHE_BUDGET = 'budget_v9';   // свод бюджета: статья -> работы -> подрядчик×корпус (+lk); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -656,7 +663,7 @@ function doGet(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB) });
+      var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB), lk: readLk_(ssB) });
       cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
       return ContentService.createTextOutput(payloadB)
         .setMimeType(ContentService.MimeType.JSON);
@@ -917,6 +924,34 @@ function buildVolumes_(ss) {
         .sort(function (a, b) { return a[0] - b[0]; });
     });
   });
+  return out;
+}
+
+/**
+ * Лист «Личные_кабинеты» (21.08.2026): МОЛ × статья бюджета -> выполнено итого.
+ * Возвращает [[МОЛ, статья, выполнено], ...] — лист крошечный (~35 строк),
+ * отдаётся вместе со сводом бюджета для колонки «Выполнено (ЛК)».
+ * Нет листа или нужных колонок — пустой массив, витрина колонку не покажет.
+ */
+function readLk_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_LK);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var data = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  if (idx[CONFIG.LK_MOL] === undefined || idx[CONFIG.LK_ITEM] === undefined ||
+      idx[CONFIG.LK_DONE] === undefined) return [];
+  var out = [];
+  for (var k = 1; k < data.length; k++) {
+    var mol = String(data[k][idx[CONFIG.LK_MOL]]).trim();
+    var item = String(data[k][idx[CONFIG.LK_ITEM]]).trim();
+    var done = data[k][idx[CONFIG.LK_DONE]];
+    if (!mol && !item) continue;
+    out.push([mol, item, typeof done === 'number' ? Math.round(done) : 0]);
+  }
   return out;
 }
 
