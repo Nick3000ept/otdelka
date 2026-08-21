@@ -374,6 +374,11 @@
      (баг 05.08.2026). Числовые — ровно 150px (просьба пользователя). */
   table.check.budget th:first-child { width: auto; }
   table.check.budget th.num, table.check.budget td.num { width: 150px; }
+  /* Общая шапка «Модель» над колонками факта (21.08.2026): шапка в два ряда,
+     второй ряд (tr.sub) получает top инлайном из alignBudgetHead(). */
+  table.check.budget th.modelhead {
+    text-align: center; border-bottom: 1px solid var(--border);
+  }
   table.check.budget td:first-child { white-space: nowrap; }
   table.check.budget tfoot td {
     font-weight: 700; background: var(--panel2);
@@ -1677,15 +1682,26 @@ function renderBudget() {
   // на него завязаны ключи раскрытий budgetWorkOpen/budgetGrpCollapsed.
   const order = rows.map((r, i) => [r, i])
     .sort((a, b) => String(a[0][0]).localeCompare(String(b[0][0]), 'ru'));
+  // Блок факта объединён общей шапкой «Модель» (просьба 21.08.2026): шапка в два
+  // ряда — колонки факта под «Модель», остальные с rowspan=2. Ширина «Модели» —
+  // inline (table-layout: fixed берёт ширины только из первого ряда шапки).
+  const factCols = (hasFactSplit ? 2 : 0) + (hasFact ? 1 : 0);
+  const thSpan = factCols ? ' rowspan="2"' : '';
   const table = '<table class="check budget"><thead><tr>' +
-    '<th>Статья бюджета</th><th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
-    (hasSplit ? '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
-    '<th class="num">Стоимость, руб</th>' +
-    (hasFactSplit
-      ? '<th class="num">Факт работы, руб</th><th class="num">Факт материалы, руб</th>'
+    '<th' + thSpan + '>Статья бюджета</th><th class="num"' + thSpan + '>Объем</th>' +
+    '<th class="num"' + thSpan + '>Коэф. перед.</th>' +
+    (hasSplit ? '<th class="num"' + thSpan + '>Работы, руб</th>' +
+      '<th class="num"' + thSpan + '>Материалы, руб</th>' : '') +
+    '<th class="num"' + thSpan + '>Стоимость, руб</th>' +
+    (factCols ? '<th class="modelhead" colspan="' + factCols + '" style="width:' +
+      (150 * factCols) + 'px">Модель</th>' : '') +
+    (hasLk ? '<th class="num"' + thSpan + '>Выполнено (ЛК), руб</th>' : '') + '</tr>' +
+    (factCols
+      ? '<tr class="sub">' +
+        (hasFactSplit ? '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
+        (hasFact ? '<th class="num">Итого, руб</th>' : '') + '</tr>'
       : '') +
-    (hasFact ? '<th class="num">Факт, руб</th>' : '') +
-    (hasLk ? '<th class="num">Выполнено (ЛК), руб</th>' : '') + '</tr></thead><tbody>' +
+    '</thead><tbody>' +
     order.map(pair => {
       const r = pair[0], i = pair[1];
       const works = r[2] || [];
@@ -1784,6 +1800,22 @@ function renderBudget() {
     factSplitTd(totalFW, totalFM) + factTd(totalF) + lkTd(totalLk) +
     '</tr></tfoot></table>';
   el.innerHTML = head + filterHtml + table;
+  alignBudgetHead();
+}
+
+// Липкая шапка бюджета в два ряда: второму ряду нужен отступ сверху на высоту
+// первого, иначе при прокрутке ряды наезжают друг на друга. Высота первого ряда
+// зависит от масштаба текста (А−/А+), поэтому меряем её после отрисовки
+// (по ячейке «Модель» — она единственная в один ряд высотой) и пересчитываем
+// при смене масштаба (вызов из applyZoom).
+function alignBudgetHead() {
+  const el = document.getElementById('budget-screen');
+  const model = el && el.querySelector('table.budget thead th.modelhead');
+  if (!model) return;
+  const h = model.getBoundingClientRect().height;
+  el.querySelectorAll('table.budget thead tr.sub th').forEach(th => {
+    th.style.top = (h - 14) + 'px';   // базовый top у th: -14px (см. CSS table.check th)
+  });
 }
 
 /**
@@ -3455,6 +3487,7 @@ function applyZoom(z) {
   zoomStyle.textContent = z === 1 ? '' :
     'main table th, main table td, main .fpct { font-size: ' +
     Math.round(12 * z) + 'px !important; }';
+  requestAnimationFrame(alignBudgetHead);   // высота шапки бюджета изменилась
   document.getElementById('zoom-reset').textContent = Math.round(z * 100) + '%';
   try { localStorage.setItem('otdelka_zoom', String(z)); } catch (e) {}
 }
