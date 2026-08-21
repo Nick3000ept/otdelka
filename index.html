@@ -1630,6 +1630,24 @@ function renderBudget() {
     : '';
   const totalF = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumF(w) : 0), 0), 0);
+  // Разбивка факта на работы и материалы (просьба 21.08.2026): бэкенд считает
+  // по поэтажке «Объем к закрытию» (Z) × расценки за ед. (AB работы, AC материалы),
+  // отдаёт в cell[7]/cell[8]. Колонки «Факт работы» и «Факт материалы» — перед
+  // итоговым «Факт»; старый кэш без cell[7] — колонок нет (hasFactSplit).
+  const hasFactSplit = rows.some(r => (r[2] || []).some(w =>
+    (w[2] || []).some(cell => cell.length > 8)));
+  const wSumFW = w => (w[2] || []).reduce((acc, cell) =>
+    acc + (cellOk(cell) ? (cell[7] || 0) : 0), 0);
+  const wSumFM = w => (w[2] || []).reduce((acc, cell) =>
+    acc + (cellOk(cell) ? (cell[8] || 0) : 0), 0);
+  const factSplitTd = (fw, fm) => hasFactSplit
+    ? '<td class="num">' + escapeHtml(fw ? fmtInt(fw) : '') + '</td>' +
+      '<td class="num">' + escapeHtml(fm ? fmtInt(fm) : '') + '</td>'
+    : '';
+  const totalFW = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+    a + (wMatch(w) ? wSumFW(w) : 0), 0), 0);
+  const totalFM = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+    a + (wMatch(w) ? wSumFM(w) : 0), 0), 0);
   // Иерархия (просьба 04.08.2026): клик по статье раскрывает входящие работы с суммами.
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
   // значения заполняются на уровне работ.
@@ -1641,6 +1659,9 @@ function renderBudget() {
     '<th>Статья бюджета</th><th class="num">Объем</th><th class="num">Коэф. перед.</th>' +
     (hasSplit ? '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
     '<th class="num">Стоимость, руб</th>' +
+    (hasFactSplit
+      ? '<th class="num">Факт работы, руб</th><th class="num">Факт материалы, руб</th>'
+      : '') +
     (hasFact ? '<th class="num">Факт, руб</th>' : '') + '</tr></thead><tbody>' +
     order.map(pair => {
       const r = pair[0], i = pair[1];
@@ -1650,9 +1671,13 @@ function renderBudget() {
       const sums = works.map(w => wMatch(w) ? wSum(w) : 0);
       const sumsW = works.map(w => wMatch(w) ? wSumW(w) : 0);
       const sumsF = works.map(w => wMatch(w) ? wSumF(w) : 0);
+      const sumsFW = works.map(w => wMatch(w) ? wSumFW(w) : 0);
+      const sumsFM = works.map(w => wMatch(w) ? wSumFM(w) : 0);
       const rSum = (active || q) ? sums.reduce((acc, v) => acc + v, 0) : r[1];
       const rSumW = sumsW.reduce((acc, v) => acc + v, 0);
       const rSumF = sumsF.reduce((acc, v) => acc + v, 0);
+      const rSumFW = sumsFW.reduce((acc, v) => acc + v, 0);
+      const rSumFM = sumsFM.reduce((acc, v) => acc + v, 0);
       if ((active || q) && !rSum) return '';   // по фильтрам в статье пусто
       // При активном фильтре по работе статьи раскрыты сами (как поиск в «Расценках»).
       const open = q ? true : state.budgetOpen.has(String(r[0]));
@@ -1660,7 +1685,8 @@ function renderBudget() {
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
         '<td class="num"></td><td class="num"></td>' + splitTd(rSum, rSumW) +
-        '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td>' + factTd(rSumF) + '</tr>';
+        '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td>' +
+        factSplitTd(rSumFW, rSumFM) + factTd(rSumF) + '</tr>';
       if (open) {
         // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
         // группы сортируются по сумме. Клик по работе — выпадающая сводная
@@ -1686,10 +1712,11 @@ function renderBudget() {
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
             splitTd(sums[wi], sumsW[wi]) +
             '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td>' +
-            factTd(sumsF[wi]) + '</tr>';
+            factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + '</tr>';
           if (wOpen) {
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
-              '"><td colspan="' + (4 + (hasSplit ? 2 : 0) + (hasFact ? 1 : 0)) + '">' +
+              '"><td colspan="' + (4 + (hasSplit ? 2 : 0) + (hasFactSplit ? 2 : 0) +
+              (hasFact ? 1 : 0)) + '">' +
               budgetWorkHtml(w) + '</td></tr>';
           }
           return h;
@@ -1700,7 +1727,7 @@ function renderBudget() {
           if ((active || q) && !sums[wi]) return;   // не прошла фильтры — скрываем
           const g = String(w[3] || '— без группы —');
           if (!byG.has(g)) {
-            const o = { name: g, total: 0, totalW: 0, totalF: 0, items: [] };
+            const o = { name: g, total: 0, totalW: 0, totalF: 0, totalFW: 0, totalFM: 0, items: [] };
             byG.set(g, o);
             grps.push(o);
           }
@@ -1708,6 +1735,8 @@ function renderBudget() {
           o.total += sums[wi];
           o.totalW += sumsW[wi];
           o.totalF += sumsF[wi];
+          o.totalFW += sumsFW[wi];
+          o.totalFM += sumsFM[wi];
           o.items.push([w, wi]);
         });
         grps.sort((a, b) => b.total - a.total);
@@ -1719,7 +1748,7 @@ function renderBudget() {
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
             '<td class="num"></td><td class="num"></td>' + splitTd(g.total, g.totalW) +
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td>' +
-            factTd(g.totalF) + '</tr>';
+            factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + '</tr>';
           if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
           return h;
         }).join('');
@@ -1727,7 +1756,8 @@ function renderBudget() {
       return html;
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
     '<td class="num"></td><td class="num"></td>' + splitTd(total, totalW) +
-    '<td class="num">' + escapeHtml(fmtInt(total)) + '</td>' + factTd(totalF) +
+    '<td class="num">' + escapeHtml(fmtInt(total)) + '</td>' +
+    factSplitTd(totalFW, totalFM) + factTd(totalF) +
     '</tr></tfoot></table>';
   el.innerHTML = head + filterHtml + table;
 }
