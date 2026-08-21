@@ -80,7 +80,9 @@
 - ~1505 `loadBudget`; ~1519 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
   индексами — на них ключи раскрытий); колонки Статья·Объем·Коэф.перед.·
   Работы·Материалы (18.08, `hasSplit`/`splitTd`/`wSumW`, значения на всех уровнях)·
-  Стоимость; иерархия статья (brow) → группа работ (bgrp) → работа
+  Стоимость·Факт (21.08, «К оплате» AA поэтажки, cell[6], `hasFact`/`factTd`/`wSumF`,
+  все уровни + Итого, оба фильтра; старый кэш без cell[6] — колонки нет);
+  иерархия статья (brow) → группа работ (bgrp) → работа
   (bwork, можно много открытых) → сводная (bdetail, синяя заливка, colspan 6)
 - **Фильтр по подрядчикам** (12.08.2026, внутри renderBudget): кнопка `#bfilter-btn` +
   выпадающий список `.bfilter-dd` с мультивыбором (`state.budgetContr` Set,
@@ -138,10 +140,11 @@
 ## script.gs (деплой ТОЛЬКО clasp update-deployment, сейчас v24+)
 
 - 1 `CONFIG` — ID таблицы, листы, колонки поэтажки FLOOR_* (WORK A, CORP B, FLOOR C,
-  VOL D, GROUP F, SS_NAME J, BUDGET_FLAG L, REDO Q, CONTRACTOR S, SS W, RATE AB,
-  RATE_MAT AC, BUDGET_COST AG); 41 SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
-- 47–51 ключи кэша (`floors_v3`, `vols_v1`, `budget_v5`, `bfloors_v1`, `changes_v1`,
-  `factref_v1` — все кроме floors чанкованные); 54 `clearCache` (⚠️ новый ключ добавлять сюда)
+  VOL D, GROUP F, SS_NAME J, BUDGET_FLAG L, REDO Q, CONTRACTOR S, SS W,
+  FACT_PAID AA «К оплате», RATE AB, RATE_MAT AC, COST_WORK AE, BUDGET_COST AG);
+  SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
+- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v7`, `bfloors_v1`, `changes_v1`,
+  `factref_v1` — все кроме floors чанкованные); ~55 `clearCache` (⚠️ новый ключ добавлять сюда)
 - ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
 - ~96 `setup` (пароль); ~107–140 вопросы: `setupQuestions` (разовая авторизация Drive —
   ВЫПОЛНЕНА), `questionsFile_/readQuestions_/writeQuestions_` (QUESTIONS_FILE_ID)
@@ -158,8 +161,9 @@
   budgetFloors · fact (отметки, без кэша) · factRef (справка V/Z) · load
 - ~737 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
   ⚠️ ключ склеен через НЕВИДИМЫЙ символ (код 1) — Edit его не находит, править вокруг
-- ~818 `buildVolumes_`; ~880 `buildBudget_` (статья → работы (+группа F) → ячейки
-  [подрядчик, корпус, стоимость, объём, коэф]; тот же невидимый символ);
+- ~818 `buildVolumes_`; ~935 `buildBudget_` (статья → работы (+группа F) → ячейки
+  [подрядчик, корпус, стоимость AG, объём, коэф, работы AE, факт AA];
+  строки без стоимости AG пропускаются; тот же невидимый символ);
   ~959 `buildBudgetFloors_` (работа → 'подрядчик|корпус' → {r:[расц], f:[[этаж,объём,стоимость]]})
 - 1070 `safeCell_` (экранирование =+-@, лимит 1000); 1078 `ensureFactSheet_` (создаёт
   лист «Факт» с заголовками); 1092 `readFactMarks_` (журнал → последняя отметка по
