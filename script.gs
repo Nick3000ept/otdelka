@@ -73,7 +73,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v15';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
+var CACHE_BUDGET = 'budget_v16';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1163,23 +1163,26 @@ function readShamov_(ss) {
     var work = String(row[idx['Работа']]).trim();
     if (!work) continue;
     var grp = String(row[idx['Раздел']]).trim() || '— без группы —';
-    // Группа = «Раздел · Вид работы» (просьба 24.08.2026); позиции с корпусами —
-    // внутри группы. У сдельщиков виды не выделяются — группа = раздел.
-    if (grp !== 'Затраты на сдельщиков') grp = grp + ' · ' + shamovKind_(work);
+    // Иерархия (просьбы 24.08.2026): группа = раздел (верхний уровень как был),
+    // строка работы = ВИД работы (без перечня корпусов), позиции с корпусами —
+    // в раскрытии (ячейки). У сдельщиков вид = полное название.
+    var kind = grp === 'Затраты на сдельщиков' ? work : shamovKind_(work);
     var mol = idx['МОЛ'] !== undefined ? String(row[idx['МОЛ']]).trim() : '';
     var sum = parkNum_(row[idx['Сумма, ₽']]);
     // Чел.-часы = количество x часов в месяц (для сводной по МОЛам, 24.08.2026).
     var ppl = idx['Количество, чел'] !== undefined ? parkNum_(row[idx['Количество, чел']]) : 0;
     var hrs = idx['Часов в месяц'] !== undefined ? parkNum_(row[idx['Часов в месяц']]) : 0;
     var mon = idx['Месяц'] !== undefined ? String(row[idx['Месяц']]).trim() : '';
-    var wKey = grp + '|' + work;
-    if (!works[wKey]) works[wKey] = { name: work, grp: grp, total: 0, cells: {} };
+    var wKey = grp + '|' + kind;
+    if (!works[wKey]) works[wKey] = { name: kind, grp: grp, total: 0, cells: {} };
     works[wKey].total += sum;
     var molKey = mol || '— без подрядчика —';
-    if (!works[wKey].cells[molKey]) {
-      works[wKey].cells[molKey] = { c: 0, h: 0, ppl: 0, months: {} };
+    // Ячейка = позиция (полное название с корпусами) x МОЛ.
+    var posKey = work + '|' + molKey;
+    if (!works[wKey].cells[posKey]) {
+      works[wKey].cells[posKey] = { mol: molKey, pos: work, c: 0, h: 0, ppl: 0, months: {} };
     }
-    var cellSS = works[wKey].cells[molKey];
+    var cellSS = works[wKey].cells[posKey];
     cellSS.c += sum;
     cellSS.h += ppl * hrs;
     cellSS.ppl += ppl;
@@ -1189,17 +1192,17 @@ function readShamov_(ss) {
   var list = Object.keys(works)
     .map(function (wKey) {
       var w = works[wKey];
-      var cells = Object.keys(w.cells).map(function (mol) {
-        var o = w.cells[mol];
+      var cells = Object.keys(w.cells).map(function (posKey) {
+        var o = w.cells[posKey];
         var v = Math.round(o.c);
-        // Позиции 9..12 — чел.-часы, средняя ставка ₽/час (стоимость/часы),
+        // Позиции 9..13 — чел.-часы, средняя ставка ₽/час (стоимость/часы),
         // число месяцев, среднее людей в месяц (решение пользователя 24.08:
-        // остаёмся на чел.-часах) — для спец-сводной работ СС на фронте;
-        // объём/коэф (3/4) не занимаем.
+        // остаёмся на чел.-часах), полное название позиции с корпусами —
+        // для спец-сводной работ СС на фронте; объём/коэф (3/4) не занимаем.
         var rate = o.h > 0 ? Math.round(o.c / o.h * 100) / 100 : 0;
         var nMon = Object.keys(o.months).length;
         var avgP = nMon > 0 ? Math.round(o.ppl / nMon * 10) / 10 : 0;
-        return [mol, 'СС', v, 0, 0, v, 0, 0, 0, Math.round(o.h), rate, nMon, avgP];
+        return [o.mol, 'СС', v, 0, 0, v, 0, 0, 0, Math.round(o.h), rate, nMon, avgP, o.pos];
       });
       return [w.name, Math.round(w.total), cells, w.grp];
     })
