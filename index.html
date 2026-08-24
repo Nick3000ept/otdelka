@@ -380,6 +380,15 @@
   table.check.budget th.modelhead {
     text-align: center; border-bottom: 1px solid var(--border);
   }
+  /* Блоки колонок (24.08.2026): вертикальные разделители на границах блоков
+     (бюджет | Модель факт | Выполнено ЛК | Закрытие у заказчика) во всех
+     строках + подкраска шапки каждого блока своим тоном. */
+  table.check.budget th.bsep, table.check.budget td.bsep {
+    border-left: 2px solid #b9c2cf;
+  }
+  table.check.budget th.modelhead, table.check.budget thead tr.sub th { background: #edf2fb; }
+  table.check.budget th.h-lk { background: #eaf6ec; }
+  table.check.budget th.h-kp { background: #fdf4e5; }
   table.check.budget td:first-child { white-space: nowrap; }
   table.check.budget tfoot td {
     font-weight: 700; background: var(--panel2);
@@ -1633,8 +1642,11 @@ function renderBudget() {
     (w[2] || []).some(cell => cell.length > 6)));
   const wSumF = w => (w[2] || []).reduce((acc, cell) =>
     acc + (cellOk(cell) ? (cell[6] || 0) : 0), 0);
+  // Класс bsep — вертикальный разделитель: ставится первой колонке каждого блока
+  // (Модель факт / ЛК / Закрытие), в шапке и во всех строках (24.08.2026).
   const factTd = v => hasFact
-    ? '<td class="num">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
+    ? '<td class="num' + (hasFactSplit ? '' : ' bsep') + '">' +
+      escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
   const totalF = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumF(w) : 0), 0), 0);
@@ -1649,7 +1661,7 @@ function renderBudget() {
   const wSumFM = w => (w[2] || []).reduce((acc, cell) =>
     acc + (cellOk(cell) ? (cell[8] || 0) : 0), 0);
   const factSplitTd = (fw, fm) => hasFactSplit
-    ? '<td class="num">' + escapeHtml(fw ? fmtInt(fw) : '') + '</td>' +
+    ? '<td class="num bsep">' + escapeHtml(fw ? fmtInt(fw) : '') + '</td>' +
       '<td class="num">' + escapeHtml(fm ? fmtInt(fm) : '') + '</td>'
     : '';
   const totalFW = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
@@ -1672,7 +1684,7 @@ function renderBudget() {
     });
   }
   const lkTd = v => hasLk
-    ? '<td class="num">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
+    ? '<td class="num bsep">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
   const itemsNorm = new Set(rows.map(r => norm(String(r[0]))));
   const totalLk = Object.keys(lkByItem).reduce((a, k) =>
@@ -1689,7 +1701,7 @@ function renderBudget() {
     kpByItem[key] = (kpByItem[key] || 0) + (row[1] || 0);
   });
   const kpTd = v => hasKp
-    ? '<td class="num">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
+    ? '<td class="num bsep">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
   const totalKp = Object.keys(kpByItem).reduce((a, k) =>
     a + (itemsNorm.has(k) ? kpByItem[k] : 0), 0);
@@ -1711,14 +1723,14 @@ function renderBudget() {
     (hasSplit ? '<th class="num"' + thSpan + '>Работы, руб</th>' +
       '<th class="num"' + thSpan + '>Материалы, руб</th>' : '') +
     '<th class="num"' + thSpan + '>Стоимость, руб</th>' +
-    (factCols ? '<th class="modelhead" colspan="' + factCols + '" style="width:' +
+    (factCols ? '<th class="modelhead bsep" colspan="' + factCols + '" style="width:' +
       (110 * factCols) + 'px">Модель факт</th>' : '') +
-    (hasLk ? '<th class="num"' + thSpan + '>Выполнено (ЛК), руб</th>' : '') +
-    (hasKp ? '<th class="num"' + thSpan + '>Закрытие у заказчика, руб</th>' : '') + '</tr>' +
+    (hasLk ? '<th class="num h-lk bsep"' + thSpan + '>Выполнено (ЛК), руб</th>' : '') +
+    (hasKp ? '<th class="num h-kp bsep"' + thSpan + '>Закрытие у заказчика, руб</th>' : '') + '</tr>' +
     (factCols
       ? '<tr class="sub">' +
-        (hasFactSplit ? '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
-        (hasFact ? '<th class="num">Итого, руб</th>' : '') + '</tr>'
+        (hasFactSplit ? '<th class="num bsep">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
+        (hasFact ? '<th class="num' + (hasFactSplit ? '' : ' bsep') + '">Итого, руб</th>' : '') + '</tr>'
       : '') +
     '</thead><tbody>' +
     order.map(pair => {
