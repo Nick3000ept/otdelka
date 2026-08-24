@@ -373,7 +373,8 @@
      таблицы, фиксированная раскладка ломается и числовые колонки распухают
      (баг 05.08.2026). Числовые — ровно 150px (просьба пользователя). */
   table.check.budget th:first-child { width: auto; }
-  table.check.budget th.num, table.check.budget td.num { width: 150px; }
+  /* 24.08.2026: было 150px — сужено, чтобы больше места оставалось названию */
+  table.check.budget th.num, table.check.budget td.num { width: 110px; }
   /* Общая шапка «Модель» над колонками факта (21.08.2026): шапка в два ряда,
      второй ряд (tr.sub) получает top инлайном из alignBudgetHead(). */
   table.check.budget th.modelhead {
@@ -1711,7 +1712,7 @@ function renderBudget() {
       '<th class="num"' + thSpan + '>Материалы, руб</th>' : '') +
     '<th class="num"' + thSpan + '>Стоимость, руб</th>' +
     (factCols ? '<th class="modelhead" colspan="' + factCols + '" style="width:' +
-      (150 * factCols) + 'px">Модель факт</th>' : '') +
+      (110 * factCols) + 'px">Модель факт</th>' : '') +
     (hasLk ? '<th class="num"' + thSpan + '>Выполнено (ЛК), руб</th>' : '') +
     (hasKp ? '<th class="num"' + thSpan + '>Закрытие у заказчика, руб</th>' : '') + '</tr>' +
     (factCols
