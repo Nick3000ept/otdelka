@@ -52,6 +52,7 @@ var CONFIG = {
   SHEET_PARK: 'Паркинг',
   PARK_ITEM: 'Статья бюджета',
   PARK_SECTION: 'Раздел',              // уровень «группа работ» в бюджете
+  PARK_GROUP: 'Группа работ',          // подраздел (Полы/Стены/Потолок…), 24.08
   PARK_WORK: 'Наименование работ',
   PARK_VOL: 'Объем',
   PARK_COST_SMR: 'Стоимость СМР',
@@ -72,7 +73,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v12';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
+var CACHE_BUDGET = 'budget_v13';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1089,6 +1090,11 @@ function readPark_(ss) {
     var all = idx[CONFIG.PARK_COST_ALL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_ALL]]) : 0;
     var grp = idx[CONFIG.PARK_SECTION] !== undefined
       ? String(row[idx[CONFIG.PARK_SECTION]]).trim() : '';
+    // Разбивка раздела на подразделы Полы/Стены/Потолок… (просьба 24.08.2026):
+    // группа бюджета = «Раздел · Подраздел».
+    var grp2 = idx[CONFIG.PARK_GROUP] !== undefined
+      ? String(row[idx[CONFIG.PARK_GROUP]]).trim() : '';
+    if (grp2) grp = grp + ' · ' + grp2;
     if (!map[item]) map[item] = { total: 0, works: {} };
     map[item].total += dog;
     var w = map[item].works;
@@ -1136,7 +1142,7 @@ function readShamov_(ss) {
 
   var ITEM = 'Собственные силы (Шамов)';
   var total = 0;
-  var works = {};   // раздел+работа -> { name, grp, total, cells: {МОЛ: сумма} }
+  var works = {};   // раздел+работа -> { name, grp, total, cells: {МОЛ: {c, h}} }
   for (var k = 1; k < data.length; k++) {
     var row = data[k];
     var work = String(row[idx['Работа']]).trim();
@@ -1144,19 +1150,28 @@ function readShamov_(ss) {
     var grp = String(row[idx['Раздел']]).trim() || '— без группы —';
     var mol = idx['МОЛ'] !== undefined ? String(row[idx['МОЛ']]).trim() : '';
     var sum = parkNum_(row[idx['Сумма, ₽']]);
+    // Чел.-часы = количество x часов в месяц (для сводной по МОЛам, 24.08.2026).
+    var ppl = idx['Количество, чел'] !== undefined ? parkNum_(row[idx['Количество, чел']]) : 0;
+    var hrs = idx['Часов в месяц'] !== undefined ? parkNum_(row[idx['Часов в месяц']]) : 0;
     var wKey = grp + '|' + work;
     if (!works[wKey]) works[wKey] = { name: work, grp: grp, total: 0, cells: {} };
     works[wKey].total += sum;
     var molKey = mol || '— без подрядчика —';
-    works[wKey].cells[molKey] = (works[wKey].cells[molKey] || 0) + sum;
+    if (!works[wKey].cells[molKey]) works[wKey].cells[molKey] = { c: 0, h: 0 };
+    works[wKey].cells[molKey].c += sum;
+    works[wKey].cells[molKey].h += ppl * hrs;
     total += sum;
   }
   var list = Object.keys(works)
     .map(function (wKey) {
       var w = works[wKey];
       var cells = Object.keys(w.cells).map(function (mol) {
-        var v = Math.round(w.cells[mol]);
-        return [mol, 'СС', v, 0, 0, v, 0, 0, 0];
+        var o = w.cells[mol];
+        var v = Math.round(o.c);
+        // Позиции 9/10 — чел.-часы и средняя ставка ₽/час (стоимость/часы) для
+        // спец-сводной работ СС на фронте; объём/коэф (3/4) не занимаем.
+        var rate = o.h > 0 ? Math.round(o.c / o.h * 100) / 100 : 0;
+        return [mol, 'СС', v, 0, 0, v, 0, 0, 0, Math.round(o.h), rate];
       });
       return [w.name, Math.round(w.total), cells, w.grp];
     })

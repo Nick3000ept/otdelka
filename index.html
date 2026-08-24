@@ -417,6 +417,7 @@
   /* Объём и коэффициент переделки — приглушённой припиской у названия работы. */
   .bw-info { color: var(--text-dim); font-size: 11px; font-weight: 400; white-space: nowrap; }
   table.check.budget tr.bwork { cursor: pointer; }
+  table.check.budget tr.bwork.bflat { cursor: default; }   /* паркинг: не раскрывается */
   table.check.budget tr.bwork:hover td { background: var(--panel2); }
   table.check.budget tr.bwork.open td { background: #dbe7ff; font-weight: 600; }
   /* Выпадающая сводная по работе: весь блок залит тем же синим, что и выделенная
@@ -1769,19 +1770,23 @@ function renderBudget() {
         // в строке работы, не в сводной (просьба 05.08.2026).
         const workRowHtml = (w, wi) => {
           const key = i + '|' + wi;
-          const wOpen = state.budgetWorkOpen.has(key);
+          // Работы паркинга не раскрываются — корпусной разбивки у них нет
+          // (просьба 24.08.2026); работы СС Шамова раскрываются в свою сводную.
+          const cellsW = w[2] || [];
+          const flat = cellsW.length > 0 && cellsW.every(c => String(c[1]) === 'Паркинг');
+          const wOpen = !flat && state.budgetWorkOpen.has(key);
           let vol = 0, redo = 0;
-          (w[2] || []).forEach(cell => {
+          cellsW.forEach(cell => {
             if (!cellOk(cell)) return;   // объём и коэф. — тоже по выбранным подрядчикам
             vol += cell[3] || 0;
             if (!redo && cell[4]) redo = cell[4];
           });
           const wr = state.works.find(r => norm(r[WORK_KEY]) === norm(String(w[0])));
           const unit = String((wr && wr[UNIT_COL]) || '').trim();
-          let h = '<tr class="bwork' + (wOpen ? ' open' : '') + '" data-bi="' + i +
-            '" data-wi="' + wi + '">' +
-            '<td><span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') + '</span> ' +
-            escapeHtml(String(w[0])) + '</td>' +
+          let h = '<tr class="bwork' + (wOpen ? ' open' : '') + (flat ? ' bflat' : '') +
+            '" data-bi="' + i + '" data-wi="' + wi + '">' +
+            '<td>' + (flat ? '' : '<span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') +
+            '</span> ') + escapeHtml(String(w[0])) + '</td>' +
             '<td class="num">' +
             (vol ? escapeHtml(fmtVol(vol) + (unit ? ' ' + unit : '')) : '') + '</td>' +
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
@@ -1789,10 +1794,11 @@ function renderBudget() {
             '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td>' +
             factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + lkTd(0) + kpTd(0) + '</tr>';
           if (wOpen) {
+            const ssOnly = cellsW.length > 0 && cellsW.every(c => String(c[1]) === 'СС');
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
               '"><td colspan="' + (4 + (hasSplit ? 2 : 0) + (hasFactSplit ? 2 : 0) +
               (hasFact ? 1 : 0) + (hasLk ? 1 : 0) + (hasKp ? 1 : 0)) + '">' +
-              budgetWorkHtml(w) + '</td></tr>';
+              (ssOnly ? budgetSSHtml(w) : budgetWorkHtml(w)) + '</td></tr>';
           }
           return h;
         };
@@ -1851,6 +1857,40 @@ function alignBudgetHead() {
   el.querySelectorAll('table.budget thead tr.sub th').forEach(th => {
     th.style.top = (h - 14) + 'px';   // базовый top у th: -14px (см. CSS table.check th)
   });
+}
+
+/**
+ * Сводная для работ «Собственных сил (Шамов)» (просьба 24.08.2026): корпусов
+ * в расчёте нет — по клику показываем строки МОЛов: чел.-часы (кол-во людей x
+ * часов в месяц, суммой за все месяцы, приходит в cell[9]), средняя ставка
+ * ₽/час (cell[10]) и стоимость. Фильтр по подрядчикам действует.
+ */
+function budgetSSHtml(w) {
+  const fSel = budgetSelSet();
+  const fActive = fSel.size > 0;
+  const cells = (w[2] || []).filter(c => !fActive || fSel.has(String(c[0])));
+  if (!cells.length) {
+    return '<div class="side-note">По выбранным подрядчикам данных нет</div>';
+  }
+  const rows = cells.slice().sort((a, b) => (b[2] || 0) - (a[2] || 0));
+  let hoursT = 0, costT = 0;
+  let h = '<table class="inner"><thead><tr><th>МОЛ</th>' +
+    '<th class="num">Чел.-часы</th><th class="num">Ставка, ₽/час</th>' +
+    '<th class="num">Стоимость, ₽</th></tr></thead><tbody>';
+  rows.forEach(c => {
+    const name = String(c[0]) === '— без подрядчика —' ? 'Не определен' : String(c[0]);
+    hoursT += c[9] || 0;
+    costT += c[2] || 0;
+    h += '<tr><td>' + escapeHtml(name) + '</td>' +
+      '<td class="num">' + (c[9] ? escapeHtml(fmtInt(c[9])) : '') + '</td>' +
+      '<td class="num">' + (c[10] ? escapeHtml(fmtCell(c[10])) : '') + '</td>' +
+      '<td class="num">' + escapeHtml(fmtInt(c[2] || 0)) + '</td></tr>';
+  });
+  h += '</tbody><tfoot><tr><td>Итого</td>' +
+    '<td class="num">' + (hoursT ? escapeHtml(fmtInt(hoursT)) : '') + '</td>' +
+    '<td class="num"></td>' +
+    '<td class="num">' + escapeHtml(fmtInt(costT)) + '</td></tr></tfoot></table>';
+  return h;
 }
 
 /**
@@ -2148,6 +2188,7 @@ document.getElementById('budget-screen').addEventListener('click', e => {
   }
   const bw = e.target.closest('tr.bwork');
   if (bw) {
+    if (bw.classList.contains('bflat')) return;   // работы паркинга не раскрываются
     // Можно держать открытыми несколько работ сразу (просьба 05.08.2026).
     const key = bw.dataset.bi + '|' + bw.dataset.wi;
     if (state.budgetWorkOpen.has(key)) state.budgetWorkOpen.delete(key);
