@@ -362,6 +362,43 @@ function doPost(e) {
       return jsonOut_({ ok: true, saved: factRows.length });
     }
 
+    // Заливка расчёта собственных сил Шамова (24.08.2026): пишет ТОЛЬКО в лист
+    // «расчет_Шамов» (создаёт при отсутствии, содержимое перезаписывает целиком —
+    // повторный вызов = обновление расчёта). Другие листы не трогает.
+    // Тело: { t, action: 'importShamov', header: [...], rows: [[...], ...] }.
+    if (body.action === 'importShamov') {
+      var impHeader = body.header;
+      var impRows = body.rows;
+      if (!Array.isArray(impHeader) || !impHeader.length ||
+          !Array.isArray(impRows) || !impRows.length) {
+        return jsonOut_({ ok: false, error: 'empty_fields' });
+      }
+      if (impRows.length > 2000) return jsonOut_({ ok: false, error: 'too_many_rows' });
+      var impWide = impHeader.length;
+      var impData = [impHeader];
+      for (var ri = 0; ri < impRows.length; ri++) {
+        var impSrc = impRows[ri] || [];
+        var impDst = [];
+        for (var ci = 0; ci < impWide; ci++) {
+          var iv = impSrc[ci];
+          if (typeof iv === 'number') impDst.push(iv);
+          else impDst.push(safeCell_(String(iv == null ? '' : iv).slice(0, 500)));
+        }
+        impData.push(impDst);
+      }
+      var ssImp = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var shImp = ssImp.getSheetByName('расчет_Шамов');
+      if (!shImp) shImp = ssImp.insertSheet('расчет_Шамов');
+      shImp.clearContents();
+      // «Месяц» — текстовый формат, иначе Sheets превратит «2026-08» в дату.
+      var impMonCol = impHeader.indexOf('Месяц') + 1;
+      if (impMonCol > 0) {
+        shImp.getRange(1, impMonCol, impData.length, 1).setNumberFormat('@');
+      }
+      shImp.getRange(1, 1, impData.length, impWide).setValues(impData);
+      return jsonOut_({ ok: true, rows: impRows.length });
+    }
+
     var list = readQuestions_();
 
     if (body.action === 'addQuestion') {

@@ -163,9 +163,10 @@
   BASELINE_FILE_ID; первая база зафиксирована 2026-08-05)
 - ~177 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
   расц.раб, расц.мат]; ~246 `diffBaseline_` (add/del/mod)
-- 288 `doPost` — 310 saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
-  ветка ДО чтения вопросов) / addQuestion / saveBaseline / setQuestionStatus
-  (LockService, пароль)
+- ~315 `doPost` — saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
+  ветка ДО чтения вопросов) / importShamov (перезапись листа «расчет_Шамов»
+  целиком, «Месяц» текстовым форматом; 24.08) / addQuestion / saveBaseline /
+  setQuestionStatus (LockService, пароль)
 - ~393 `doGet`: ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
   `#sb-refresh` «Обновить данные» внизу сайдбара) · meta (безопасно из чата) ·
   probe (агрегаты) · floors · volumes · questions · budget · changes ·
