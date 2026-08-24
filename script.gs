@@ -39,6 +39,12 @@ var CONFIG = {
   LK_MOL: 'МОЛ',
   LK_ITEM: 'Статья бюждет',       // опечатка «бюждет» — так в заголовке листа
   LK_DONE: 'Выполнено итого',
+
+  // Лист «Форма КП» (24.08.2026): закрытие у заказчика по статьям бюджета.
+  // Кол. N — статья, кол. F — сумма закрытия; свод — колонка «Закрытие у заказчика».
+  SHEET_KP: 'Форма КП',
+  KP_ITEM: 'Признак бюджет деньги основной',                    // кол. N
+  KP_DONE: 'Выполнено с начала строительства стоимость руб.',   // кол. F
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
   FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
 
@@ -54,7 +60,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v9';   // свод бюджета: статья -> работы -> подрядчик×корпус (+lk); чанкованный
+var CACHE_BUDGET = 'budget_v10';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -663,7 +669,8 @@ function doGet(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB), lk: readLk_(ssB) });
+      var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB),
+                                      lk: readLk_(ssB), kp: readKp_(ssB) });
       cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
       return ContentService.createTextOutput(payloadB)
         .setMimeType(ContentService.MimeType.JSON);
@@ -953,6 +960,38 @@ function readLk_(ss) {
     out.push([mol, item, typeof done === 'number' ? Math.round(done) : 0]);
   }
   return out;
+}
+
+/**
+ * Лист «Форма КП» (24.08.2026): закрытие у заказчика. Сворачиваем на сервере:
+ * статья бюджета (кол. N «Признак бюджет деньги основной») -> сумма закрытия
+ * (кол. F «Выполнено с начала строительства стоимость руб.»).
+ * Возвращает [[статья, сумма], ...]; строки с пустой статьёй пропускаются.
+ * Нет листа или нужных колонок — пустой массив, витрина колонку не покажет.
+ */
+function readKp_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_KP);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  if (!idx[CONFIG.KP_ITEM] || !idx[CONFIG.KP_DONE]) return [];
+  var n = lastRow - 1;
+  var item = sh.getRange(2, idx[CONFIG.KP_ITEM], n, 1).getValues();
+  var done = sh.getRange(2, idx[CONFIG.KP_DONE], n, 1).getValues();
+  var map = {};
+  for (var k = 0; k < n; k++) {
+    var name = String(item[k][0]).trim();
+    if (!name) continue;
+    var v = typeof done[k][0] === 'number' ? done[k][0] : 0;
+    map[name] = (map[name] || 0) + v;
+  }
+  return Object.keys(map).map(function (name) {
+    return [name, Math.round(map[name])];
+  });
 }
 
 /**
