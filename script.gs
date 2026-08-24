@@ -45,6 +45,18 @@ var CONFIG = {
   SHEET_KP: 'Форма КП',
   KP_ITEM: 'Признак бюджет деньги основной',                    // кол. N
   KP_DONE: 'Выполнено с начала строительства стоимость руб.',   // кол. F
+
+  // Лист «Паркинг» (24.08.2026): ведомость отделки паркинга (из экселя
+  // «Доп работы по СБ3 от 25.05.2026»), статья «Паркинг» в своде бюджета.
+  // Стоимость статьи — колонка «Договор» (решение пользователя 24.08.2026).
+  SHEET_PARK: 'Паркинг',
+  PARK_ITEM: 'Статья бюджета',
+  PARK_SECTION: 'Раздел',              // уровень «группа работ» в бюджете
+  PARK_WORK: 'Наименование работ',
+  PARK_VOL: 'Объем',
+  PARK_COST_SMR: 'Стоимость СМР',
+  PARK_COST_ALL: 'Стоимость всего',
+  PARK_DOG: 'Договор',
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
   FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
 
@@ -60,7 +72,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v10';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp); чанкованный
+var CACHE_BUDGET = 'budget_v11';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -669,7 +681,8 @@ function doGet(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var payloadB = JSON.stringify({ ok: true, budget: buildBudget_(ssB),
+      var payloadB = JSON.stringify({ ok: true,
+                                      budget: buildBudget_(ssB).concat(readPark_(ssB)),
                                       lk: readLk_(ssB), kp: readKp_(ssB) });
       cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
       return ContentService.createTextOutput(payloadB)
@@ -992,6 +1005,74 @@ function readKp_(ss) {
   return Object.keys(map).map(function (name) {
     return [name, Math.round(map[name])];
   });
+}
+
+/** Число из ячейки листа «Паркинг»: число как есть, строку «1 234,56» — разобрать. */
+function parkNum_(v) {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') {
+    var f = parseFloat(v.replace(/\s/g, '').replace(',', '.'));
+    return isNaN(f) ? 0 : f;
+  }
+  return 0;
+}
+
+/**
+ * Лист «Паркинг» (24.08.2026): ведомость отделки паркинга -> статьи для свода
+ * бюджета в том же формате, что buildBudget_: [[статья, сумма, [[работа, сумма,
+ * cells, группа], ...]], ...]. Сумма — колонка «Договор» (решение 24.08.2026);
+ * «группа работ» в иерархии — колонка «Раздел». Подрядчиков и корпусов в
+ * ведомости нет: одна ячейка на работу [— без подрядчика —, 'Паркинг', договор,
+ * объём, 0, договорная часть работ (пропорция СМР/всего из ведомости), 0, 0, 0]
+ * — так колонки «Работы/Материалы, руб» делят договор в пропорции ведомости,
+ * а колонки факта остаются пустыми. Нет листа — пустой массив.
+ */
+function readPark_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_PARK);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var data = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  if (idx[CONFIG.PARK_WORK] === undefined || idx[CONFIG.PARK_DOG] === undefined) return [];
+
+  var map = {};   // статья -> { total, works: { работа: {total, vol, w, grp} } }
+  for (var k = 1; k < data.length; k++) {
+    var row = data[k];
+    var work = String(row[idx[CONFIG.PARK_WORK]]).trim();
+    if (!work) continue;
+    var item = idx[CONFIG.PARK_ITEM] !== undefined
+      ? (String(row[idx[CONFIG.PARK_ITEM]]).trim() || 'Паркинг') : 'Паркинг';
+    var dog = parkNum_(row[idx[CONFIG.PARK_DOG]]);
+    var vol = idx[CONFIG.PARK_VOL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_VOL]]) : 0;
+    var smr = idx[CONFIG.PARK_COST_SMR] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_SMR]]) : 0;
+    var all = idx[CONFIG.PARK_COST_ALL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_ALL]]) : 0;
+    var grp = idx[CONFIG.PARK_SECTION] !== undefined
+      ? String(row[idx[CONFIG.PARK_SECTION]]).trim() : '';
+    if (!map[item]) map[item] = { total: 0, works: {} };
+    map[item].total += dog;
+    var w = map[item].works;
+    // Ключ — раздел+работа: одинаковые названия работ в разных разделах
+    // не должны сливаться (иначе суммы разделов смещаются).
+    var wKey = grp + '' + work;
+    if (!w[wKey]) w[wKey] = { name: work, total: 0, vol: 0, w: 0, grp: grp };
+    w[wKey].total += dog;
+    w[wKey].vol += vol;
+    if (all > 0) w[wKey].w += dog * (smr / all);   // договорная часть работ
+  }
+  return Object.keys(map).map(function (item) {
+    var works = Object.keys(map[item].works)
+      .map(function (wKey) {
+        var w = map[item].works[wKey];
+        var cell = ['— без подрядчика —', 'Паркинг', Math.round(w.total),
+                    Math.round(w.vol * 100) / 100, 0, Math.round(w.w), 0, 0, 0];
+        return [w.name, Math.round(w.total), [cell], w.grp || '— без группы —'];
+      })
+      .sort(function (a, b) { return b[1] - a[1]; });
+    return [item, Math.round(map[item].total), works];
+  }).sort(function (a, b) { return b[1] - a[1]; });
 }
 
 /**
