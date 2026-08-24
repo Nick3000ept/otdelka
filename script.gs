@@ -72,7 +72,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v11';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг); чанкованный
+var CACHE_BUDGET = 'budget_v12';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -719,7 +719,8 @@ function doGet(e) {
       }
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
       var payloadB = JSON.stringify({ ok: true,
-                                      budget: buildBudget_(ssB).concat(readPark_(ssB)),
+                                      budget: buildBudget_(ssB).concat(readPark_(ssB))
+                                                               .concat(readShamov_(ssB)),
                                       lk: readLk_(ssB), kp: readKp_(ssB) });
       cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
       return ContentService.createTextOutput(payloadB)
@@ -1110,6 +1111,58 @@ function readPark_(ss) {
       .sort(function (a, b) { return b[1] - a[1]; });
     return [item, Math.round(map[item].total), works];
   }).sort(function (a, b) { return b[1] - a[1]; });
+}
+
+/**
+ * Лист «расчет_Шамов» (24.08.2026): бюджет собственных сил -> отдельная статья
+ * «Собственные силы (Шамов)» в своде бюджета (формат buildBudget_).
+ * Иерархия: статья -> раздел листа (Отделка/Паркинг/Сдельщики/Тепловой
+ * контур/Общестрой) как «группа работ» -> работа (суммы месяцев сложены).
+ * Ячейки — по МОЛам (МОЛ выступает «подрядчиком», корпус 'СС'); у сдельщиков
+ * МОЛа нет — «— без подрядчика —». Вся сумма кладётся в cell[5] («Работы, руб»)
+ * — это трудозатраты, материалов в расчёте нет. Нет листа — пустой массив.
+ */
+function readShamov_(ss) {
+  var sh = ss.getSheetByName('расчет_Шамов');
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var data = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  if (idx['Раздел'] === undefined || idx['Работа'] === undefined ||
+      idx['Сумма, ₽'] === undefined) return [];
+
+  var ITEM = 'Собственные силы (Шамов)';
+  var total = 0;
+  var works = {};   // раздел+работа -> { name, grp, total, cells: {МОЛ: сумма} }
+  for (var k = 1; k < data.length; k++) {
+    var row = data[k];
+    var work = String(row[idx['Работа']]).trim();
+    if (!work) continue;
+    var grp = String(row[idx['Раздел']]).trim() || '— без группы —';
+    var mol = idx['МОЛ'] !== undefined ? String(row[idx['МОЛ']]).trim() : '';
+    var sum = parkNum_(row[idx['Сумма, ₽']]);
+    var wKey = grp + '|' + work;
+    if (!works[wKey]) works[wKey] = { name: work, grp: grp, total: 0, cells: {} };
+    works[wKey].total += sum;
+    var molKey = mol || '— без подрядчика —';
+    works[wKey].cells[molKey] = (works[wKey].cells[molKey] || 0) + sum;
+    total += sum;
+  }
+  var list = Object.keys(works)
+    .map(function (wKey) {
+      var w = works[wKey];
+      var cells = Object.keys(w.cells).map(function (mol) {
+        var v = Math.round(w.cells[mol]);
+        return [mol, 'СС', v, 0, 0, v, 0, 0, 0];
+      });
+      return [w.name, Math.round(w.total), cells, w.grp];
+    })
+    .sort(function (a, b) { return b[1] - a[1]; });
+  if (!list.length) return [];
+  return [[ITEM, Math.round(total), list]];
 }
 
 /**
