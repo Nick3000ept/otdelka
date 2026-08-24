@@ -1873,20 +1873,27 @@ function budgetSSHtml(w) {
     return '<div class="side-note">По выбранным подрядчикам данных нет</div>';
   }
   const rows = cells.slice().sort((a, b) => (b[2] || 0) - (a[2] || 0));
-  let hoursT = 0, costT = 0;
+  // Месяцев (cell[11]) и среднее людей в месяц (cell[12]) — просьба 24.08.2026.
+  let hoursT = 0, costT = 0, pplT = 0;
   let h = '<table class="inner"><thead><tr><th>МОЛ</th>' +
+    '<th class="num">Месяцев</th><th class="num">Ср. людей</th>' +
     '<th class="num">Чел.-часы</th><th class="num">Ставка, ₽/час</th>' +
     '<th class="num">Стоимость, ₽</th></tr></thead><tbody>';
   rows.forEach(c => {
     const name = String(c[0]) === '— без подрядчика —' ? 'Не определен' : String(c[0]);
     hoursT += c[9] || 0;
     costT += c[2] || 0;
+    pplT += c[12] || 0;
     h += '<tr><td>' + escapeHtml(name) + '</td>' +
+      '<td class="num">' + (c[11] ? escapeHtml(fmtInt(c[11])) : '') + '</td>' +
+      '<td class="num">' + (c[12] ? escapeHtml(fmtCell(c[12])) : '') + '</td>' +
       '<td class="num">' + (c[9] ? escapeHtml(fmtInt(c[9])) : '') + '</td>' +
       '<td class="num">' + (c[10] ? escapeHtml(fmtCell(c[10])) : '') + '</td>' +
       '<td class="num">' + escapeHtml(fmtInt(c[2] || 0)) + '</td></tr>';
   });
   h += '</tbody><tfoot><tr><td>Итого</td>' +
+    '<td class="num"></td>' +
+    '<td class="num">' + (pplT ? escapeHtml(fmtCell(Math.round(pplT * 10) / 10)) : '') + '</td>' +
     '<td class="num">' + (hoursT ? escapeHtml(fmtInt(hoursT)) : '') + '</td>' +
     '<td class="num"></td>' +
     '<td class="num">' + escapeHtml(fmtInt(costT)) + '</td></tr></tfoot></table>';

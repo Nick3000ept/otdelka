@@ -73,7 +73,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v13';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
+var CACHE_BUDGET = 'budget_v15';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1128,6 +1128,21 @@ function readPark_(ss) {
  * МОЛа нет — «— без подрядчика —». Вся сумма кладётся в cell[5] («Работы, руб»)
  * — это трудозатраты, материалов в расчёте нет. Нет листа — пустой массив.
  */
+/**
+ * Основной вид работы СС (24.08.2026): от названия позиции отрезается перечень
+ * корпусов («… К1,К4,Паркинг», «… Корпус 1,2,8») — по нему группируются работы
+ * Шамова («Отделка · Уборка Мусора» и т.п.). «Бригадир/Бригадиры» склеиваются,
+ * опечатка «выполненых» приводится к «выполненных».
+ */
+function shamovKind_(name) {
+  var n = String(name).replace(/выполненых/g, 'выполненных');
+  var m = n.search(/\s+(К\d|Корпус)/);
+  if (m > 0) n = n.slice(0, m);
+  n = n.replace(/[\s,.:;–-]+$/, '').replace(/\s+/g, ' ').trim();
+  if (/^бригадир/i.test(n)) n = 'Бригадир';
+  return n || String(name);
+}
+
 function readShamov_(ss) {
   var sh = ss.getSheetByName('расчет_Шамов');
   if (!sh) return [];
@@ -1148,18 +1163,27 @@ function readShamov_(ss) {
     var work = String(row[idx['Работа']]).trim();
     if (!work) continue;
     var grp = String(row[idx['Раздел']]).trim() || '— без группы —';
+    // Группа = «Раздел · Вид работы» (просьба 24.08.2026); позиции с корпусами —
+    // внутри группы. У сдельщиков виды не выделяются — группа = раздел.
+    if (grp !== 'Затраты на сдельщиков') grp = grp + ' · ' + shamovKind_(work);
     var mol = idx['МОЛ'] !== undefined ? String(row[idx['МОЛ']]).trim() : '';
     var sum = parkNum_(row[idx['Сумма, ₽']]);
     // Чел.-часы = количество x часов в месяц (для сводной по МОЛам, 24.08.2026).
     var ppl = idx['Количество, чел'] !== undefined ? parkNum_(row[idx['Количество, чел']]) : 0;
     var hrs = idx['Часов в месяц'] !== undefined ? parkNum_(row[idx['Часов в месяц']]) : 0;
+    var mon = idx['Месяц'] !== undefined ? String(row[idx['Месяц']]).trim() : '';
     var wKey = grp + '|' + work;
     if (!works[wKey]) works[wKey] = { name: work, grp: grp, total: 0, cells: {} };
     works[wKey].total += sum;
     var molKey = mol || '— без подрядчика —';
-    if (!works[wKey].cells[molKey]) works[wKey].cells[molKey] = { c: 0, h: 0 };
-    works[wKey].cells[molKey].c += sum;
-    works[wKey].cells[molKey].h += ppl * hrs;
+    if (!works[wKey].cells[molKey]) {
+      works[wKey].cells[molKey] = { c: 0, h: 0, ppl: 0, months: {} };
+    }
+    var cellSS = works[wKey].cells[molKey];
+    cellSS.c += sum;
+    cellSS.h += ppl * hrs;
+    cellSS.ppl += ppl;
+    if (mon) cellSS.months[mon] = true;   // число месяцев + среднее людей (24.08)
     total += sum;
   }
   var list = Object.keys(works)
@@ -1168,10 +1192,14 @@ function readShamov_(ss) {
       var cells = Object.keys(w.cells).map(function (mol) {
         var o = w.cells[mol];
         var v = Math.round(o.c);
-        // Позиции 9/10 — чел.-часы и средняя ставка ₽/час (стоимость/часы) для
-        // спец-сводной работ СС на фронте; объём/коэф (3/4) не занимаем.
+        // Позиции 9..12 — чел.-часы, средняя ставка ₽/час (стоимость/часы),
+        // число месяцев, среднее людей в месяц (решение пользователя 24.08:
+        // остаёмся на чел.-часах) — для спец-сводной работ СС на фронте;
+        // объём/коэф (3/4) не занимаем.
         var rate = o.h > 0 ? Math.round(o.c / o.h * 100) / 100 : 0;
-        return [mol, 'СС', v, 0, 0, v, 0, 0, 0, Math.round(o.h), rate];
+        var nMon = Object.keys(o.months).length;
+        var avgP = nMon > 0 ? Math.round(o.ppl / nMon * 10) / 10 : 0;
+        return [mol, 'СС', v, 0, 0, v, 0, 0, 0, Math.round(o.h), rate, nMon, avgP];
       });
       return [w.name, Math.round(w.total), cells, w.grp];
     })
