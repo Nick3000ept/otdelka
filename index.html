@@ -1697,7 +1697,10 @@ function renderBudget() {
   const hasKp = kpRows.length > 0;
   const kpByItem = {};
   kpRows.forEach(row => {
-    const key = norm(String(row[0]));
+    let key = norm(String(row[0]));
+    // Статьи «Формы КП» с указанием паркинга («Паркинг - МОП - …» и т.п.)
+    // считаются в строку «Паркинг» (просьба 24.08.2026).
+    if (key.startsWith('паркинг')) key = 'паркинг';
     kpByItem[key] = (kpByItem[key] || 0) + (row[1] || 0);
   });
   const kpTd = v => hasKp
