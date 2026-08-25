@@ -60,6 +60,7 @@ var CONFIG = {
   PARK_COST_SMR: 'Стоимость СМР',
   PARK_COST_ALL: 'Стоимость всего',
   PARK_DOG: 'Договор',
+  SHEET_LOBBY: 'Лобби',                // тендерные бюджеты лобби (25.08.2026)
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
   FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
 
@@ -75,7 +76,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v21';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v22';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, лобби, СС Шамов, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -728,6 +729,7 @@ function doGet(e) {
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
       var payloadB = JSON.stringify({ ok: true,
                                       budget: buildBudget_(ssB).concat(readPark_(ssB))
+                                                               .concat(readLobby_(ssB))
                                                                .concat(readShamov_(ssB))
                                                                .concat(readOverhead_(ssB)),
                                       lk: readLk_(ssB), kp: readKp_(ssB),
@@ -1226,6 +1228,67 @@ function readPark_(ss) {
       .sort(function (a, b) { return b[1] - a[1]; });
     return [item, Math.round(map[item].total), works];
   }).sort(function (a, b) { return b[1] - a[1]; });
+}
+
+/**
+ * Лист «Лобби» (25.08.2026): нормализованные тендерные бюджеты отделки лобби
+ * из экселя «Бюджет МОП типовых этажей итог от 06.08.2026» (вкладки МПСИ по
+ * корпусам, ВЕЛМИ, Авангард; цепочка подготовки — CSV
+ * Приложения/Лобби_работы_v1.csv) -> статья «Лобби» в формате buildBudget_.
+ * Сумма — «Стоимость всего»; группа = «Раздел» (зона: Лобби К1…К12),
+ * «Группа работ» (Полы/Стены/ДВЕРИ и т.п.) -> w[4] — вложенные подгруппы,
+ * как у Паркинга. Подрядчик ячейки — колонка «Подрядчик» (МПСИ-2 / ВЕЛМИ /
+ * СК-Авангард), корпус 'Лобби' (строки плоские, без раскрытия);
+ * в cell[5] «Работы, руб» — СМР + косвенные (материалы = всего − работы).
+ * Работы агрегируются по ключу зона+группа+работа. Нет листа — пустой массив.
+ */
+function readLobby_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_LOBBY);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var data = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  var need = ['Раздел', 'Группа работ', 'Наименование работ', 'Стоимость всего'];
+  for (var q = 0; q < need.length; q++) {
+    if (idx[need[q]] === undefined) return [];
+  }
+  var sep = String.fromCharCode(1);
+  var works = {};
+  var total = 0;
+  for (var k = 1; k < data.length; k++) {
+    var row = data[k];
+    var work = String(row[idx['Наименование работ']]).trim();
+    if (!work) continue;
+    var zone = String(row[idx['Раздел']]).trim() || '— без зоны —';
+    var grp2 = String(row[idx['Группа работ']]).trim();
+    var contr = idx['Подрядчик'] !== undefined
+      ? (String(row[idx['Подрядчик']]).trim() || '— без подрядчика —') : '— без подрядчика —';
+    var all = parkNum_(row[idx['Стоимость всего']]);
+    var smr = idx['Стоимость СМР'] !== undefined ? parkNum_(row[idx['Стоимость СМР']]) : 0;
+    var ind = idx['Стоимость косвенные'] !== undefined ? parkNum_(row[idx['Стоимость косвенные']]) : 0;
+    var vol = idx['Объем'] !== undefined ? parkNum_(row[idx['Объем']]) : 0;
+    var wKey = zone + sep + grp2 + sep + work;
+    if (!works[wKey]) works[wKey] = { name: work, zone: zone, grp2: grp2,
+                                      contr: contr, total: 0, w: 0, vol: 0 };
+    var w = works[wKey];
+    w.total += all;
+    w.w += smr + ind;
+    w.vol += vol;
+    total += all;
+  }
+  var list = Object.keys(works)
+    .map(function (wKey) {
+      var w = works[wKey];
+      var cell = [w.contr, 'Лобби', Math.round(w.total),
+                  Math.round(w.vol * 100) / 100, 0, Math.round(w.w), 0, 0, 0];
+      return [w.name, Math.round(w.total), [cell], w.zone, w.grp2];
+    })
+    .sort(function (a, b) { return b[1] - a[1]; });
+  if (!list.length) return [];
+  return [['Лобби', Math.round(total), list]];
 }
 
 /**
