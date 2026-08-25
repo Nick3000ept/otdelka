@@ -73,7 +73,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v16';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, паркинг, СС Шамов); чанкованный
+var CACHE_BUDGET = 'budget_v17';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -440,8 +440,13 @@ function doPost(e) {
       var obj = { date: new Date().toISOString(), data: buildBaseline_(ssBl) };
       baselineFile_().setContent(JSON.stringify(obj));
       var cacheBl = CacheService.getScriptCache();
-      var keysBl = [CACHE_CHANGES + '_n'];
-      for (var q2 = 0; q2 < 10; q2++) keysBl.push(CACHE_CHANGES + '_' + q2);
+      // Сбрасываем и кэш бюджета: колонка «Базовый бюджет» на «Бюджете»
+      // считается из этого же слепка (25.08.2026).
+      var keysBl = [CACHE_CHANGES + '_n', CACHE_BUDGET + '_n'];
+      for (var q2 = 0; q2 < 10; q2++) {
+        keysBl.push(CACHE_CHANGES + '_' + q2);
+        keysBl.push(CACHE_BUDGET + '_' + q2);
+      }
       cacheBl.removeAll(keysBl);
       return jsonOut_({ ok: true, date: obj.date });
     }
@@ -722,7 +727,8 @@ function doGet(e) {
       var payloadB = JSON.stringify({ ok: true,
                                       budget: buildBudget_(ssB).concat(readPark_(ssB))
                                                                .concat(readShamov_(ssB)),
-                                      lk: readLk_(ssB), kp: readKp_(ssB) });
+                                      lk: readLk_(ssB), kp: readKp_(ssB),
+                                      base: readBaseSums_() });
       cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
       return ContentService.createTextOutput(payloadB)
         .setMimeType(ContentService.MimeType.JSON);
@@ -1044,6 +1050,40 @@ function readKp_(ss) {
   return Object.keys(map).map(function (name) {
     return [name, Math.round(map[name])];
   });
+}
+
+/**
+ * Суммы зафиксированного базового расчёта для колонки «Базовый бюджет» на
+ * «Бюджете» (25.08.2026): слепок базы (otdelka_baseline.json, разрез
+ * работа|корпус|этаж) сворачивается в { date, works: [[работа, подрядчик,
+ * сумма], ...] }. Подрядчик — как в слепке (несколько на этаже — склеены
+ * « + »), фильтр по подрядчикам к нему применяет фронт. Статей в слепке нет —
+ * по статьям бюджета суммы раскладывает фронт по названию работы.
+ * База не зафиксирована — null, колонка на фронте не показывается.
+ */
+function readBaseSums_() {
+  var bl = readBaseline_();
+  if (!bl || !bl.data) return null;
+  var acc = {};   // работа -> подрядчик -> сумма
+  Object.keys(bl.data).forEach(function (key) {
+    var row = bl.data[key];
+    var cost = row && typeof row[0] === 'number' ? row[0] : 0;
+    if (!cost) return;
+    // Ключ = работа|корпус|этаж; отрезаем два хвостовых куска — название
+    // работы с «|» внутри (маловероятно, но) не потеряется.
+    var parts = key.split('|');
+    var work = parts.slice(0, Math.max(1, parts.length - 2)).join('|');
+    var contr = String(row[2] || '— без подрядчика —');
+    if (!acc[work]) acc[work] = {};
+    acc[work][contr] = (acc[work][contr] || 0) + cost;
+  });
+  var out = [];
+  Object.keys(acc).forEach(function (work) {
+    Object.keys(acc[work]).forEach(function (contr) {
+      out.push([work, contr, Math.round(acc[work][contr])]);
+    });
+  });
+  return { date: bl.date || '', works: out };
 }
 
 /** Число из ячейки листа «Паркинг»: число как есть, строку «1 234,56» — разобрать. */
