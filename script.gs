@@ -60,6 +60,7 @@ var CONFIG = {
   PARK_COST_SMR: 'Стоимость СМР',
   PARK_COST_ALL: 'Стоимость всего',
   PARK_DOG: 'Договор',
+  PARK_BUDGET: 'Стоимость итого в бюджет',  // кол. Q = договор × коэф. запаса (25.08.2026) — сумма статьи
   SHEET_LOBBY: 'Лобби',                // тендерные бюджеты лобби (25.08.2026)
   FLOOR_REDO: 'Плановый процент переделки',                      // кол. Q — коэф. переделки
   FLOOR_GROUP: 'Группа работ',                                   // кол. F — группировка работ
@@ -76,7 +77,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v23';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, лобби, СС Шамов, СС факт, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v24';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, лобби, СС Шамов, СС факт, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1166,7 +1167,8 @@ function parkNum_(v) {
 /**
  * Лист «Паркинг» (24.08.2026): ведомость отделки паркинга -> статьи для свода
  * бюджета в том же формате, что buildBudget_: [[статья, сумма, [[работа, сумма,
- * cells, группа], ...]], ...]. Сумма — колонка «Договор» (решение 24.08.2026);
+ * cells, группа], ...]], ...]. Сумма — колонка «Стоимость итого в бюджет»
+ * (кол. Q = договор × коэф. запаса, просьба 25.08.2026; нет колонки — «Договор»);
  * «группа работ» в иерархии — колонка «Раздел». Подрядчиков и корпусов в
  * ведомости нет: одна ячейка на работу [— без подрядчика —, 'Паркинг', договор,
  * объём, 0, договорная часть работ (пропорция СМР/всего из ведомости), 0, 0, 0]
@@ -1191,7 +1193,11 @@ function readPark_(ss) {
     if (!work) continue;
     var item = idx[CONFIG.PARK_ITEM] !== undefined
       ? (String(row[idx[CONFIG.PARK_ITEM]]).trim() || 'Паркинг') : 'Паркинг';
-    var dog = parkNum_(row[idx[CONFIG.PARK_DOG]]);
+    // С 25.08.2026 сумма статьи — «Стоимость итого в бюджет» (кол. Q, договор ×
+    // коэффициент запаса); если колонки нет — как раньше, «Договор».
+    var dog = idx[CONFIG.PARK_BUDGET] !== undefined
+      ? parkNum_(row[idx[CONFIG.PARK_BUDGET]])
+      : parkNum_(row[idx[CONFIG.PARK_DOG]]);
     var vol = idx[CONFIG.PARK_VOL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_VOL]]) : 0;
     var smr = idx[CONFIG.PARK_COST_SMR] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_SMR]]) : 0;
     var all = idx[CONFIG.PARK_COST_ALL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_ALL]]) : 0;
