@@ -1637,10 +1637,15 @@ function renderBudget() {
   // групп и «Итого» пересчитываются только по совпавшим работам.
   const q = norm(state.budgetQuery);
   const wMatch = w => !q || norm(String(w[0])).includes(q);
+  // Бюджет собственных сил — БЕЗ накладных расходов (просьба 25.08.2026):
+  // при галочке «Собственные силы» статья «Накладные расходы» исключается
+  // и из таблицы, и из «Итого» (rowsT — статьи, участвующие в итогах).
+  const rowsT = state.budgetSS
+    ? rows.filter(r => String(r[0]) !== 'Накладные расходы') : rows;
   const total = (active || q)
-    ? rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+    ? rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
         a + (wMatch(w) ? wSum(w) : 0), 0), 0)
-    : rows.reduce((acc, r) => acc + r[1], 0);
+    : rowsT.reduce((acc, r) => acc + r[1], 0);
   // Разбивка на работы/материалы столбцами (просьба 18.08.2026): «Работы» — сумма
   // cell[5] (кол. AE поэтажки) с учётом фильтра подрядчиков, «Материалы» — стоимость
   // минус работы. Старый кэш без cell[5] — колонок разбивки просто нет (hasSplit).
@@ -1652,7 +1657,7 @@ function renderBudget() {
     ? '<td class="num">' + escapeHtml(fmtInt(workCost)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtInt(cost - workCost)) + '</td>'
     : '';
-  const totalW = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+  const totalW = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumW(w) : 0), 0), 0);
   // «Сумма переделок» (просьба 25.08.2026): стоимость с коэффициентом переделки
   // минус «Стоимость без коэф» (кол. AI поэтажки), считает бэкенд в cell[14]
@@ -1665,7 +1670,7 @@ function renderBudget() {
   const redoTd = v => hasRedo
     ? '<td class="num">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
-  const totalR = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+  const totalR = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumR(w) : 0), 0), 0);
   // Факт выполненных работ «К оплате» (кол. AA поэтажки, просьба 21.08.2026):
   // колонка «Факт, руб» справа от стоимости, суммы с учётом обоих фильтров.
@@ -1680,7 +1685,7 @@ function renderBudget() {
     ? '<td class="num' + (hasFactSplit ? '' : ' bsep') + '">' +
       escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
-  const totalF = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+  const totalF = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumF(w) : 0), 0), 0);
   // Разбивка факта на работы и материалы (просьба 21.08.2026): бэкенд считает
   // по поэтажке «Объем к закрытию» (Z) × расценки за ед. (AB работы, AC материалы),
@@ -1696,9 +1701,9 @@ function renderBudget() {
     ? '<td class="num bsep">' + escapeHtml(fw ? fmtInt(fw) : '') + '</td>' +
       '<td class="num">' + escapeHtml(fm ? fmtInt(fm) : '') + '</td>'
     : '';
-  const totalFW = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+  const totalFW = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumFW(w) : 0), 0), 0);
-  const totalFM = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+  const totalFM = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumFM(w) : 0), 0), 0);
   // «Выполнено (ЛК)» из листа «Личные_кабинеты» (просьба 21.08.2026): данные
   // МОЛ × статья -> выполнено, поэтому значения — только в строках статей и в
@@ -1760,7 +1765,7 @@ function renderBudget() {
   const baseTd = v => hasBase
     ? '<td class="num bsep">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
-  const totalB = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+  const totalB = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumB(w) : 0), 0), 0);
   const baseDate = hasBase && baseData.date ? new Date(baseData.date) : null;
   const baseTitle = baseDate && !isNaN(baseDate)
@@ -1977,6 +1982,8 @@ function renderBudget() {
       const entries = [];
       const sectMap = new Map();
       order.forEach(pair => {
+        // При галочке «Собственные силы» накладные расходы исключены (25.08.2026)
+        if (state.budgetSS && String(pair[0][0]) === 'Накладные расходы') return;
         const sect = sectOf(pair[0][0]);
         if (!sect) { entries.push({ name: String(pair[0][0]), pair }); return; }
         if (!sectMap.has(sect)) {
