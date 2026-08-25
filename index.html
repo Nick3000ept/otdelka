@@ -390,6 +390,11 @@
   table.check.budget th.h-lk { background: #eaf6ec; }
   table.check.budget th.h-kp { background: #fdf4e5; }
   table.check.budget th.h-base { background: #f3eefa; }  /* «Базовый бюджет» (25.08.2026) */
+  /* Блок «Переделки» справа (25.08.2026): общая шапка + свой тон, как «Модель факт» */
+  table.check.budget th.redohead {
+    text-align: center; border-bottom: 1px solid var(--border); background: #fdf0ee;
+  }
+  table.check.budget thead tr.sub th.h-redo { background: #fdf0ee; }
   table.check.budget td:first-child { white-space: nowrap; }
   table.check.budget tfoot td {
     font-weight: 700; background: var(--panel2);
@@ -1765,11 +1770,13 @@ function renderBudget() {
   // ряда — колонки факта под «Модель», остальные с rowspan=2. Ширина «Модели» —
   // inline (table-layout: fixed берёт ширины только из первого ряда шапки).
   const factCols = (hasFactSplit ? 2 : 0) + (hasFact ? 1 : 0);
-  const thSpan = factCols ? ' rowspan="2"' : '';
+  // Блок «Переделки» (просьба 25.08.2026): коэф. переделки и сумма переделок
+  // вынесены в правый край таблицы под общую шапку — второй ряд шапки теперь
+  // есть всегда, поэтому rowspan=2 у остальных колонок безусловный.
+  const redoCols = 1 + (hasRedo ? 1 : 0);
+  const thSpan = ' rowspan="2"';
   const table = '<table class="check budget"><thead><tr>' +
     '<th' + thSpan + '>Статья бюджета</th><th class="num"' + thSpan + '>Объем</th>' +
-    '<th class="num"' + thSpan + '>Коэф. перед.</th>' +
-    (hasRedo ? '<th class="num"' + thSpan + '>Сумма переделок, руб</th>' : '') +
     (hasSplit ? '<th class="num"' + thSpan + '>Работы, руб</th>' +
       '<th class="num"' + thSpan + '>Материалы, руб</th>' : '') +
     '<th class="num"' + thSpan + '>Стоимость, руб</th>' +
@@ -1779,12 +1786,14 @@ function renderBudget() {
     (factCols ? '<th class="modelhead bsep" colspan="' + factCols + '" style="width:' +
       (110 * factCols) + 'px">Модель факт</th>' : '') +
     (hasLk ? '<th class="num h-lk bsep"' + thSpan + '>Выполнено (ЛК), руб</th>' : '') +
-    (hasKp ? '<th class="num h-kp bsep"' + thSpan + '>Закрытие у заказчика, руб</th>' : '') + '</tr>' +
-    (factCols
-      ? '<tr class="sub">' +
-        (hasFactSplit ? '<th class="num bsep">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
-        (hasFact ? '<th class="num' + (hasFactSplit ? '' : ' bsep') + '">Итого, руб</th>' : '') + '</tr>'
-      : '') +
+    (hasKp ? '<th class="num h-kp bsep"' + thSpan + '>Закрытие у заказчика, руб</th>' : '') +
+    '<th class="redohead bsep" colspan="' + redoCols + '" style="width:' +
+      (110 * redoCols) + 'px">Переделки</th>' + '</tr>' +
+    '<tr class="sub">' +
+      (hasFactSplit ? '<th class="num bsep">Работы, руб</th><th class="num">Материалы, руб</th>' : '') +
+      (hasFact ? '<th class="num' + (hasFactSplit ? '' : ' bsep') + '">Итого, руб</th>' : '') +
+      '<th class="num h-redo bsep">Коэф. перед.</th>' +
+      (hasRedo ? '<th class="num h-redo">Сумма, руб</th>' : '') + '</tr>' +
     '</thead><tbody>' +
     order.map(pair => {
       const r = pair[0], i = pair[1];
@@ -1811,11 +1820,12 @@ function renderBudget() {
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
-        '<td class="num"></td><td class="num"></td>' + redoTd(rSumR) + splitTd(rSum, rSumW) +
+        '<td class="num"></td>' + splitTd(rSum, rSumW) +
         '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td>' + baseTd(rSumB) +
         factSplitTd(rSumFW, rSumFM) + factTd(rSumF) +
         lkTd(lkByItem[norm(String(r[0]))] || 0) +
-        kpTd(kpByItem[norm(String(r[0]))] || 0) + '</tr>';
+        kpTd(kpByItem[norm(String(r[0]))] || 0) +
+        '<td class="num bsep"></td>' + redoTd(rSumR) + '</tr>';
       if (open) {
         // Работы сгруппированы по «Группа работ» из поэтажки (просьба 05.08.2026),
         // группы сортируются по сумме. Клик по работе — выпадающая сводная
@@ -1845,10 +1855,11 @@ function renderBudget() {
             '</span> ') + escapeHtml(String(w[0])) + '</td>' +
             '<td class="num">' +
             (vol ? escapeHtml(fmtVol(vol) + (unit ? ' ' + unit : '')) : '') + '</td>' +
-            '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
-            redoTd(sumsR[wi]) + splitTd(sums[wi], sumsW[wi]) +
+            splitTd(sums[wi], sumsW[wi]) +
             '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td>' + baseTd(sumsB[wi]) +
-            factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + lkTd(0) + kpTd(0) + '</tr>';
+            factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + lkTd(0) + kpTd(0) +
+            '<td class="num bsep">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
+            redoTd(sumsR[wi]) + '</tr>';
           if (wOpen) {
             const ssOnly = cellsW.length > 0 && cellsW.every(c => String(c[1]) === 'СС');
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
@@ -1886,18 +1897,20 @@ function renderBudget() {
           let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
-            '<td class="num"></td><td class="num"></td>' + redoTd(g.totalR) + splitTd(g.total, g.totalW) +
+            '<td class="num"></td>' + splitTd(g.total, g.totalW) +
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td>' + baseTd(g.totalB) +
-            factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + lkTd(0) + kpTd(0) + '</tr>';
+            factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + lkTd(0) + kpTd(0) +
+            '<td class="num bsep"></td>' + redoTd(g.totalR) + '</tr>';
           if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
           return h;
         }).join('');
       }
       return html;
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
-    '<td class="num"></td><td class="num"></td>' + redoTd(totalR) + splitTd(total, totalW) +
+    '<td class="num"></td>' + splitTd(total, totalW) +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td>' + baseTd(totalB) +
     factSplitTd(totalFW, totalFM) + factTd(totalF) + lkTd(totalLk) + kpTd(totalKp) +
+    '<td class="num bsep"></td>' + redoTd(totalR) +
     '</tr></tfoot></table>';
   el.innerHTML = head + filterHtml + table;
   alignBudgetHead();
