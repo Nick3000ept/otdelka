@@ -75,7 +75,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v20';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v21';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1176,17 +1176,20 @@ function readPark_(ss) {
     var all = idx[CONFIG.PARK_COST_ALL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_ALL]]) : 0;
     var grp = idx[CONFIG.PARK_SECTION] !== undefined
       ? String(row[idx[CONFIG.PARK_SECTION]]).trim() : '';
-    // Группа бюджета = только «Раздел» (тип помещения: автостоянка, кладовые
-    // и т.д.) — подразделы Полы/Стены/Потолок из названий групп убраны
-    // (просьба 25.08.2026, отмена разбивки от 24.08). Одинаковые работы из
-    // разных подразделов при этом складываются в одну строку раздела.
+    // Группа бюджета = «Раздел» (тип помещения: автостоянка, кладовые и т.д.,
+    // просьба 25.08.2026); поверхность (колонка «Группа работ»: Полы/Стены/
+    // Потолок…) — отдельным ВЛОЖЕННЫМ уровнем внутри группы: уходит в w[4],
+    // подгруппы рисует фронт (просьба 25.08.2026, вторая итерация).
+    var grp2 = idx[CONFIG.PARK_GROUP] !== undefined
+      ? String(row[idx[CONFIG.PARK_GROUP]]).trim() : '';
     if (!map[item]) map[item] = { total: 0, works: {} };
     map[item].total += dog;
     var w = map[item].works;
     // Ключ — раздел+работа: одинаковые названия работ в разных разделах
     // не должны сливаться (иначе суммы разделов смещаются).
     var wKey = grp + '' + work;
-    if (!w[wKey]) w[wKey] = { name: work, total: 0, vol: 0, w: 0, grp: grp };
+    wKey += String.fromCharCode(1) + grp2;   // + поверхность: работы разных поверхностей не сливать
+    if (!w[wKey]) w[wKey] = { name: work, total: 0, vol: 0, w: 0, grp: grp, srf: grp2 };
     w[wKey].total += dog;
     w[wKey].vol += vol;
     if (all > 0) w[wKey].w += dog * (smr / all);   // договорная часть работ
@@ -1218,7 +1221,7 @@ function readPark_(ss) {
         var w = map[item].works[wKey];
         var cell = ['— без подрядчика —', 'Паркинг', Math.round(w.total),
                     Math.round(w.vol * 100) / 100, 0, Math.round(w.w), 0, 0, 0];
-        return [w.name, Math.round(w.total), [cell], w.grp || '— без группы —'];
+        return [w.name, Math.round(w.total), [cell], w.grp || '— без группы —', w.srf || ''];
       })
       .sort(function (a, b) { return b[1] - a[1]; });
     return [item, Math.round(map[item].total), works];

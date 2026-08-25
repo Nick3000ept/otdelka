@@ -418,8 +418,12 @@
   table.check.budget tr.bgrp:hover td { background: #e8ebf0; }
   table.check.budget tr.bgrp td:first-child { padding-left: 24px; }
   table.check.budget tr.bgrp .chev { color: var(--accent); }
+  /* Подгруппа-поверхность паркинга (25.08.2026) и работы под ней — глубже на шаг */
+  table.check.budget tr.bsub td:first-child { padding-left: 36px; }
+  table.check.budget tr.bsub td { font-weight: 500; }
   table.check.budget tr.bwork td { color: var(--text); font-size: 12px; }
   table.check.budget tr.bwork td:first-child { padding-left: 44px; white-space: normal; }
+  table.check.budget tr.bwork.bindent td:first-child { padding-left: 58px; }
   /* Объём и коэффициент переделки — приглушённой припиской у названия работы. */
   .bw-info { color: var(--text-dim); font-size: 11px; font-weight: 400; white-space: nowrap; }
   table.check.budget tr.bwork { cursor: pointer; }
@@ -735,6 +739,7 @@ const state = {
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetGrpCollapsed: new Set(), // свёрнутые группы работ внутри статей бюджета
+  budgetSubCollapsed: new Set(), // свёрнутые подгруппы-поверхности паркинга (25.08.2026)
   budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
   budgetContrOpen: false,      // открыт ли выпадающий список выбора подрядчиков
   budgetQuery: '',             // фильтр «Бюджета» по названию работы (18.08.2026)
@@ -1831,7 +1836,7 @@ function renderBudget() {
         // группы сортируются по сумме. Клик по работе — выпадающая сводная
         // «подрядчики × корпуса» под строкой; объём и коэффициент переделки —
         // в строке работы, не в сводной (просьба 05.08.2026).
-        const workRowHtml = (w, wi) => {
+        const workRowHtml = (w, wi, sub) => {
           const key = i + '|' + wi;
           // Работы паркинга не раскрываются — корпусной разбивки у них нет
           // (просьба 24.08.2026); работы СС Шамова раскрываются в свою сводную.
@@ -1850,7 +1855,7 @@ function renderBudget() {
           const wr = state.works.find(r => norm(r[WORK_KEY]) === norm(String(w[0])));
           const unit = String((wr && wr[UNIT_COL]) || '').trim();
           let h = '<tr class="bwork' + (wOpen ? ' open' : '') + (flat ? ' bflat' : '') +
-            '" data-bi="' + i + '" data-wi="' + wi + '">' +
+            (sub ? ' bindent' : '') + '" data-bi="' + i + '" data-wi="' + wi + '">' +
             '<td>' + (flat ? '' : '<span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') +
             '</span> ') + escapeHtml(String(w[0])) + '</td>' +
             '<td class="num">' +
@@ -1901,7 +1906,46 @@ function renderBudget() {
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td>' + baseTd(g.totalB) +
             factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + lkTd(0) + kpTd(0) +
             '<td class="num bsep"></td>' + redoTd(g.totalR) + '</tr>';
-          if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
+          if (gOpen) {
+            // Подгруппы-поверхности (паркинг, 25.08.2026): у работ паркинга
+            // бэкенд отдаёт поверхность в w[4] (Полы/Стены/Потолок…) — работы
+            // группируются вложенным уровнем. У остальных статей w[4] нет —
+            // рисуются как раньше, плоским списком.
+            const hasSub = g.items.some(p => String(p[0][4] || ''));
+            if (!hasSub) {
+              h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
+            } else {
+              const subs = [];
+              const byS = new Map();
+              g.items.forEach(p => {
+                const s = String(p[0][4] || '— прочее —');
+                if (!byS.has(s)) {
+                  const o = { name: s, items: [] };
+                  byS.set(s, o);
+                  subs.push(o);
+                }
+                byS.get(s).items.push(p);
+              });
+              const subTot = (o, arr) => o.items.reduce((a, p) => a + arr[p[1]], 0);
+              subs.sort((a, b) => subTot(b, sums) - subTot(a, sums));
+              h += subs.map(sg => {
+                const sKey = i + '|' + g.name + '|' + sg.name;
+                const sOpen = q ? true : !state.budgetSubCollapsed.has(sKey);
+                let sh = '<tr class="bgrp bsub" data-bi="' + i + '" data-grp="' +
+                  escapeHtml(g.name) + '" data-sub="' + escapeHtml(sg.name) +
+                  '"><td><span class="chev">' + (sOpen ? '&#9662;' : '&#9656;') + '</span> ' +
+                  escapeHtml(sg.name) + ' <span class="cnt">' + sg.items.length + '</span></td>' +
+                  '<td class="num"></td>' + splitTd(subTot(sg, sums), subTot(sg, sumsW)) +
+                  '<td class="num">' + escapeHtml(fmtInt(subTot(sg, sums))) + '</td>' +
+                  baseTd(subTot(sg, sumsB)) +
+                  factSplitTd(subTot(sg, sumsFW), subTot(sg, sumsFM)) +
+                  factTd(subTot(sg, sumsF)) + lkTd(0) + kpTd(0) +
+                  '<td class="num bsep"></td>' + redoTd(subTot(sg, sumsR)) + '</tr>';
+                if (sOpen) sh += sg.items.map(p => workRowHtml(p[0], p[1], true)).join('');
+                return sh;
+              }).join('');
+            }
+          }
           return h;
         }).join('');
       }
@@ -2259,6 +2303,16 @@ document.getElementById('budget-screen').addEventListener('click', e => {
     const det = e.target.closest('tr.bdetail');
     if (det) openBudgetCellModal(+det.dataset.bi, +det.dataset.wi,
       bc.dataset.contr, bc.dataset.corp);
+    return;
+  }
+  const bs = e.target.closest('tr.bsub');
+  if (bs) {
+    // Подгруппа-поверхность паркинга (25.08.2026) — проверять ДО bgrp:
+    // у строки оба класса.
+    const key = bs.dataset.bi + '|' + bs.dataset.grp + '|' + bs.dataset.sub;
+    if (state.budgetSubCollapsed.has(key)) state.budgetSubCollapsed.delete(key);
+    else state.budgetSubCollapsed.add(key);
+    renderBudget();
     return;
   }
   const bg = e.target.closest('tr.bgrp');
