@@ -738,8 +738,8 @@ const state = {
   budgetStatus: 'idle',        // idle | loading | ready | error
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
-  budgetGrpCollapsed: new Set(), // свёрнутые группы работ внутри статей бюджета
-  budgetSubCollapsed: new Set(), // свёрнутые подгруппы-поверхности паркинга (25.08.2026)
+  budgetGrpOpen: new Set(),      // РАСКРЫТЫЕ группы работ внутри статей (по умолчанию всё свернуто, 25.08.2026)
+  budgetSubOpen: new Set(),      // РАСКРЫТЫЕ подгруппы-поверхности паркинга (25.08.2026)
   budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
   budgetContrOpen: false,      // открыт ли выпадающий список выбора подрядчиков
   budgetQuery: '',             // фильтр «Бюджета» по названию работы (18.08.2026)
@@ -1763,7 +1763,7 @@ function renderBudget() {
   // Объём и коэффициент переделки — столбцами рядом со стоимостью (просьба 05.08.2026),
   // значения заполняются на уровне работ.
   // Статьи — по алфавиту (просьба 05.08.2026); индекс i остаётся исходным из state.budget,
-  // на него завязаны ключи раскрытий budgetWorkOpen/budgetGrpCollapsed.
+  // на него завязаны ключи раскрытий budgetWorkOpen/budgetGrpOpen/budgetSubOpen.
   // «Накладные расходы» — всегда в самом низу списка статей (просьба 25.08.2026).
   const isBottomItem = pair => String(pair[0][0]) === 'Накладные расходы';
   const order = rows.map((r, i) => [r, i])
@@ -1898,7 +1898,9 @@ function renderBudget() {
         grps.sort((a, b) => b.total - a.total);
         html += grps.map(g => {
           const gKey = i + '|' + g.name;
-          const gOpen = q ? true : !state.budgetGrpCollapsed.has(gKey);
+          // Базовый экран (просьба 25.08.2026): при раскрытии статьи группы
+          // СВЕРНУТЫ, работы видны только после клика; поиск раскрывает сам.
+          const gOpen = q ? true : state.budgetGrpOpen.has(gKey);
           let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
@@ -1930,7 +1932,7 @@ function renderBudget() {
               subs.sort((a, b) => subTot(b, sums) - subTot(a, sums));
               h += subs.map(sg => {
                 const sKey = i + '|' + g.name + '|' + sg.name;
-                const sOpen = q ? true : !state.budgetSubCollapsed.has(sKey);
+                const sOpen = q ? true : state.budgetSubOpen.has(sKey);
                 let sh = '<tr class="bgrp bsub" data-bi="' + i + '" data-grp="' +
                   escapeHtml(g.name) + '" data-sub="' + escapeHtml(sg.name) +
                   '"><td><span class="chev">' + (sOpen ? '&#9662;' : '&#9656;') + '</span> ' +
@@ -2310,16 +2312,16 @@ document.getElementById('budget-screen').addEventListener('click', e => {
     // Подгруппа-поверхность паркинга (25.08.2026) — проверять ДО bgrp:
     // у строки оба класса.
     const key = bs.dataset.bi + '|' + bs.dataset.grp + '|' + bs.dataset.sub;
-    if (state.budgetSubCollapsed.has(key)) state.budgetSubCollapsed.delete(key);
-    else state.budgetSubCollapsed.add(key);
+    if (state.budgetSubOpen.has(key)) state.budgetSubOpen.delete(key);
+    else state.budgetSubOpen.add(key);
     renderBudget();
     return;
   }
   const bg = e.target.closest('tr.bgrp');
   if (bg) {
     const key = bg.dataset.bi + '|' + bg.dataset.grp;
-    if (state.budgetGrpCollapsed.has(key)) state.budgetGrpCollapsed.delete(key);
-    else state.budgetGrpCollapsed.add(key);
+    if (state.budgetGrpOpen.has(key)) state.budgetGrpOpen.delete(key);
+    else state.budgetGrpOpen.add(key);
     renderBudget();
     return;
   }
