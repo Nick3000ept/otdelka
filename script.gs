@@ -75,7 +75,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v18';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v19';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1176,11 +1176,10 @@ function readPark_(ss) {
     var all = idx[CONFIG.PARK_COST_ALL] !== undefined ? parkNum_(row[idx[CONFIG.PARK_COST_ALL]]) : 0;
     var grp = idx[CONFIG.PARK_SECTION] !== undefined
       ? String(row[idx[CONFIG.PARK_SECTION]]).trim() : '';
-    // Разбивка раздела на подразделы Полы/Стены/Потолок… (просьба 24.08.2026):
-    // группа бюджета = «Раздел · Подраздел».
-    var grp2 = idx[CONFIG.PARK_GROUP] !== undefined
-      ? String(row[idx[CONFIG.PARK_GROUP]]).trim() : '';
-    if (grp2) grp = grp + ' · ' + grp2;
+    // Группа бюджета = только «Раздел» (тип помещения: автостоянка, кладовые
+    // и т.д.) — подразделы Полы/Стены/Потолок из названий групп убраны
+    // (просьба 25.08.2026, отмена разбивки от 24.08). Одинаковые работы из
+    // разных подразделов при этом складываются в одну строку раздела.
     if (!map[item]) map[item] = { total: 0, works: {} };
     map[item].total += dog;
     var w = map[item].works;
