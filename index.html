@@ -1638,6 +1638,19 @@ function renderBudget() {
     : '';
   const totalW = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
     a + (wMatch(w) ? wSumW(w) : 0), 0), 0);
+  // «Сумма переделок» (просьба 25.08.2026): стоимость с коэффициентом переделки
+  // минус «Стоимость без коэф» (кол. AI поэтажки), считает бэкенд в cell[14]
+  // (9..13 заняты спец-сводной СС Шамова). Колонка рядом с «Коэф. перед.»,
+  // оба фильтра действуют; старый кэш без cell[14] — колонки нет (hasRedo).
+  const hasRedo = rows.some(r => (r[2] || []).some(w =>
+    (w[2] || []).some(cell => cell.length > 14)));
+  const wSumR = w => (w[2] || []).reduce((acc, cell) =>
+    acc + (cellOk(cell) ? (cell[14] || 0) : 0), 0);
+  const redoTd = v => hasRedo
+    ? '<td class="num">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
+    : '';
+  const totalR = rows.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
+    a + (wMatch(w) ? wSumR(w) : 0), 0), 0);
   // Факт выполненных работ «К оплате» (кол. AA поэтажки, просьба 21.08.2026):
   // колонка «Факт, руб» справа от стоимости, суммы с учётом обоих фильтров.
   // Старый кэш без cell[6] — колонки просто нет (hasFact, как hasSplit).
@@ -1741,8 +1754,13 @@ function renderBudget() {
   // значения заполняются на уровне работ.
   // Статьи — по алфавиту (просьба 05.08.2026); индекс i остаётся исходным из state.budget,
   // на него завязаны ключи раскрытий budgetWorkOpen/budgetGrpCollapsed.
+  // «Накладные расходы» — всегда в самом низу списка статей (просьба 25.08.2026).
+  const isBottomItem = pair => String(pair[0][0]) === 'Накладные расходы';
   const order = rows.map((r, i) => [r, i])
-    .sort((a, b) => String(a[0][0]).localeCompare(String(b[0][0]), 'ru'));
+    .sort((a, b) => {
+      if (isBottomItem(a) !== isBottomItem(b)) return isBottomItem(a) ? 1 : -1;
+      return String(a[0][0]).localeCompare(String(b[0][0]), 'ru');
+    });
   // Блок факта объединён общей шапкой «Модель» (просьба 21.08.2026): шапка в два
   // ряда — колонки факта под «Модель», остальные с rowspan=2. Ширина «Модели» —
   // inline (table-layout: fixed берёт ширины только из первого ряда шапки).
@@ -1751,6 +1769,7 @@ function renderBudget() {
   const table = '<table class="check budget"><thead><tr>' +
     '<th' + thSpan + '>Статья бюджета</th><th class="num"' + thSpan + '>Объем</th>' +
     '<th class="num"' + thSpan + '>Коэф. перед.</th>' +
+    (hasRedo ? '<th class="num"' + thSpan + '>Сумма переделок, руб</th>' : '') +
     (hasSplit ? '<th class="num"' + thSpan + '>Работы, руб</th>' +
       '<th class="num"' + thSpan + '>Материалы, руб</th>' : '') +
     '<th class="num"' + thSpan + '>Стоимость, руб</th>' +
@@ -1774,12 +1793,14 @@ function renderBudget() {
       // Работы, не прошедшие фильтр по названию, дают 0 и скрываются ниже.
       const sums = works.map(w => wMatch(w) ? wSum(w) : 0);
       const sumsB = works.map(w => wMatch(w) ? wSumB(w) : 0);
+      const sumsR = works.map(w => wMatch(w) ? wSumR(w) : 0);
       const sumsW = works.map(w => wMatch(w) ? wSumW(w) : 0);
       const sumsF = works.map(w => wMatch(w) ? wSumF(w) : 0);
       const sumsFW = works.map(w => wMatch(w) ? wSumFW(w) : 0);
       const sumsFM = works.map(w => wMatch(w) ? wSumFM(w) : 0);
       const rSum = (active || q) ? sums.reduce((acc, v) => acc + v, 0) : r[1];
       const rSumB = sumsB.reduce((acc, v) => acc + v, 0);
+      const rSumR = sumsR.reduce((acc, v) => acc + v, 0);
       const rSumW = sumsW.reduce((acc, v) => acc + v, 0);
       const rSumF = sumsF.reduce((acc, v) => acc + v, 0);
       const rSumFW = sumsFW.reduce((acc, v) => acc + v, 0);
@@ -1790,7 +1811,7 @@ function renderBudget() {
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
-        '<td class="num"></td><td class="num"></td>' + splitTd(rSum, rSumW) +
+        '<td class="num"></td><td class="num"></td>' + redoTd(rSumR) + splitTd(rSum, rSumW) +
         '<td class="num">' + escapeHtml(fmtInt(rSum)) + '</td>' + baseTd(rSumB) +
         factSplitTd(rSumFW, rSumFM) + factTd(rSumF) +
         lkTd(lkByItem[norm(String(r[0]))] || 0) +
@@ -1805,7 +1826,10 @@ function renderBudget() {
           // Работы паркинга не раскрываются — корпусной разбивки у них нет
           // (просьба 24.08.2026); работы СС Шамова раскрываются в свою сводную.
           const cellsW = w[2] || [];
-          const flat = cellsW.length > 0 && cellsW.every(c => String(c[1]) === 'Паркинг');
+          // 'НР' — строки-подрядчики статьи «Накладные расходы» (25.08.2026),
+          // тоже без корпусной разбивки — не раскрываются.
+          const flat = cellsW.length > 0 && cellsW.every(c =>
+            String(c[1]) === 'Паркинг' || String(c[1]) === 'НР');
           const wOpen = !flat && state.budgetWorkOpen.has(key);
           let vol = 0, redo = 0;
           cellsW.forEach(cell => {
@@ -1822,14 +1846,14 @@ function renderBudget() {
             '<td class="num">' +
             (vol ? escapeHtml(fmtVol(vol) + (unit ? ' ' + unit : '')) : '') + '</td>' +
             '<td class="num">' + (redo ? escapeHtml(fmtCell(redo)) : '') + '</td>' +
-            splitTd(sums[wi], sumsW[wi]) +
+            redoTd(sumsR[wi]) + splitTd(sums[wi], sumsW[wi]) +
             '<td class="num">' + escapeHtml(fmtInt(sums[wi])) + '</td>' + baseTd(sumsB[wi]) +
             factSplitTd(sumsFW[wi], sumsFM[wi]) + factTd(sumsF[wi]) + lkTd(0) + kpTd(0) + '</tr>';
           if (wOpen) {
             const ssOnly = cellsW.length > 0 && cellsW.every(c => String(c[1]) === 'СС');
             h += '<tr class="bdetail" data-bi="' + i + '" data-wi="' + wi +
-              '"><td colspan="' + (4 + (hasSplit ? 2 : 0) + (hasBase ? 1 : 0) +
-              (hasFactSplit ? 2 : 0) +
+              '"><td colspan="' + (4 + (hasRedo ? 1 : 0) + (hasSplit ? 2 : 0) +
+              (hasBase ? 1 : 0) + (hasFactSplit ? 2 : 0) +
               (hasFact ? 1 : 0) + (hasLk ? 1 : 0) + (hasKp ? 1 : 0)) + '">' +
               (ssOnly ? budgetSSHtml(w) : budgetWorkHtml(w)) + '</td></tr>';
           }
@@ -1841,13 +1865,14 @@ function renderBudget() {
           if ((active || q) && !sums[wi]) return;   // не прошла фильтры — скрываем
           const g = String(w[3] || '— без группы —');
           if (!byG.has(g)) {
-            const o = { name: g, total: 0, totalB: 0, totalW: 0, totalF: 0, totalFW: 0, totalFM: 0, items: [] };
+            const o = { name: g, total: 0, totalB: 0, totalR: 0, totalW: 0, totalF: 0, totalFW: 0, totalFM: 0, items: [] };
             byG.set(g, o);
             grps.push(o);
           }
           const o = byG.get(g);
           o.total += sums[wi];
           o.totalB += sumsB[wi];
+          o.totalR += sumsR[wi];
           o.totalW += sumsW[wi];
           o.totalF += sumsF[wi];
           o.totalFW += sumsFW[wi];
@@ -1861,7 +1886,7 @@ function renderBudget() {
           let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
-            '<td class="num"></td><td class="num"></td>' + splitTd(g.total, g.totalW) +
+            '<td class="num"></td><td class="num"></td>' + redoTd(g.totalR) + splitTd(g.total, g.totalW) +
             '<td class="num">' + escapeHtml(fmtInt(g.total)) + '</td>' + baseTd(g.totalB) +
             factSplitTd(g.totalFW, g.totalFM) + factTd(g.totalF) + lkTd(0) + kpTd(0) + '</tr>';
           if (gOpen) h += g.items.map(p => workRowHtml(p[0], p[1])).join('');
@@ -1870,7 +1895,7 @@ function renderBudget() {
       }
       return html;
     }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
-    '<td class="num"></td><td class="num"></td>' + splitTd(total, totalW) +
+    '<td class="num"></td><td class="num"></td>' + redoTd(totalR) + splitTd(total, totalW) +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td>' + baseTd(totalB) +
     factSplitTd(totalFW, totalFM) + factTd(totalF) + lkTd(totalLk) + kpTd(totalKp) +
     '</tr></tfoot></table>';

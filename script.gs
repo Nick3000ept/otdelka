@@ -31,6 +31,8 @@ var CONFIG = {
   FLOOR_BUDGET_FLAG: 'Признак для бюджета основной',             // кол. L — статья бюджета
   FLOOR_BUDGET_COST: 'Стоимость материалы + работа для бюджета', // кол. AG — что суммируем
   FLOOR_COST_WORK: 'Стоимость работ итого для бюджета',          // кол. AE — работы отдельно (18.08.2026)
+  FLOOR_OVERHEAD: 'Накладные расходы',                           // кол. AH — статья «Накладные расходы» (25.08.2026)
+  FLOOR_COST_NOCOEF: 'Стоимость без коэф',                       // кол. AI — для «Суммы переделок» = AG − AI (25.08.2026)
   FLOOR_FACT_PAID: 'К оплате',                                   // кол. AA — факт выполненных работ (21.08.2026)
 
   // Лист «Личные_кабинеты» (21.08.2026): МОЛ × статья бюджета -> выполнено итого.
@@ -73,7 +75,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v17';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов); чанкованный
+var CACHE_BUDGET = 'budget_v18';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, СС Шамов, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -726,7 +728,8 @@ function doGet(e) {
       var ssB = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
       var payloadB = JSON.stringify({ ok: true,
                                       budget: buildBudget_(ssB).concat(readPark_(ssB))
-                                                               .concat(readShamov_(ssB)),
+                                                               .concat(readShamov_(ssB))
+                                                               .concat(readOverhead_(ssB)),
                                       lk: readLk_(ssB), kp: readKp_(ssB),
                                       base: readBaseSums_() });
       cachePutBig_(cacheB, CACHE_BUDGET, payloadB, 21600);
@@ -1053,6 +1056,49 @@ function readKp_(ss) {
 }
 
 /**
+ * Накладные расходы (25.08.2026): суммы кол. AH поэтажки в разрезе
+ * «Подрядчик сводный» (кол. S) -> статья «Накладные расходы» в формате
+ * buildBudget_, подмешивается в ответ budget последней. «Работы» статьи —
+ * подрядчики; строки не раскрываются (корпус ячейки 'НР' — фронт показывает
+ * их плоскими, как Паркинг); сумма кладётся и в cell[5] «Работы, руб», как у
+ * СС Шамова. Фронт держит статью в самом низу таблицы (просьба 25.08.2026).
+ */
+function readOverhead_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_FLOORS);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var head = sh.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idx = {};
+  head.forEach(function (h, i) { idx[String(h).trim()] = i + 1; });
+  if (!idx[CONFIG.FLOOR_OVERHEAD] || !idx[CONFIG.FLOOR_CONTRACTOR]) return [];
+  var n = lastRow - 1;
+  var ov = sh.getRange(2, idx[CONFIG.FLOOR_OVERHEAD], n, 1).getValues();
+  var contr = sh.getRange(2, idx[CONFIG.FLOOR_CONTRACTOR], n, 1).getValues();
+  var acc = {};
+  var total = 0;
+  for (var k = 0; k < n; k++) {
+    var v = typeof ov[k][0] === 'number' ? ov[k][0] : 0;
+    if (!v) continue;
+    var p = String(contr[k][0]).trim() || '— без подрядчика —';
+    acc[p] = (acc[p] || 0) + v;
+    total += v;
+  }
+  var works = Object.keys(acc)
+    .map(function (p) {
+      var s = Math.round(acc[p]);
+      // Название строки — как в шапке фильтра («Не определен»), ключ ячейки —
+      // как в остальных данных, чтобы фильтр по подрядчикам работал.
+      var label = p === '— без подрядчика —' ? 'Не определен' : p;
+      return [label, s, [[p, 'НР', s, 0, 0, s, 0, 0, 0]], 'Подрядчики'];
+    })
+    .sort(function (a, b) { return b[1] - a[1]; });
+  if (!works.length) return [];
+  return [['Накладные расходы', Math.round(total), works]];
+}
+
+/**
  * Суммы зафиксированного базового расчёта для колонки «Базовый бюджет» на
  * «Бюджете» (25.08.2026): слепок базы (otdelka_baseline.json, разрез
  * работа|корпус|этаж) сворачивается в { date, works: [[работа, подрядчик,
@@ -1299,6 +1345,9 @@ function buildBudget_(ss) {
   var zc = idx[CONFIG.FLOOR_CLOSE] ? sh.getRange(2, idx[CONFIG.FLOOR_CLOSE], n, 1).getValues() : null;
   var rb = idx[CONFIG.FLOOR_RATE] ? sh.getRange(2, idx[CONFIG.FLOOR_RATE], n, 1).getValues() : null;
   var rm = idx[CONFIG.FLOOR_RATE_MAT] ? sh.getRange(2, idx[CONFIG.FLOOR_RATE_MAT], n, 1).getValues() : null;
+  // Сумма переделок (25.08.2026): стоимость с коэффициентом (AG) минус
+  // «Стоимость без коэф» (AI) — выбор пользователя 25.08 из двух трактовок.
+  var nc = idx[CONFIG.FLOOR_COST_NOCOEF] ? sh.getRange(2, idx[CONFIG.FLOOR_COST_NOCOEF], n, 1).getValues() : null;
 
   var map = {};
   for (var k = 0; k < n; k++) {
@@ -1320,12 +1369,13 @@ function buildBudget_(ss) {
       if (gName) w[work].grp = gName;
     }
     var cellKey = p + '' + c;
-    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0, f: 0, fw: 0, fm: 0 };
+    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0, f: 0, fw: 0, fm: 0, rd: 0 };
     var cellObj = w[work].cells[cellKey];
     cellObj.c += v;                       // стоимость (кол. AG)
     cellObj.v += vv;                      // объём (кол. D)
     if (!cellObj.r && rr) cellObj.r = rr; // коэф. переделки — первое непустое
     if (cw && typeof cw[k][0] === 'number') cellObj.w += cw[k][0]; // работы (кол. AE)
+    if (nc && typeof nc[k][0] === 'number') cellObj.rd += v - nc[k][0]; // переделки = AG − AI
     if (fp && typeof fp[k][0] === 'number') cellObj.f += fp[k][0]; // факт «К оплате» (кол. AA)
     var z = (zc && typeof zc[k][0] === 'number') ? zc[k][0] : 0;   // объём к закрытию (кол. Z)
     if (z) {
@@ -1341,10 +1391,13 @@ function buildBudget_(ss) {
           var cells = Object.keys(w.cells).map(function (key) {
             var parts = key.split('');
             var cell = w.cells[key];
+            // Индексы 9..13 заняты спец-сводной СС Шамова (readShamov_) —
+            // сумма переделок идёт в cell[14], чтобы не пересечься.
             return [parts[0], parts[1], Math.round(cell.c),
                     Math.round(cell.v * 100) / 100, cell.r, Math.round(cell.w),
                     Math.round(cell.f || 0), Math.round(cell.fw || 0),
-                    Math.round(cell.fm || 0)];
+                    Math.round(cell.fm || 0), 0, 0, 0, 0, 0,
+                    Math.round(cell.rd || 0)];
           });
           return [wName, Math.round(w.total), cells, w.grp || '— без группы —'];
         })
