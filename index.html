@@ -418,6 +418,11 @@
   table.check.budget tr.bgrp:hover td { background: #e8ebf0; }
   table.check.budget tr.bgrp td:first-child { padding-left: 24px; }
   table.check.budget tr.bgrp .chev { color: var(--accent); }
+  /* Секции статей «Квартиры»/«МОП» (25.08.2026) — самый верхний уровень */
+  table.check.budget tr.bsect { cursor: pointer; }
+  table.check.budget tr.bsect td { font-weight: 700; background: #dde4ed; }
+  table.check.budget tr.bsect:hover td { background: #d1dae6; }
+  table.check.budget tr.bsect .chev { color: var(--accent); }
   /* Подгруппа-поверхность паркинга (25.08.2026) и работы под ней — глубже на шаг */
   table.check.budget tr.bsub td:first-child { padding-left: 36px; }
   table.check.budget tr.bsub td { font-weight: 500; }
@@ -738,6 +743,7 @@ const state = {
   budgetStatus: 'idle',        // idle | loading | ready | error
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
+  budgetSectOpen: new Set(),     // РАСКРЫТЫЕ секции статей «Квартиры»/«МОП» (25.08.2026)
   budgetGrpOpen: new Set(),      // РАСКРЫТЫЕ группы работ внутри статей (по умолчанию всё свернуто, 25.08.2026)
   budgetSubOpen: new Set(),      // РАСКРЫТЫЕ подгруппы-поверхности паркинга (25.08.2026)
   budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
@@ -1800,7 +1806,8 @@ function renderBudget() {
       '<th class="num h-redo bsep">Коэф. перед.</th>' +
       (hasRedo ? '<th class="num h-redo">Сумма, руб</th>' : '') + '</tr>' +
     '</thead><tbody>' +
-    order.map(pair => {
+    (() => {
+      const renderItem = (pair) => {
       const r = pair[0], i = pair[1];
       const works = r[2] || [];
       // Суммы работ считаем по исходным индексам wi — на них завязаны ключи раскрытий.
@@ -1819,7 +1826,7 @@ function renderBudget() {
       const rSumF = sumsF.reduce((acc, v) => acc + v, 0);
       const rSumFW = sumsFW.reduce((acc, v) => acc + v, 0);
       const rSumFM = sumsFM.reduce((acc, v) => acc + v, 0);
-      if ((active || q) && !rSum) return '';   // по фильтрам в статье пусто
+      if ((active || q) && !rSum) return null;   // по фильтрам в статье пусто
       // При активном фильтре по работе статьи раскрыты сами (как поиск в «Расценках»).
       const open = q ? true : state.budgetOpen.has(String(r[0]));
       let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
@@ -1953,8 +1960,60 @@ function renderBudget() {
           return h;
         }).join('');
       }
-      return html;
-    }).join('') + '</tbody><tfoot><tr><td>Итого</td>' +
+      return { html, t: { sum: rSum, b: rSumB, r: rSumR, w: rSumW, f: rSumF,
+        fw: rSumFW, fm: rSumFM, lk: lkByItem[norm(String(r[0]))] || 0,
+        kp: kpByItem[norm(String(r[0]))] || 0 } };
+      };
+      // Секции статей (просьба 25.08.2026): «Квартиры» — статьи с MR Base,
+      // «МОП» — статьи «СБ3 - МОП - …»; остальные (Паркинг, Лобби, СС Шамова,
+      // НР) — отдельными строками, как были. Секции сворачиваются, по
+      // умолчанию свернуты; суммы секции — по всем колонкам.
+      const sectOf = nm => {
+        const s = norm(String(nm));
+        if (s.includes('mr base')) return 'Квартиры';
+        if (s.includes('- моп -')) return 'МОП';
+        return null;
+      };
+      const entries = [];
+      const sectMap = new Map();
+      order.forEach(pair => {
+        const sect = sectOf(pair[0][0]);
+        if (!sect) { entries.push({ name: String(pair[0][0]), pair }); return; }
+        if (!sectMap.has(sect)) {
+          const o = { name: sect, items: [] };
+          sectMap.set(sect, o);
+          entries.push(o);
+        }
+        sectMap.get(sect).items.push(pair);
+      });
+      entries.sort((a, b) => {
+        const bot = x => x.name === 'Накладные расходы';
+        if (bot(a) !== bot(b)) return bot(a) ? 1 : -1;
+        return a.name.localeCompare(b.name, 'ru');
+      });
+      return entries.map(en => {
+        if (!en.items) {
+          const one = renderItem(en.pair);
+          return one ? one.html : '';
+        }
+        const parts = en.items.map(renderItem).filter(Boolean);
+        if (!parts.length) return '';   // по фильтрам в секции пусто
+        const t = parts.reduce((a, x) => {
+          Object.keys(x.t).forEach(k => { a[k] = (a[k] || 0) + x.t[k]; });
+          return a;
+        }, {});
+        const sOpen = q ? true : state.budgetSectOpen.has(en.name);
+        let h = '<tr class="bsect" data-sect="' + escapeHtml(en.name) + '"><td>' +
+          '<span class="chev">' + (sOpen ? '&#9662;' : '&#9656;') + '</span> ' +
+          escapeHtml(en.name) + ' <span class="cnt">' + parts.length + '</span></td>' +
+          '<td class="num"></td>' + splitTd(t.sum, t.w) +
+          '<td class="num">' + escapeHtml(fmtInt(t.sum)) + '</td>' + baseTd(t.b) +
+          factSplitTd(t.fw, t.fm) + factTd(t.f) + lkTd(t.lk) + kpTd(t.kp) +
+          '<td class="num bsep"></td>' + redoTd(t.r) + '</tr>';
+        if (sOpen) h += parts.map(x => x.html).join('');
+        return h;
+      }).join('');
+    })() + '</tbody><tfoot><tr><td>Итого</td>' +
     '<td class="num"></td>' + splitTd(total, totalW) +
     '<td class="num">' + escapeHtml(fmtInt(total)) + '</td>' + baseTd(totalB) +
     factSplitTd(totalFW, totalFM) + factTd(totalF) + lkTd(totalLk) + kpTd(totalKp) +
@@ -2334,6 +2393,15 @@ document.getElementById('budget-screen').addEventListener('click', e => {
     const key = bw.dataset.bi + '|' + bw.dataset.wi;
     if (state.budgetWorkOpen.has(key)) state.budgetWorkOpen.delete(key);
     else state.budgetWorkOpen.add(key);
+    renderBudget();
+    return;
+  }
+  const bst = e.target.closest('tr.bsect');
+  if (bst) {
+    // Секция статей «Квартиры»/«МОП» (25.08.2026)
+    const key = bst.dataset.sect;
+    if (state.budgetSectOpen.has(key)) state.budgetSectOpen.delete(key);
+    else state.budgetSectOpen.add(key);
     renderBudget();
     return;
   }
