@@ -178,7 +178,7 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   VOL D, GROUP F, SS_NAME J, BUDGET_FLAG L, REDO Q, CONTRACTOR S, SS W,
   FACT_PAID AA «К оплате», RATE AB, RATE_MAT AC, COST_WORK AE, BUDGET_COST AG);
   SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
-- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v22`, `bfloors_v1`, `changes_v1`,
+- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v23`, `bfloors_v1`, `changes_v1`,
   `factref_v1` — все кроме floors чанкованные); ~55 `clearCache` (⚠️ новый ключ добавлять сюда)
 - ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
 - ~96 `setup` (пароль); ~107–140 вопросы: `setupQuestions` (разовая авторизация Drive —
@@ -211,6 +211,8 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   (вложенные подгруппы `tr.bsub` на фронте, `budgetSubOpen`, работы
   класс `bindent`; финал 25.08); + зашитая группа «Не учтенные работы
   в расчете с заказчиком», 5 работ / 34,2 млн, список `extras` в коде, 25.08);
+  `readSsFact_` (зашитая статья «Собственные силы факт на 01.08.2026…»,
+  228,9 млн, corp='СС факт', 25.08, `.concat`);
   `readLobby_` (лист «Лобби» → статья «Лобби»: группы = зоны Лобби К1…К12,
   подгруппы w[4] = Группа работ, подрядчик МПСИ-2/ВЕЛМИ/СК-Авангард,
   corp='Лобби' — bflat, cell[5]=СМР+косвенные; 25.08, тоже `.concat`);

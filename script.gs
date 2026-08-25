@@ -76,7 +76,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v22';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, лобби, СС Шамов, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v23';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, лобби, СС Шамов, СС факт, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -731,6 +731,7 @@ function doGet(e) {
                                       budget: buildBudget_(ssB).concat(readPark_(ssB))
                                                                .concat(readLobby_(ssB))
                                                                .concat(readShamov_(ssB))
+                                                               .concat(readSsFact_())
                                                                .concat(readOverhead_(ssB)),
                                       lk: readLk_(ssB), kp: readKp_(ssB),
                                       base: readBaseSums_() });
@@ -1055,6 +1056,24 @@ function readKp_(ss) {
   return Object.keys(map).map(function (name) {
     return [name, Math.round(map[name])];
   });
+}
+
+/**
+ * Собственные силы, ФАКТ по табелям (25.08.2026): статья «Собственные силы
+ * факт на 01.08.2026 (табели и премии) почасовщики» — одна сумма из свода
+ * пользователя (в своднике помечена «Уточняется»), построчных данных нет —
+ * зашита здесь. Изменится сумма — править SS_FACT_SUM. Строка плоская
+ * (corp 'СС факт' в списке bflat на фронте); сумма в cell[5] «Работы»
+ * (трудозатраты, как у Шамова). Статья «Собственные силы (Шамов)» (план,
+ * лист «расчет_Шамов») остаётся отдельно.
+ */
+function readSsFact_() {
+  var SS_FACT_SUM = 228908513;
+  return [['Собственные силы факт на 01.08.2026 (табели и премии) почасовщики',
+           SS_FACT_SUM,
+           [['Табели и премии, факт на 01.08.2026', SS_FACT_SUM,
+             [['— без подрядчика —', 'СС факт', SS_FACT_SUM, 0, 0, SS_FACT_SUM, 0, 0, 0]],
+             'Почасовщики']]]];
 }
 
 /**
