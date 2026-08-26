@@ -83,9 +83,12 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   `state.analytics`/`analyticsStatus`; ветка isAnalytics в `setScreen`
 ## index.html — шапка (26.08.2026)
 
-- Шапка видна везде, кроме «Аналитики»: в `setScreen` `header.compact` на
-  Бюджете/Проверках (CSS прячет `.flt:not(.flt-keep)` и #f-reset); кнопка
-  «Развернуть все» убрана (обработчик заменён комментарием)
+- Шапка видна везде, кроме «Аналитики», в ДВЕ строки `.frow` (26.08): в
+  `setScreen` `header.compact` на Проверках (CSS прячет .flt/.fss/#f-reset),
+  `header.bmode` на Бюджете (прячет #flt-place-wrap/#flt-surface-wrap;
+  «Группа работ» действует на бюджете — grpSel/w[3] в renderBudget); кнопка
+  «Развернуть все» убрана; #f-reset сбрасывает и budgetContr/budgetSS/
+  budgetQuery/workSel
 - Поиск `#search` контекстный (обработчик у поля): rates/volumes/fact →
   `state.query`+renderTable; budget → `state.budgetQuery`+renderBudget
   (синхронизация с #bsearch в обе стороны); проверки → `state.checkQuery` +

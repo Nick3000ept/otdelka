@@ -80,7 +80,10 @@
     display: flex; flex-direction: column; gap: 10px;
   }
 
-  .filters { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  /* Две строки шапки (просьба 26.08.2026): сверху фильтры-списки, снизу
+     галочка СС, «Сбросить», масштаб и поиск. */
+  .filters { display: flex; flex-direction: column; gap: 10px; }
+  .frow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .flt { display: flex; align-items: center; gap: 6px; }
   .flt label { color: var(--text-dim); font-size: 12px; }
   .flt select {
@@ -387,7 +390,11 @@
 
   /* Шапка на «Бюджете»/«Проверках» (26.08.2026): только масштаб и поиск,
      фильтры дерева работ скрыты — они относятся к «Расценкам»/«Объемам»/«Факту». */
-  header.compact .flt:not(.flt-keep), header.compact #f-reset { display: none; }
+  /* «Проверки»: только масштаб и поиск. */
+  header.compact .flt, header.compact #f-reset, header.compact .fss { display: none; }
+  /* «Бюджет»: та же строка фильтров, но без «Место»/«Поверхность» —
+     этих признаков в данных бюджета нет (26.08.2026). */
+  header.bmode #flt-place-wrap, header.bmode #flt-surface-wrap { display: none; }
   /* Экраны проверок, бюджета и аналитики. */
   #check-screen, #budget-screen, #analytics-screen { flex: 1; overflow: auto; padding: 14px 16px; }
   /* Вкладка «Аналитика» (26.08.2026): график затраты — поступления. */
@@ -624,19 +631,23 @@
   <div id="content">
   <header>
     <div class="filters">
-      <span class="flt"><label for="f-group">Группа работ</label><select id="f-group"></select></span>
-      <span class="flt"><label for="f-place">Место</label><select id="f-place"></select></span>
-      <span class="flt"><label for="f-surface">Поверхность</label><select id="f-surface"></select></span>
-      <span class="flt flt-keep" id="flt-contr-wrap"><label for="f-contr">Подрядчик</label><select id="f-contr"><option value="">— все —</option></select>
-        <label class="fss" for="f-ss"><input type="checkbox" id="f-ss"> Собственные силы</label></span>
-      <button id="f-reset" type="button">Сбросить</button>
-      <div class="search-wrap">
-        <button id="zoom-out" type="button" class="zbtn"
-          title="Мельче — чтобы длинные значения помещались в ячейки">А−</button>
-        <button id="zoom-reset" type="button" class="zbtn" title="Обычный масштаб">100%</button>
-        <button id="zoom-in" type="button" class="zbtn" title="Крупнее">А+</button>
-        <input id="search" type="text" placeholder="Поиск..." autocomplete="off">
-        <div id="search-dd" style="display:none"></div>
+      <div class="frow">
+        <span class="flt"><label for="f-group">Группа работ</label><select id="f-group"></select></span>
+        <span class="flt" id="flt-place-wrap"><label for="f-place">Место</label><select id="f-place"></select></span>
+        <span class="flt" id="flt-surface-wrap"><label for="f-surface">Поверхность</label><select id="f-surface"></select></span>
+        <span class="flt" id="flt-contr-wrap"><label for="f-contr">Подрядчик</label><select id="f-contr"><option value="">— все —</option></select></span>
+      </div>
+      <div class="frow">
+        <label class="fss" for="f-ss"><input type="checkbox" id="f-ss"> Собственные силы</label>
+        <button id="f-reset" type="button">Сбросить</button>
+        <div class="search-wrap">
+          <button id="zoom-out" type="button" class="zbtn"
+            title="Мельче — чтобы длинные значения помещались в ячейки">А−</button>
+          <button id="zoom-reset" type="button" class="zbtn" title="Обычный масштаб">100%</button>
+          <button id="zoom-in" type="button" class="zbtn" title="Крупнее">А+</button>
+          <input id="search" type="text" placeholder="Поиск..." autocomplete="off">
+          <div id="search-dd" style="display:none"></div>
+        </div>
       </div>
     </div>
   </header>
@@ -1658,10 +1669,15 @@ function renderBudget() {
   // q ниже используется как признак «фильтр активен» (автораскрытие, пересчёт
   // сумм по совпавшим), поэтому при выборе подставляется строка-маркер.
   const qText = norm(state.budgetQuery);
-  const q = state.workSel.size ? 'sel' : qText;
-  const wMatch = w => state.workSel.size
-    ? state.workSel.has(norm(String(w[0])))
-    : (!qText || norm(String(w[0])).includes(qText));
+  // Фильтр «Группа работ» из шапки действует и на бюджете (26.08.2026):
+  // сравнивается с группой работы в своде (w[3]).
+  const grpSel = norm(state.filters.group || '');
+  const q = state.workSel.size ? 'sel' : (qText || (grpSel ? 'grp' : ''));
+  const wMatch = w =>
+    (!grpSel || norm(String(w[3] || '')) === grpSel) &&
+    (state.workSel.size
+      ? state.workSel.has(norm(String(w[0])))
+      : (!qText || norm(String(w[0])).includes(qText)));
   // Бюджет собственных сил — БЕЗ накладных расходов (просьба 25.08.2026):
   // при галочке «Собственные силы» статья «Накладные расходы» исключается
   // и из таблицы, и из «Итого» (rowsT — статьи, участвующие в итогах).
@@ -3811,7 +3827,8 @@ function setScreen(screen) {
   // (просьба 26.08.2026); на «Бюджете»/«Проверках» — без фильтров дерева работ.
   const hdr = document.querySelector('header');
   hdr.style.display = isAnalytics ? 'none' : '';
-  hdr.classList.toggle('compact', isCheck || isBudget);
+  hdr.classList.toggle('compact', isCheck);
+  hdr.classList.toggle('bmode', isBudget);
   // Поле поиска на каждом экране своё: дерево работ / фильтр бюджета / проверки.
   document.getElementById('search').value =
     isBudget ? state.budgetQuery : (isCheck ? state.checkQuery : state.query);
@@ -4063,7 +4080,8 @@ document.getElementById('tbody').addEventListener('click', e => {
   document.getElementById(id).addEventListener('change', e => {
     const which = id === 'f-group' ? 'group' : (id === 'f-place' ? 'place' : 'surface');
     state.filters[which] = e.target.value;
-    if (state.works.length) renderTable();
+    if (state.screen === 'budget') renderBudget();   // «Группа работ» действует и там
+    else if (state.works.length) renderTable();
   });
 });
 
@@ -4140,10 +4158,15 @@ document.getElementById('f-reset').addEventListener('click', () => {
   state.contrSel = '';
   state.ssSel = false;
   state.workSel.clear();
+  // Бюджетные фильтры управляются той же шапкой — сбрасываем и их (26.08.2026).
+  state.budgetContr = new Set();
+  state.budgetSS = false;
+  state.budgetQuery = '';
   ['f-group', 'f-place', 'f-surface', 'f-contr'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('f-ss').checked = false;
   document.getElementById('search').value = '';
-  if (state.works.length) renderTable();
+  if (state.screen === 'budget') renderBudget();
+  else if (state.works.length) renderTable();
 });
 
 function setStatus(text, isError) {
