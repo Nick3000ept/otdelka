@@ -439,6 +439,13 @@
   table.check.budget tr.bwork td { color: var(--text); font-size: 12px; }
   table.check.budget tr.bwork td:first-child { padding-left: 44px; white-space: normal; }
   table.check.budget tr.bwork.bindent td:first-child { padding-left: 58px; }
+  /* Статьи внутри секций «Квартиры»/«МОП» и все их уровни — глубже на шаг,
+     чтобы не сливались со строкой секции (просьба 26.08.2026). */
+  table.check.budget tr.brow.insec td:first-child { padding-left: 24px; }
+  table.check.budget tr.bgrp.insec td:first-child { padding-left: 40px; }
+  table.check.budget tr.bsub.insec td:first-child { padding-left: 52px; }
+  table.check.budget tr.bwork.insec td:first-child { padding-left: 60px; }
+  table.check.budget tr.bwork.bindent.insec td:first-child { padding-left: 74px; }
   /* Объём и коэффициент переделки — приглушённой припиской у названия работы. */
   .bw-info { color: var(--text-dim); font-size: 11px; font-weight: 400; white-space: nowrap; }
   table.check.budget tr.bwork { cursor: pointer; }
@@ -1843,7 +1850,10 @@ function renderBudget() {
       (hasRedo ? '<th class="num h-redo">Сумма, руб</th>' : '') + '</tr>' +
     '</thead><tbody>' +
     (() => {
-      const renderItem = (pair) => {
+      // insec — статья рисуется внутри секции «Квартиры»/«МОП»: вся её иерархия
+      // получает класс insec и сдвигается на шаг вправо (26.08.2026).
+      const renderItem = (pair, insec) => {
+      const ic = insec ? ' insec' : '';
       const r = pair[0], i = pair[1];
       const works = r[2] || [];
       // Суммы работ считаем по исходным индексам wi — на них завязаны ключи раскрытий.
@@ -1865,7 +1875,7 @@ function renderBudget() {
       if ((active || q) && !rSum) return null;   // по фильтрам в статье пусто
       // При активном фильтре по работе статьи раскрыты сами (как поиск в «Расценках»).
       const open = q ? true : state.budgetOpen.has(String(r[0]));
-      let html = '<tr class="brow" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
+      let html = '<tr class="brow' + ic + '" data-item="' + escapeHtml(String(r[0])) + '"><td>' +
         (works.length ? '<span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' : '') +
         escapeHtml(String(r[0])) + '</td>' +
         '<td class="num"></td>' + splitTd(rSum, rSumW) +
@@ -1899,7 +1909,7 @@ function renderBudget() {
           });
           const wr = state.works.find(r => norm(r[WORK_KEY]) === norm(String(w[0])));
           const unit = String((wr && wr[UNIT_COL]) || '').trim();
-          let h = '<tr class="bwork' + (wOpen ? ' open' : '') + (flat ? ' bflat' : '') +
+          let h = '<tr class="bwork' + ic + (wOpen ? ' open' : '') + (flat ? ' bflat' : '') +
             (sub ? ' bindent' : '') + '" data-bi="' + i + '" data-wi="' + wi + '">' +
             '<td>' + (flat ? '' : '<span class="chev">' + (wOpen ? '&#9662;' : '&#9656;') +
             '</span> ') + escapeHtml(String(w[0])) + '</td>' +
@@ -1946,7 +1956,7 @@ function renderBudget() {
           // Базовый экран (просьба 25.08.2026): при раскрытии статьи группы
           // СВЕРНУТЫ, работы видны только после клика; поиск раскрывает сам.
           const gOpen = q ? true : state.budgetGrpOpen.has(gKey);
-          let h = '<tr class="bgrp" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
+          let h = '<tr class="bgrp' + ic + '" data-bi="' + i + '" data-grp="' + escapeHtml(g.name) +
             '"><td><span class="chev">' + (gOpen ? '&#9662;' : '&#9656;') + '</span> ' +
             escapeHtml(g.name) + ' <span class="cnt">' + g.items.length + '</span></td>' +
             '<td class="num"></td>' + splitTd(g.total, g.totalW) +
@@ -1978,7 +1988,7 @@ function renderBudget() {
               h += subs.map(sg => {
                 const sKey = i + '|' + g.name + '|' + sg.name;
                 const sOpen = q ? true : state.budgetSubOpen.has(sKey);
-                let sh = '<tr class="bgrp bsub" data-bi="' + i + '" data-grp="' +
+                let sh = '<tr class="bgrp bsub' + ic + '" data-bi="' + i + '" data-grp="' +
                   escapeHtml(g.name) + '" data-sub="' + escapeHtml(sg.name) +
                   '"><td><span class="chev">' + (sOpen ? '&#9662;' : '&#9656;') + '</span> ' +
                   escapeHtml(sg.name) + ' <span class="cnt">' + sg.items.length + '</span></td>' +
@@ -2034,7 +2044,7 @@ function renderBudget() {
           const one = renderItem(en.pair);
           return one ? one.html : '';
         }
-        const parts = en.items.map(renderItem).filter(Boolean);
+        const parts = en.items.map(p => renderItem(p, true)).filter(Boolean);
         if (!parts.length) return '';   // по фильтрам в секции пусто
         const t = parts.reduce((a, x) => {
           Object.keys(x.t).forEach(k => { a[k] = (a[k] || 0) + x.t[k]; });
