@@ -1748,7 +1748,9 @@ function renderBudget() {
   // «Базовый бюджет» из зафиксированного базового расчёта (просьба 25.08.2026):
   // бэкенд сворачивает слепок базы (тот, что фиксируется на экране «Изменения»)
   // в суммы работа × подрядчик (base.works), здесь они раскладываются по работам
-  // бюджета по названию. Работ Паркинга и СС Шамова в базе нет — ячейки пустые.
+  // бюджета по названию. Доп-статьи, которых нет в поэтажке (Паркинг, Лобби,
+  // Подсоба Шамов, СС факт, НР), с 26.08.2026 фиксируются отдельным списком
+  // base.extras; в базе, зафиксированной до этого, их нет — ячейки пустые.
   // Базы нет или старый кэш без base — колонки нет (hasBase, как hasSplit).
   const baseData = state.budgetBase;
   const hasBase = !!(baseData && (baseData.works || []).length);
@@ -1758,15 +1760,30 @@ function renderBudget() {
     if (!baseByWork.has(k)) baseByWork.set(k, []);
     baseByWork.get(k).push([String(row[1]), row[2] || 0]);
   });
+  // Доп-статьи из base.extras: ключ — вся цепочка статья|группа|подгруппа|работа,
+  // по одному названию работы нельзя — имена доп-статей могут совпадать с
+  // работами поэтажки и суммы задваивались бы (26.08.2026).
+  const bexKey = (item, g, sg, wname) => [item, g, sg, wname]
+    .map(v => norm(String(v == null ? '' : v))).join('|');
+  const baseExtra = new Map();    // ключ -> [[подрядчики, сумма], …]
+  if (hasBase) (baseData.extras || []).forEach(row => {
+    const k = bexKey(row[0], row[1], row[2], row[3]);
+    if (!baseExtra.has(k)) baseExtra.set(k, []);
+    baseExtra.get(k).push([String(row[4]), row[5] || 0]);
+  });
   // Фильтр по подрядчикам действует и здесь — по подрядчику, каким он был в базе;
   // несколько подрядчиков на этаже склеены « + » — совпадение по любому из них.
-  const wSumB = w => (baseByWork.get(norm(String(w[0]))) || []).reduce((acc, e) =>
-    acc + (!active || e[0].split(' + ').some(n => eSel.has(n.trim())) ? e[1] : 0), 0);
+  const wSumB = (w, item) => {
+    const ext = (item == null || !baseExtra.size) ? null
+      : baseExtra.get(bexKey(item, w[3], w[4], w[0]));
+    return (ext || baseByWork.get(norm(String(w[0]))) || []).reduce((acc, e) =>
+      acc + (!active || e[0].split(' + ').some(n => eSel.has(n.trim())) ? e[1] : 0), 0);
+  };
   const baseTd = v => hasBase
     ? '<td class="num bsep">' + escapeHtml(v ? fmtInt(v) : '') + '</td>'
     : '';
   const totalB = rowsT.reduce((acc, r) => acc + (r[2] || []).reduce((a, w) =>
-    a + (wMatch(w) ? wSumB(w) : 0), 0), 0);
+    a + (wMatch(w) ? wSumB(w, r[0]) : 0), 0), 0);
   const baseDate = hasBase && baseData.date ? new Date(baseData.date) : null;
   const baseTitle = baseDate && !isNaN(baseDate)
     ? 'База зафиксирована ' + baseDate.toLocaleDateString('ru-RU') : '';
@@ -1818,7 +1835,7 @@ function renderBudget() {
       // Суммы работ считаем по исходным индексам wi — на них завязаны ключи раскрытий.
       // Работы, не прошедшие фильтр по названию, дают 0 и скрываются ниже.
       const sums = works.map(w => wMatch(w) ? wSum(w) : 0);
-      const sumsB = works.map(w => wMatch(w) ? wSumB(w) : 0);
+      const sumsB = works.map(w => wMatch(w) ? wSumB(w, r[0]) : 0);
       const sumsR = works.map(w => wMatch(w) ? wSumR(w) : 0);
       const sumsW = works.map(w => wMatch(w) ? wSumW(w) : 0);
       const sumsF = works.map(w => wMatch(w) ? wSumF(w) : 0);

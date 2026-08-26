@@ -77,7 +77,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v26';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base, паркинг, лобби, Подсоба Шамов, СС факт, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v27';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг, лобби, Подсоба Шамов, СС факт, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -441,7 +441,8 @@ function doPost(e) {
           message: 'фиксировать базовый расчёт может только администратор' });
       }
       var ssBl = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var obj = { date: new Date().toISOString(), data: buildBaseline_(ssBl) };
+      var obj = { date: new Date().toISOString(), data: buildBaseline_(ssBl),
+                  extras: buildBaselineExtras_(ssBl) };
       baselineFile_().setContent(JSON.stringify(obj));
       var cacheBl = CacheService.getScriptCache();
       // Сбрасываем и кэш бюджета: колонка «Базовый бюджет» на «Бюджете»
@@ -1151,7 +1152,38 @@ function readBaseSums_() {
       out.push([work, contr, Math.round(acc[work][contr])]);
     });
   });
-  return { date: bl.date || '', works: out };
+  return { date: bl.date || '', works: out, extras: bl.extras || [] };
+}
+
+/**
+ * Слепок доп-статей для базового расчёта (26.08.2026): статьи, которых нет в
+ * поэтажке (Паркинг, Лобби, Подсоба Шамов, СС факт, Накладные расходы), при
+ * фиксации базы сохраняются суммами по работам:
+ * [[статья, группа, подгруппа, работа, подрядчики, сумма], ...].
+ * Ключ — вся цепочка уровней, а не одно название работы: имена работ доп-статей
+ * могут совпадать с работами поэтажки (и между группами), одно имя задваивало бы
+ * суммы. Подрядчики работы — уникальные из её ячеек, склеены « + » (для фильтра
+ * на фронте, как в основном слепке).
+ */
+function buildBaselineExtras_(ss) {
+  var items = readPark_(ss).concat(readLobby_(ss)).concat(readShamov_(ss))
+    .concat(readSsFact_()).concat(readOverhead_(ss));
+  var out = [];
+  items.forEach(function (it) {
+    (it[2] || []).forEach(function (w) {
+      var sum = Math.round(w[1] || 0);
+      if (!sum) return;
+      var set = {};
+      (w[2] || []).forEach(function (cell) {
+        set[String(cell[0] || '').trim() || '— без подрядчика —'] = 1;
+      });
+      out.push([String(it[0]), String(w[3] || ''), String(w[4] || ''),
+                String(w[0]),
+                Object.keys(set).sort().join(' + ') || '— без подрядчика —',
+                sum]);
+    });
+  });
+  return out;
 }
 
 /** Число из ячейки листа «Паркинг»: число как есть, строку «1 234,56» — разобрать. */

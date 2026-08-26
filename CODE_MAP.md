@@ -94,7 +94,9 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   «Личные_кабинеты» из ответа budget `lk`/`state.budgetLk`, `hasLk`/`lkTd`/`lkByItem`,
   значения ТОЛЬКО в строках статей и Итого, МОЛ↔подрядчик по norm)·Базовый
   бюджет (25.08: сразу после «Стоимость» — из ответа budget `base`/
-  `state.budgetBase` (слепок базы, свёрнутый бэкендом по работа×подрядчик),
+  `state.budgetBase` (слепок базы, свёрнутый бэкендом по работа×подрядчик;
+  с 26.08 плюс `base.extras` — слепок доп-статей, на фронте `baseExtra`/`bexKey`,
+  ключ статья|группа|подгруппа|работа, `wSumB(w, item)`),
   `hasBase`/`baseTd`/`baseByWork`/`wSumB`/`sumsB`/`totalB`, все уровни + Итого,
   оба фильтра (подрядчик — какой был в базе, склейки « + » по любому), шапка
   `.h-base` сиреневая, title = дата фиксации; в colspan bdetail +1)·Закрытие
@@ -178,13 +180,15 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   VOL D, GROUP F, SS_NAME J, BUDGET_FLAG L, REDO Q, CONTRACTOR S, SS W,
   FACT_PAID AA «К оплате», RATE AB, RATE_MAT AC, COST_WORK AE, BUDGET_COST AG);
   SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
-- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v26`, `bfloors_v1`, `changes_v1`,
+- ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v27`, `bfloors_v1`, `changes_v1`,
   `factref_v1` — все кроме floors чанкованные); ~55 `clearCache` (⚠️ новый ключ добавлять сюда)
 - ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
 - ~96 `setup` (пароль); ~107–140 вопросы: `setupQuestions` (разовая авторизация Drive —
   ВЫПОЛНЕНА), `questionsFile_/readQuestions_/writeQuestions_` (QUESTIONS_FILE_ID)
 - ~152–167 базовый расчёт: `baselineFile_/readBaseline_` (otdelka_baseline.json,
-  BASELINE_FILE_ID; первая база зафиксирована 2026-08-05)
+  BASELINE_FILE_ID; первая база зафиксирована 2026-08-05; с 26.08 в файле также
+  `extras` — слепок доп-статей бюджета, `buildBaselineExtras_` рядом с
+  `readBaseSums_`, пишется в saveBaseline)
 - ~177 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
   расц.раб, расц.мат]; ~246 `diffBaseline_` (add/del/mod)
 - ~315 `doPost` — saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
