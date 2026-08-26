@@ -780,6 +780,7 @@ const state = {
   analytics: null,             // затраты/поступления по месяцам (action=analytics, 26.08.2026)
   analyticsStatus: 'idle',     // idle | loading | ready | error
   anSel: null,                 // выбранная статья на «Аналитике» (ключ anKey) — линии только по ней
+  anMonth: null,               // выбранный месяц на «Аналитике» ('ГГГГ-ММ') — таблица и платежи за него
   checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
   contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
   ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
@@ -2231,24 +2232,35 @@ function renderAnalytics() {
   const line = (arr, color) =>
     '<polyline fill="none" stroke="' + color + '" stroke-width="2.5" points="' +
     arr.map((v, i) => x(i) + ',' + y(v)).join(' ') + '"/>';
+  // Точки и подписи месяцев кликабельны (просьба 26.08.2026): клик выбирает
+  // месяц — таблица «По статьям» и модалка «Платежи» показывают только его.
   const dotR = stepX < 22 ? 2.5 : 3.5;
   const dots = (arr, monthly, color, name) => arr.map((v, i) =>
-    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="' + dotR + '" fill="' + color + '">' +
+    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="' + dotR + '" fill="' + color +
+    '" data-m="' + months[i] + '" style="cursor:pointer">' +
     '<title>' + name + ' на ' + mLabel(months[i]) + ': ' + fmtM(v) +
-    ' (за месяц ' + fmtM(monthly[i]) + ')</title></circle>').join('');
+    ' (за месяц ' + fmtM(monthly[i]) + '). Клик — детали месяца в таблице ниже</title></circle>').join('');
   // Подписи месяцев прореживаются, чтобы не налезали при сжатом шаге.
   const labelEvery = Math.max(1, Math.ceil(34 / stepX));
   let labels = '';
   months.forEach((m, i) => {
     if (i % labelEvery !== 0 && i !== months.length - 1) return;
     labels += '<text x="' + x(i) + '" y="' + (H - padB + 18) + '" text-anchor="end" ' +
-      'font-size="10" fill="#667" transform="rotate(-45 ' + x(i) + ' ' + (H - padB + 18) + ')">' +
+      'font-size="10" fill="' + (state.anMonth === m ? '#1857b8' : '#667') + '" data-m="' + m +
+      '" style="cursor:pointer" transform="rotate(-45 ' + x(i) + ' ' + (H - padB + 18) + ')">' +
       mLabel(m) + '</text>';
   });
+  // Подсветка выбранного месяца — вертикальная полоса под линиями.
+  const selMIdx = state.anMonth ? months.indexOf(state.anMonth) : -1;
+  const selBand = selMIdx >= 0
+    ? '<rect x="' + (x(selMIdx) - Math.min(12, stepX / 2)) + '" y="' + padT +
+      '" width="' + Math.min(24, stepX) + '" height="' + (H - padT - padB) +
+      '" fill="#8fb4e8" opacity="0.3"/>'
+    : '';
 
   const COL_COST = '#b42121', COL_IN = '#1d7d38';
   const svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
-    grid +
+    grid + selBand +
     '<line x1="' + padL + '" y1="' + y(0) + '" x2="' + (W - padR) + '" y2="' + y(0) +
     '" stroke="#99a"/>' +
     line(cCosts, COL_COST) + line(cIncome, COL_IN) +
@@ -2271,6 +2283,8 @@ function renderAnalytics() {
   // Итоги — по ВСЕМ месяцам (независимо от выбранной статьи и обрезки). Пустая
   // ячейка = в этом источнике статьи нет — так видно корректность попадания.
   // Клик по строке — линии сверху перестраиваются только по этой статье.
+  // Выбран месяц (клик по графику) — таблица за него, иначе за всё время.
+  const tblMonths = state.anMonth ? [state.anMonth] : allMonths;
   const perItem = src => {
     const out = new Map();   // anKey(статья) -> { name, total }
     Object.keys(src || {}).filter(anMatch).forEach(it => {
@@ -2278,7 +2292,7 @@ function renderAnalytics() {
       const nm = k === 'паркинг' ? 'Паркинг' : (k === 'лобби' ? 'Лобби' : it);
       if (!out.has(k)) out.set(k, { name: nm, total: 0 });
       const o = out.get(k);
-      allMonths.forEach(m => { o.total += (src[it] || {})[m] || 0; });
+      tblMonths.forEach(m => { o.total += (src[it] || {})[m] || 0; });
     });
     return out;
   };
@@ -2316,11 +2330,18 @@ function renderAnalytics() {
       '</b> — повторный клик по её строке вернёт все статьи</div>'
     : '';
 
+  const mTitle = state.anMonth ? mLabel(state.anMonth) : '';
   el.innerHTML = head + summary + selNote + '<div class="an-chart">' + svg + '</div>' +
-    '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц. Суммы в млн руб.</div>' +
-    '<div class="check-head" style="margin-top:18px">По статьям (накопительно за всё время)</div>' +
-    '<div class="check-desc">Худшие отклонения сверху; пустая ячейка — статьи нет в этом ' +
-    'источнике; клик по строке — динамика этой статьи на графике</div>' +
+    '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц; ' +
+    'клик по точке или подписи месяца — таблица ниже за этот месяц. Суммы в млн руб.</div>' +
+    '<div class="check-head" style="margin-top:18px">По статьям (' +
+    (mTitle ? 'за ' + mTitle : 'накопительно за всё время') + ')</div>' +
+    (mTitle
+      ? '<div class="check-desc">Показан месяц ' + mTitle + ' — <span id="an-month-reset" ' +
+        'style="color:var(--accent);cursor:pointer">показать всё время</span>; кнопка «Платежи» ' +
+        'откроет платежи только этого месяца</div>'
+      : '<div class="check-desc">Худшие отклонения сверху; пустая ячейка — статьи нет в этом ' +
+        'источнике; клик по строке — динамика этой статьи на графике</div>') +
     '<div class="bdetail-wrap">' + tbl + '</div>';
 }
 
@@ -2330,6 +2351,18 @@ function renderAnalytics() {
 document.getElementById('analytics-screen').addEventListener('click', e => {
   const pb = e.target.closest('button.anpay');
   if (pb) { openAnPayments(pb.dataset.key, pb.dataset.name); return; }
+  // Клик по точке/подписи месяца на графике — таблица за этот месяц (26.08.2026).
+  const mEl = e.target.closest('[data-m]');
+  if (mEl && mEl.dataset && mEl.dataset.m) {
+    state.anMonth = state.anMonth === mEl.dataset.m ? null : mEl.dataset.m;
+    renderAnalytics();
+    return;
+  }
+  if (e.target.id === 'an-month-reset') {
+    state.anMonth = null;
+    renderAnalytics();
+    return;
+  }
   const tr = e.target.closest('tr.anrow');
   if (!tr) return;
   state.anSel = state.anSel === tr.dataset.key ? null : tr.dataset.key;
@@ -2341,16 +2374,37 @@ document.getElementById('analytics-screen').addEventListener('click', e => {
  * как есть (action=morsRows, грузится по клику). Сортировка — свежие сверху.
  */
 async function openAnPayments(key, name) {
+  // Выбран месяц на графике — показываем платежи только за него (26.08.2026).
+  const month = state.anMonth;
+  const mTxt = month ? month.slice(5) + '.' + month.slice(2, 4) : '';
   document.getElementById('modal-title').textContent = 'Платежи МОРС';
-  document.getElementById('modal-sub').textContent = name;
+  document.getElementById('modal-sub').textContent = name + (mTxt ? ' · ' + mTxt : '');
   document.getElementById('modal-body').innerHTML =
     '<div class="side-note">Загрузка платежей…</div>';
   document.getElementById('modal-overlay').style.display = 'flex';
   try {
     const url = GAS_URL + '?action=morsRows&item=' + encodeURIComponent(key) +
       '&t=' + encodeURIComponent(state.token);
-    const json = await fetchWithRetry(url, 2);
+    let json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
+    if (month) {
+      // Месяц даты считаем как на бэке (getMonth в местном времени) — простое
+      // сравнение начала ISO-строки промахивается на последних днях месяца.
+      const headP = json.header || [];
+      const diP = headP.findIndex(h => String(h).trim() === 'Дата проводки');
+      const siP = headP.findIndex(h => String(h).trim() === 'Сумма расход');
+      const ymP = s => {
+        const d = new Date(s);
+        return isNaN(d) ? '' : d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+      };
+      const rowsP = (json.rows || []).filter(r0 => diP >= 0 && ymP(r0[diP]) === month);
+      json = {
+        ok: true, header: headP, rows: rowsP, count: rowsP.length,
+        sum: Math.round(rowsP.reduce((acc, r0) =>
+          acc + (siP >= 0 && typeof r0[siP] === 'number' ? r0[siP] : 0), 0)),
+        truncated: json.truncated
+      };
+    }
     document.getElementById('modal-body').innerHTML = anPaymentsHtml(json);
   } catch (e2) {
     document.getElementById('modal-body').innerHTML =

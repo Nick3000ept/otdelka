@@ -117,7 +117,10 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   (делегирование на #analytics-screen) пишет `state.anSel` — линии только по
   выбранной статье; кнопка `button.anpay` «Платежи» → `openAnPayments`/
   `anPaymentsHtml` — модалка всех строк МОРС статьи (action=morsRows, бэк:
-  обработчик в doGet перед changes, лимит 2000)
+  обработчик в doGet перед changes, лимит 2000). Выбор месяца `state.anMonth`
+  (26.08): data-m на точках/подписях графика + selBand-подсветка; таблица
+  считает tblMonths, openAnPayments фильтрует строки по месяцу даты
+  (new Date, не substring ISO)
 
 ## index.html — Бюджет
 
