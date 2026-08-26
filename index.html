@@ -2197,15 +2197,22 @@ function renderAnalytics() {
   };
   let costs = sumSrc(a.mors);
   let income = sumSrc(a.kp);
+  // Третья линия — «ТУЗИО» (26.08.2026): лист без разреза по статьям, поэтому
+  // при выбранной статье (anSel) линия скрывается.
+  let tuz = months.map(m => (a.tuzio || {})[m] || 0);
+  const hasTuz = !selK && tuz.some(v => v);
   // Пустые месяцы в начале (до первых движений по отделке) не показываем.
   let start = 0;
-  while (start < months.length - 1 && !costs[start] && !income[start]) start++;
+  while (start < months.length - 1 && !costs[start] && !income[start] &&
+         !(hasTuz && tuz[start])) start++;
   months = months.slice(start);
   costs = costs.slice(start);
   income = income.slice(start);
+  tuz = tuz.slice(start);
   const cum = arr => { let s = 0; return arr.map(v => (s += v)); };
   const cCosts = cum(costs);
   const cIncome = cum(income);
+  const cTuz = cum(tuz);
 
   // Геометрия: график вписывается в ширину экрана без прокрутки (просьба 26.08.2026) —
   // шаг между месяцами считается от ширины контейнера, при resize перерисовка.
@@ -2213,7 +2220,8 @@ function renderAnalytics() {
   const availW = Math.max(480, (el.clientWidth || 900) - 44);
   const stepX = Math.max(8, (availW - padL - padR) / Math.max(1, months.length - 1));
   const W = Math.round(padL + padR + stepX * Math.max(1, months.length - 1));
-  const maxV = Math.max(cCosts[cCosts.length - 1], cIncome[cIncome.length - 1], 1) * 1.06;
+  const maxV = Math.max(cCosts[cCosts.length - 1], cIncome[cIncome.length - 1],
+    hasTuz ? cTuz[cTuz.length - 1] : 0, 1) * 1.06;
   const x = i => padL + i * stepX;
   const y = v => padT + (H - padT - padB) * (1 - v / maxV);
   const fmtM = v => fmtInt(Math.round(v / 1e6)) + ' млн';
@@ -2260,13 +2268,15 @@ function renderAnalytics() {
       '" fill="#8fb4e8" opacity="0.3"/>'
     : '';
 
-  const COL_COST = '#b42121', COL_IN = '#1d7d38';
+  const COL_COST = '#b42121', COL_IN = '#1d7d38', COL_TUZ = '#1857b8';
   const svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
     grid + selBand +
     '<line x1="' + padL + '" y1="' + y(0) + '" x2="' + (W - padR) + '" y2="' + y(0) +
     '" stroke="#99a"/>' +
     line(cCosts, COL_COST) + line(cIncome, COL_IN) +
+    (hasTuz ? line(cTuz, COL_TUZ) : '') +
     dots(cCosts, costs, COL_COST, 'Затраты') + dots(cIncome, income, COL_IN, 'Поступления') +
+    (hasTuz ? dots(cTuz, tuz, COL_TUZ, 'ТУЗИО') : '') +
     labels + '</svg>';
 
   const tCost = cCosts[cCosts.length - 1];
@@ -2277,6 +2287,8 @@ function renderAnalytics() {
     fmtM(tCost) + '</span>' +
     '<span><span class="an-dot" style="background:' + COL_IN + '"></span>Поступления (Форма КП): ' +
     fmtM(tIn) + '</span>' +
+    (hasTuz ? '<span><span class="an-dot" style="background:' + COL_TUZ + '"></span>ТУЗИО: ' +
+      fmtM(cTuz[cTuz.length - 1]) + '</span>' : '') +
     '<span>Разница: <b style="color:' + (diff >= 0 ? COL_IN : COL_COST) + '">' +
     fmtM(diff) + '</b></span></div>';
 
