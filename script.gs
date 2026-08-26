@@ -93,7 +93,7 @@ var CACHE_BUDGET = 'budget_v28';  // свод бюджета: статья -> р
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
-var CACHE_AN = 'analytics_v3';    // затраты/поступления/ТУЗИО по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
+var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
@@ -1228,12 +1228,11 @@ function buildAnalytics_(ss) {
     }
   }
 
-  // Лист «ТУЗИО» (26.08.2026): месячные колонки с кол. C (даты в строке 1),
-  // строки без заголовков — суммируем все числовые значения колонки месяца.
-  // tuzioRows — сумма по каждой строке листа (контроль состава и задел под
-  // разрез; название строки — кол. A, пустая — кол. B).
+  // Лист «ТУЗИО» (26.08.2026): месячные колонки с кол. C (даты в строке 1).
+  // Отдаём в разрезе строк — статья -> {месяц: сумма}, как mors/kp: фронт
+  // фильтрует тем же списком отделочных статей (уточнение пользователя 26.08).
+  // Название строки — кол. B (в кол. A числовые итоги), пустая — кол. A.
   var tuzio = {};
-  var tuzioRows = [];
   var shT = ss.getSheetByName(CONFIG.SHEET_TUZIO);
   if (shT && shT.getLastRow() > 1) {
     var dataT = shT.getRange(1, 1, shT.getLastRow(), shT.getLastColumn()).getValues();
@@ -1243,21 +1242,17 @@ function buildAnalytics_(ss) {
       if (hT && hT.getTime) colsT.push([cT, ym(hT)]);
     }
     for (var rT = 1; rT < dataT.length; rT++) {
-      var rowSumT = 0;
+      var nameT = String(dataT[rT][1]).trim() || String(dataT[rT][0]).trim();
+      if (!nameT) continue;
       for (var qT = 0; qT < colsT.length; qT++) {
         var vT = dataT[rT][colsT[qT][0]];
         if (typeof vT !== 'number' || !vT) continue;
-        rowSumT += vT;
         var moT = colsT[qT][1];
-        tuzio[moT] = (tuzio[moT] || 0) + vT;
+        if (!tuzio[nameT]) tuzio[nameT] = {};
+        tuzio[nameT][moT] = (tuzio[nameT][moT] || 0) + vT;
         monthsSet[moT] = 1;
       }
-      if (rowSumT) {
-        var nameT = String(dataT[rT][0]).trim() || String(dataT[rT][1]).trim() || '— без названия —';
-        tuzioRows.push([nameT, Math.round(rowSumT)]);
-      }
     }
-    Object.keys(tuzio).forEach(function (mo) { tuzio[mo] = Math.round(tuzio[mo]); });
   }
 
   var roundMap = function (src) {
@@ -1267,10 +1262,11 @@ function buildAnalytics_(ss) {
   };
   roundMap(mors);
   roundMap(kp);
+  roundMap(tuzio);
   Object.keys(morsStatus).forEach(function (s) { morsStatus[s] = Math.round(morsStatus[s]); });
 
   return { months: Object.keys(monthsSet).sort(), mors: mors, kp: kp,
-           tuzio: tuzio, tuzioRows: tuzioRows, morsStatus: morsStatus };
+           tuzio: tuzio, morsStatus: morsStatus };
 }
 
 /**

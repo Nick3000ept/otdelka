@@ -2197,10 +2197,10 @@ function renderAnalytics() {
   };
   let costs = sumSrc(a.mors);
   let income = sumSrc(a.kp);
-  // Третья линия — «ТУЗИО» (26.08.2026): лист без разреза по статьям, поэтому
-  // при выбранной статье (anSel) линия скрывается.
-  let tuz = months.map(m => (a.tuzio || {})[m] || 0);
-  const hasTuz = !selK && tuz.some(v => v);
+  // Третья линия — «ТУЗИО» (26.08.2026): тот же фильтр отделочных статей и
+  // выбранной статьи, что у МОРС/КП (уточнение пользователя 26.08).
+  let tuz = sumSrc(a.tuzio);
+  const hasTuz = tuz.some(v => v);
   // Пустые месяцы в начале (до первых движений по отделке) не показываем.
   let start = 0;
   while (start < months.length - 1 && !costs[start] && !income[start] &&
