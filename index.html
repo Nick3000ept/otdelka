@@ -87,11 +87,14 @@
     padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel2); color: var(--text); font-size: 13px; max-width: 260px;
   }
-  #f-reset, #f-toggle-all {
+  #f-reset {
     padding: 6px 12px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel2); color: var(--text-dim); font-size: 12px; cursor: pointer;
   }
-  #f-reset:hover, #f-toggle-all:hover { color: var(--text); }
+  #f-reset:hover { color: var(--text); }
+  /* Галочка «Собственные силы» в шапке (26.08.2026). */
+  .fss { font-size: 12px; color: var(--text-dim); cursor: pointer; white-space: nowrap; margin-left: 8px; }
+  .fss input { vertical-align: -2px; }
   /* Кнопки масштаба текста таблиц А− / 100% / А+ (14.08.2026). */
   .zbtn {
     padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
@@ -363,6 +366,9 @@
   table.check.qtab th.c-date { width: 120px; }
   table.check.qtab th.c-who { width: 170px; }
 
+  /* Шапка на «Бюджете»/«Проверках» (26.08.2026): только масштаб и поиск,
+     фильтры дерева работ скрыты — они относятся к «Расценкам»/«Объемам»/«Факту». */
+  header.compact .flt:not(.flt-keep), header.compact #f-reset { display: none; }
   /* Экраны проверок, бюджета и аналитики. */
   #check-screen, #budget-screen, #analytics-screen { flex: 1; overflow: auto; padding: 14px 16px; }
   /* Вкладка «Аналитика» (26.08.2026): график затраты — поступления. */
@@ -642,7 +648,8 @@
       <span class="flt"><label for="f-group">Группа работ</label><select id="f-group"></select></span>
       <span class="flt"><label for="f-place">Место</label><select id="f-place"></select></span>
       <span class="flt"><label for="f-surface">Поверхность</label><select id="f-surface"></select></span>
-      <button id="f-toggle-all" type="button">Развернуть все</button>
+      <span class="flt flt-keep" id="flt-contr-wrap"><label for="f-contr">Подрядчик</label><select id="f-contr"><option value="">— все —</option></select>
+        <label class="fss" for="f-ss"><input type="checkbox" id="f-ss"> Собственные силы</label></span>
       <button id="f-reset" type="button">Сбросить</button>
       <div class="search-wrap">
         <button id="zoom-out" type="button" class="zbtn"
@@ -775,6 +782,9 @@ const state = {
   analytics: null,             // затраты/поступления по месяцам (action=analytics, 26.08.2026)
   analyticsStatus: 'idle',     // idle | loading | ready | error
   anSel: null,                 // выбранная статья на «Аналитике» (ключ anKey) — линии только по ней
+  checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
+  contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
+  ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetSectOpen: new Set(),     // РАСКРЫТЫЕ секции статей «Квартиры»/«МОП» (25.08.2026)
@@ -1115,8 +1125,20 @@ function renderTable() {
   const cols = workColumns(rows);
   const keys = searchKeys(rows);
   const q = state.query.trim().toLowerCase();
+  // Фильтры «Подрядчик» и «Собственные силы» из шапки (26.08.2026): действующий
+  // набор = выбранный подрядчик ∪ СС-четвёрка при галочке (как budgetSelSet на
+  // «Бюджете»); работа проходит, если в поэтажке по ней есть хоть один из набора.
+  // Пока сводка floors грузится — не фильтруем (иначе список мигал бы пустым).
+  const contrSet = new Set(state.contrSel ? [state.contrSel] : []);
+  if (state.ssSel) BUDGET_SS_CONTRS.forEach(n => contrSet.add(n));
+  const contrOk = r => {
+    if (!contrSet.size || state.floorsStatus !== 'ready') return true;
+    return (state.floors[norm(r[WORK_KEY])] || [])
+      .some(c => contrSet.has(String(c[0]).trim()));
+  };
   const filtered = rows.filter(r =>
-    passesFilters(r) && (!q || keys.some(h => String(r[h]).toLowerCase().includes(q)))
+    passesFilters(r) && contrOk(r) &&
+    (!q || keys.some(h => String(r[h]).toLowerCase().includes(q)))
   );
   // Выбранная работа исчезла из отфильтрованного списка — снимаем выбор,
   // иначе внизу висели бы данные работы, которой на экране нет.
@@ -2669,6 +2691,7 @@ document.getElementById('budget-screen').addEventListener('input', e => {
   clearTimeout(bsearchTimer);
   bsearchTimer = setTimeout(() => {
     state.budgetQuery = v;
+    document.getElementById('search').value = v;   // поле в шапке — то же самое
     renderBudget();
     const inp = document.getElementById('bsearch');
     if (inp) {
@@ -2682,6 +2705,8 @@ document.getElementById('budget-screen').addEventListener('input', e => {
 document.getElementById('budget-screen').addEventListener('change', e => {
   if (e.target.id !== 'bss-check') return;
   state.budgetSS = e.target.checked;
+  state.ssSel = e.target.checked;
+  document.getElementById('f-ss').checked = e.target.checked;   // галочка в шапке — та же
   renderBudget();
 });
 
@@ -3865,7 +3890,16 @@ function setScreen(screen) {
   const isCheck = !!CHECK_SCREENS[screen];
   const isBudget = screen === 'budget';
   const isAnalytics = screen === 'analytics';
-  document.querySelector('header').style.display = (isCheck || isBudget || isAnalytics) ? 'none' : '';
+  // Шапка с масштабом и поиском — на всех экранах, кроме «Аналитики»
+  // (просьба 26.08.2026); на «Бюджете»/«Проверках» — без фильтров дерева работ.
+  const hdr = document.querySelector('header');
+  hdr.style.display = isAnalytics ? 'none' : '';
+  hdr.classList.toggle('compact', isCheck || isBudget);
+  // Поле поиска на каждом экране своё: дерево работ / фильтр бюджета / проверки.
+  document.getElementById('search').value =
+    isBudget ? state.budgetQuery : (isCheck ? state.checkQuery : state.query);
+  // Фильтр «Подрядчик» на «Проверках» не действует — там его прячем.
+  document.getElementById('flt-contr-wrap').style.display = isCheck ? 'none' : '';
   document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
   document.getElementById('budget-screen').style.display = isBudget ? 'block' : 'none';
   document.getElementById('analytics-screen').style.display = isAnalytics ? 'block' : 'none';
@@ -4138,17 +4172,57 @@ document.getElementById('zoom-in').addEventListener('click', () => applyZoom(sta
 document.getElementById('zoom-reset').addEventListener('click', () => applyZoom(1));
 applyZoom(parseFloat(localStorage.getItem('otdelka_zoom')) || 1);
 
-document.getElementById('f-toggle-all').addEventListener('click', e => {
-  const expandAll = state.collapsed.size > 0;
-  state.collapsed = expandAll ? new Set() : new Set(allGroupKeys(groupWorks(state.works)));
-  e.target.textContent = expandAll ? 'Свернуть все' : 'Развернуть все';
-  if (state.works.length) renderTable();
+// Кнопка «Развернуть все» убрана по просьбе пользователя 26.08.2026
+// (уровни по-прежнему раскрываются кликом по строке).
+
+// Фильтр «Подрядчик» в шапке (26.08.2026): на дереве работ (Расценки/Объемы/
+// Факт) остаются работы, где у подрядчика есть ячейки в поэтажке (по сводке
+// floors); на «Бюджете» выбор транслируется в фильтр бюджета по подрядчикам.
+document.getElementById('f-contr').addEventListener('change', e => {
+  state.contrSel = e.target.value;
+  if (state.screen === 'budget') {
+    state.budgetContr = new Set(state.contrSel ? [state.contrSel] : []);
+    renderBudget();
+  } else if (state.works.length) {
+    renderTable();
+  }
 });
+
+// Галочка «Собственные силы» в шапке (26.08.2026): на дереве работ добавляет
+// СС-четвёрку к фильтру, на «Бюджете» — та же галочка, что #bss-check.
+document.getElementById('f-ss').addEventListener('change', e => {
+  state.ssSel = e.target.checked;
+  if (state.screen === 'budget') {
+    state.budgetSS = e.target.checked;
+    renderBudget();
+  } else if (state.works.length) {
+    renderTable();
+  }
+});
+
+function populateContrFilter() {
+  const sel = document.getElementById('f-contr');
+  if (!sel || state.floorsStatus !== 'ready') return;
+  const set = new Set();
+  Object.keys(state.floors).forEach(w => {
+    (state.floors[w] || []).forEach(c => {
+      const n = String(c[0]).trim();
+      if (n) set.add(n);
+    });
+  });
+  sel.innerHTML = '<option value="">— все —</option>' + Array.from(set)
+    .sort((a, b) => a.localeCompare(b, 'ru'))
+    .map(n => '<option value="' + escapeHtml(n) + '"' +
+      (n === state.contrSel ? ' selected' : '') + '>' + escapeHtml(n) + '</option>').join('');
+}
 
 document.getElementById('f-reset').addEventListener('click', () => {
   state.filters = { group: '', place: '', surface: '' };
   state.query = '';
-  ['f-group', 'f-place', 'f-surface'].forEach(id => { document.getElementById(id).value = ''; });
+  state.contrSel = '';
+  state.ssSel = false;
+  ['f-group', 'f-place', 'f-surface', 'f-contr'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('f-ss').checked = false;
   document.getElementById('search').value = '';
   if (state.works.length) renderTable();
 });
@@ -4238,6 +4312,7 @@ async function loadFloors() {
     state.floors = json.floors || {};
     state.floorsSS = json.ssNames || {};
     state.floorsStatus = 'ready';
+    populateContrFilter();   // список фильтра «Подрядчик» в шапке (26.08.2026)
   } catch (e) {
     state.floorsStatus = 'error';
   }
@@ -4278,10 +4353,32 @@ let searchTimer;
 document.getElementById('search').addEventListener('input', e => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
-    state.query = e.target.value;
-    if (state.works.length) renderTable();
+    const v = e.target.value;
+    if (state.screen === 'budget') {
+      // То же самое, что поле «Фильтр по работе...» на экране бюджета.
+      state.budgetQuery = v;
+      renderBudget();
+    } else if (CHECK_SCREENS[state.screen]) {
+      state.checkQuery = v;
+      applyCheckSearch();
+    } else {
+      state.query = v;
+      if (state.works.length) renderTable();
+    }
   }, 150);
 });
+
+// Поиск на «Проверках» (26.08.2026): простой фильтр по тексту — строки таблиц
+// без совпадения скрываются. Перерисовка экрана возвращает все строки, поэтому
+// фильтр накладывается заново при каждом обновлении содержимого (observer).
+function applyCheckSearch() {
+  const q = norm(state.checkQuery || '');
+  document.querySelectorAll('#check-screen tbody tr').forEach(tr => {
+    tr.style.display = (!q || norm(tr.textContent).indexOf(q) !== -1) ? '' : 'none';
+  });
+}
+new MutationObserver(() => { if (state.checkQuery) applyCheckSearch(); })
+  .observe(document.getElementById('check-screen'), { childList: true, subtree: true });
 
 if (state.token) {
   showApp();

@@ -81,6 +81,21 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
 - Пункт сайдбара `data-screen="analytics"` (под «Бюджетом»), контейнер
   `#analytics-screen`, CSS `.an-legend`/`.an-dot`/`.an-chart` (~367);
   `state.analytics`/`analyticsStatus`; ветка isAnalytics в `setScreen`
+## index.html — шапка (26.08.2026)
+
+- Шапка видна везде, кроме «Аналитики»: в `setScreen` `header.compact` на
+  Бюджете/Проверках (CSS прячет `.flt:not(.flt-keep)` и #f-reset); кнопка
+  «Развернуть все» убрана (обработчик заменён комментарием)
+- Поиск `#search` контекстный (обработчик у поля): rates/volumes/fact →
+  `state.query`+renderTable; budget → `state.budgetQuery`+renderBudget
+  (синхронизация с #bsearch в обе стороны); проверки → `state.checkQuery` +
+  `applyCheckSearch` (скрытие строк, MutationObserver на #check-screen)
+- Фильтр «Подрядчик» `#f-contr` (`state.contrSel`, `populateContrFilter` из
+  floors) + галочка «Собственные силы» `#f-ss` (`state.ssSel`): в renderTable
+  фильтр `contrOk` (набор = подрядчик ∪ BUDGET_SS_CONTRS при галочке); на
+  budget транслируются в budgetContr/budgetSS; на проверках скрыты
+  (#flt-contr-wrap display none)
+
 - `AN_ITEMS`/`anNorm`/`anMatch` (перед `loadAnalytics`) — зашитый список статей
   отделки (26.08): только они входят в линии; «паркинг»/«лобби» по префиксу
 - `loadAnalytics`/`renderAnalytics` (после `renderBudget`, перед `alignBudgetHead`) —
