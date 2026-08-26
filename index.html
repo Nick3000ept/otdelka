@@ -414,6 +414,8 @@
   table.check.anitems tr.anrow { cursor: pointer; }
   table.check.anitems tr.anrow:hover td { background: #eef2f8; }
   table.check.anitems tr.anrow.sel td { background: #dbe7fb; }
+  /* Блок «Нет в бюджете с Заказчиком» — статьи без поступлений (26.08.2026). */
+  table.check.anitems tr.an-noinc td { font-weight: 700; background: #eef1f5; }
   button.anpay {
     padding: 2px 10px; font-size: 11px; border: 1px solid var(--border);
     border-radius: 6px; background: #fff; cursor: pointer; color: var(--accent);
@@ -2308,18 +2310,30 @@ function renderAnalytics() {
   const totI = tRows.reduce((s, r0) => s + r0.inc, 0);
   const dTd = d => '<td class="num" style="color:' + (d < 0 ? COL_COST : COL_IN) +
     ';font-weight:600">' + escapeHtml(fmtInt(Math.round(d))) + '</td>';
+  const rowHtml = r0 =>
+    '<tr class="anrow' + (selK === r0.k ? ' sel' : '') + '" data-key="' + escapeHtml(r0.k) + '">' +
+    '<td>' + escapeHtml(r0.name) + '</td>' +
+    '<td class="num">' + (r0.cost ? escapeHtml(fmtInt(Math.round(r0.cost))) : '') + '</td>' +
+    '<td class="num">' + (r0.inc ? escapeHtml(fmtInt(Math.round(r0.inc))) : '') + '</td>' +
+    dTd(r0.inc - r0.cost) +
+    '<td class="num">' + (r0.cost ? '<button type="button" class="anpay" data-key="' +
+      escapeHtml(r0.k) + '" data-name="' + escapeHtml(r0.name) +
+      '" title="Показать платежи МОРС по статье">Платежи</button>' : '') + '</td></tr>';
+  // Статьи без поступлений — отдельным блоком внизу (просьба 26.08.2026):
+  // по ним нет закрытия у заказчика, т.е. их нет в бюджете с заказчиком.
+  const withInc = tRows.filter(r0 => r0.inc);
+  const noInc = tRows.filter(r0 => !r0.inc);
+  const noIncC = noInc.reduce((s, r0) => s + r0.cost, 0);
+  const noIncBlock = noInc.length
+    ? '<tr class="an-noinc"><td>Нет в бюджете с Заказчиком (' + noInc.length + ')</td>' +
+      '<td class="num">' + escapeHtml(fmtInt(Math.round(noIncC))) + '</td>' +
+      '<td class="num"></td>' + dTd(-noIncC) + '<td></td></tr>' +
+      noInc.map(rowHtml).join('')
+    : '';
   const tbl = '<table class="check anitems"><thead><tr><th>Статья</th>' +
     '<th class="num">Затраты (МОРС), руб</th><th class="num">Поступления (КП), руб</th>' +
     '<th class="num">Разница, руб</th><th></th></tr></thead><tbody>' +
-    tRows.map(r0 =>
-      '<tr class="anrow' + (selK === r0.k ? ' sel' : '') + '" data-key="' + escapeHtml(r0.k) + '">' +
-      '<td>' + escapeHtml(r0.name) + '</td>' +
-      '<td class="num">' + (r0.cost ? escapeHtml(fmtInt(Math.round(r0.cost))) : '') + '</td>' +
-      '<td class="num">' + (r0.inc ? escapeHtml(fmtInt(Math.round(r0.inc))) : '') + '</td>' +
-      dTd(r0.inc - r0.cost) +
-      '<td class="num">' + (r0.cost ? '<button type="button" class="anpay" data-key="' +
-        escapeHtml(r0.k) + '" data-name="' + escapeHtml(r0.name) +
-        '" title="Показать платежи МОРС по статье">Платежи</button>' : '') + '</td></tr>').join('') +
+    withInc.map(rowHtml).join('') + noIncBlock +
     '</tbody><tfoot><tr><td>Итого</td><td class="num">' + escapeHtml(fmtInt(Math.round(totC))) +
     '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totI))) + '</td>' +
     dTd(totI - totC) + '<td></td></tr></tfoot></table>';
