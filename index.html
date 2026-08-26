@@ -2113,9 +2113,12 @@ function renderAnalytics() {
   const cCosts = cum(costs);
   const cIncome = cum(income);
 
-  // Геометрия: ширина от числа месяцев, контейнер прокручивается по горизонтали.
-  const padL = 92, padR = 28, padT = 16, padB = 64, stepX = 56, H = 440;
-  const W = padL + padR + stepX * Math.max(1, months.length - 1);
+  // Геометрия: график вписывается в ширину экрана без прокрутки (просьба 26.08.2026) —
+  // шаг между месяцами считается от ширины контейнера, при resize перерисовка.
+  const padL = 92, padR = 28, padT = 16, padB = 64, H = 440;
+  const availW = Math.max(480, (el.clientWidth || 900) - 44);
+  const stepX = Math.max(8, (availW - padL - padR) / Math.max(1, months.length - 1));
+  const W = Math.round(padL + padR + stepX * Math.max(1, months.length - 1));
   const maxV = Math.max(cCosts[cCosts.length - 1], cIncome[cIncome.length - 1], 1) * 1.06;
   const x = i => padL + i * stepX;
   const y = v => padT + (H - padT - padB) * (1 - v / maxV);
@@ -2137,12 +2140,16 @@ function renderAnalytics() {
   const line = (arr, color) =>
     '<polyline fill="none" stroke="' + color + '" stroke-width="2.5" points="' +
     arr.map((v, i) => x(i) + ',' + y(v)).join(' ') + '"/>';
+  const dotR = stepX < 22 ? 2.5 : 3.5;
   const dots = (arr, monthly, color, name) => arr.map((v, i) =>
-    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3.5" fill="' + color + '">' +
+    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="' + dotR + '" fill="' + color + '">' +
     '<title>' + name + ' на ' + mLabel(months[i]) + ': ' + fmtM(v) +
     ' (за месяц ' + fmtM(monthly[i]) + ')</title></circle>').join('');
+  // Подписи месяцев прореживаются, чтобы не налезали при сжатом шаге.
+  const labelEvery = Math.max(1, Math.ceil(34 / stepX));
   let labels = '';
   months.forEach((m, i) => {
+    if (i % labelEvery !== 0 && i !== months.length - 1) return;
     labels += '<text x="' + x(i) + '" y="' + (H - padB + 18) + '" text-anchor="end" ' +
       'font-size="10" fill="#667" transform="rotate(-45 ' + x(i) + ' ' + (H - padB + 18) + ')">' +
       mLabel(m) + '</text>';
@@ -2171,6 +2178,11 @@ function renderAnalytics() {
   el.innerHTML = head + summary + '<div class="an-chart">' + svg + '</div>' +
     '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц. Суммы в млн руб.</div>';
 }
+
+// График «Аналитики» подстраивается под ширину окна — при resize перерисовать.
+window.addEventListener('resize', () => {
+  if (state.screen === 'analytics' && state.analyticsStatus === 'ready') renderAnalytics();
+});
 
 // Липкая шапка бюджета в два ряда: второму ряду нужен отступ сверху на высоту
 // первого, иначе при прокрутке ряды наезжают друг на друга. Высота первого ряда
