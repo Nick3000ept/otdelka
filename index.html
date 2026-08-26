@@ -124,6 +124,8 @@
   }
   .zbtn:hover { color: var(--text); }
   .search-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  /* Кнопки масштаба — вторая строка, справа (просьба 26.08.2026). */
+  .zoom-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   #search {
     padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
     background: var(--panel2); color: var(--text); font-size: 13px; width: 260px;
@@ -423,10 +425,13 @@
      колонки по 100px: место под текст увеличивалось трижды, последний раз вдвое
      (просьбы 05.08.2026). */
   table.check.budget { max-width: 2400px; }
-  /* Статье — явный auto: иначе на неё действует общий thead th {width:96px} основной
-     таблицы, фиксированная раскладка ломается и числовые колонки распухают
-     (баг 05.08.2026). Числовые — ровно 150px (просьба пользователя). */
-  table.check.budget th:first-child { width: auto; }
+  /* Статье — гарантированная ширина (26.08.2026): раньше был width:auto
+     («остаток» контейнера), но колонок стало много (~14 × 110px), при обычной
+     ширине окна остатка не оставалось и колонка сжималась В НОЛЬ — названия
+     статей «пропадали» (жалоба пользователя 26.08, совпала с возвратом
+     колонки «Базовый бюджет»). Теперь у названия всегда 340px, при нехватке
+     места #budget-screen прокручивается по горизонтали. */
+  table.check.budget th:first-child { width: 340px; }
   /* 24.08.2026: было 150px — сужено, чтобы больше места оставалось названию */
   table.check.budget th.num, table.check.budget td.num { width: 110px; }
   /* Общая шапка «Модель» над колонками факта (21.08.2026): шапка в два ряда,
@@ -636,17 +641,19 @@
         <span class="flt" id="flt-place-wrap"><label for="f-place">Место</label><select id="f-place"></select></span>
         <span class="flt" id="flt-surface-wrap"><label for="f-surface">Поверхность</label><select id="f-surface"></select></span>
         <span class="flt" id="flt-contr-wrap"><label for="f-contr">Подрядчик</label><select id="f-contr"><option value="">— все —</option></select></span>
+        <div class="search-wrap">
+          <input id="search" type="text" placeholder="Поиск..." autocomplete="off">
+          <div id="search-dd" style="display:none"></div>
+        </div>
       </div>
       <div class="frow">
         <label class="fss" for="f-ss"><input type="checkbox" id="f-ss"> Собственные силы</label>
         <button id="f-reset" type="button">Сбросить</button>
-        <div class="search-wrap">
+        <div class="zoom-wrap">
           <button id="zoom-out" type="button" class="zbtn"
             title="Мельче — чтобы длинные значения помещались в ячейки">А−</button>
           <button id="zoom-reset" type="button" class="zbtn" title="Обычный масштаб">100%</button>
           <button id="zoom-in" type="button" class="zbtn" title="Крупнее">А+</button>
-          <input id="search" type="text" placeholder="Поиск..." autocomplete="off">
-          <div id="search-dd" style="display:none"></div>
         </div>
       </div>
     </div>
