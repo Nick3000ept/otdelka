@@ -775,6 +775,50 @@ function doGet(e) {
     }
   }
 
+  // Платежи МОРС по одной статье (26.08.2026): все колонки листа для модалки
+  // «Платежи» на «Аналитике». Фильтр по «Статье бюджета» с той же нормализацией,
+  // что у anKey на фронте (трим, нижний регистр, длинное тире -> дефис;
+  // ключи «паркинг»/«лобби» — по префиксу). Без кэша — запрос редкий и точечный.
+  if (action === 'morsRows') {
+    try {
+      var shMr = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID)
+        .getSheetByName(CONFIG.SHEET_MORS);
+      if (!shMr) return jsonOut_({ ok: false, error: 'no_mors_sheet' });
+      var dataMr = shMr.getDataRange().getValues();
+      if (dataMr.length < 2) return jsonOut_({ ok: true, header: [], rows: [], count: 0, sum: 0 });
+      var headMr = dataMr[0].map(function (h) { return String(h); });
+      var itemColMr = -1, sumColMr = -1;
+      headMr.forEach(function (h, i) {
+        if (h.trim() === CONFIG.MORS_ITEM) itemColMr = i;
+        if (h.trim() === CONFIG.MORS_SUM) sumColMr = i;
+      });
+      if (itemColMr < 0) return jsonOut_({ ok: false, error: 'no_item_col' });
+      var normMr = function (s) {
+        return String(s).trim().toLowerCase().replace(/–/g, '-');
+      };
+      var keyMr = normMr(params.item || '');
+      var LIMIT_MR = 2000;   // защита от гигантского ответа
+      var rowsMr = [];
+      var sumMr = 0, totalMr = 0;
+      for (var rM = 1; rM < dataMr.length; rM++) {
+        var kM = normMr(dataMr[rM][itemColMr]);
+        var hitMr = keyMr === 'паркинг' ? kM.indexOf('паркинг') === 0
+          : keyMr === 'лобби' ? kM.indexOf('лобби') === 0 : kM === keyMr;
+        if (!hitMr) continue;
+        totalMr++;
+        if (sumColMr >= 0 && typeof dataMr[rM][sumColMr] === 'number') {
+          sumMr += dataMr[rM][sumColMr];
+        }
+        if (rowsMr.length < LIMIT_MR) rowsMr.push(dataMr[rM]);
+      }
+      return jsonOut_({ ok: true, header: headMr, rows: rowsMr,
+                        count: totalMr, sum: Math.round(sumMr),
+                        truncated: totalMr > LIMIT_MR });
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'mors_rows_failed', message: String(err) });
+    }
+  }
+
   // Проверка «Изменения» (05.08.2026): дифф текущей поэтажки против базового расчёта.
   // Тяжёлый расчёт, кэш 6 ч; кэш сбрасывается при фиксации новой базы (saveBaseline).
   if (action === 'changes') {
