@@ -375,6 +375,8 @@
     overflow-x: auto; border: 1px solid var(--border); border-radius: 8px;
     background: #fff; margin-top: 8px; padding: 6px 4px;
   }
+  /* Легенда статей под помесячными столбцами (26.08.2026) — компактнее. */
+  .an-legend.an-items { font-size: 11px; gap: 6px 16px; margin-top: 8px; }
   /* Свод бюджета. Колонка статьи/названия занимает всё, что не заняли три числовые
      колонки по 100px: место под текст увеличивалось трижды, последний раз вдвое
      (просьбы 05.08.2026). */
@@ -2223,8 +2225,86 @@ function renderAnalytics() {
     '<span>Разница: <b style="color:' + (diff >= 0 ? COL_IN : COL_COST) + '">' +
     fmtM(diff) + '</b></span></div>';
 
+  // Помесячные столбцы с разбивкой по статьям (просьба 26.08.2026): на каждый
+  // месяц пара столбцов — затраты (МОРС) слева и поступления (КП) справа,
+  // сегменты — статьи (общая палитра, крупные статьи первыми), подсказка на
+  // сегменте: статья, месяц, сумма.
+  const perItem = src => {
+    const out = new Map();   // anNorm(статья) -> { name, vals: по месяцам }
+    Object.keys(src || {}).filter(anMatch).forEach(it => {
+      const k = anNorm(it);
+      if (!out.has(k)) out.set(k, { name: it, vals: months.map(() => 0) });
+      const o = out.get(k);
+      months.forEach((m, i) => { o.vals[i] += (src[it] || {})[m] || 0; });
+    });
+    return out;
+  };
+  const morsItems = perItem(a.mors);
+  const kpItems = perItem(a.kp);
+  const totalsK = new Map();
+  [morsItems, kpItems].forEach(mp => mp.forEach((o, k) => {
+    totalsK.set(k, (totalsK.get(k) || 0) + o.vals.reduce((s, v) => s + v, 0));
+  }));
+  const orderK = Array.from(totalsK.keys()).sort((p, q) => totalsK.get(q) - totalsK.get(p));
+  const colorOf = new Map(orderK.map((k, i) =>
+    [k, 'hsl(' + Math.round((i * 137.5) % 360) + ',55%,42%)']));
+
+  const H2 = 380;
+  const maxMon = Math.max(1, ...costs, ...income) * 1.08;
+  const y2 = v => padT + (H2 - padT - padB) * (1 - v / maxMon);
+  const bw = Math.max(4, Math.min(16, stepX * 0.36));
+  const rawStep2 = maxMon / 5;
+  const pow2 = Math.pow(10, Math.floor(Math.log10(rawStep2)));
+  const niceStep2 = [1, 2, 2.5, 5, 10].map(k => k * pow2).find(s => s >= rawStep2);
+  let grid2 = '';
+  for (let v = 0; v <= maxMon; v += niceStep2) {
+    grid2 += '<line x1="' + padL + '" y1="' + y2(v) + '" x2="' + (W - padR) + '" y2="' + y2(v) +
+      '" stroke="#e3e8ef"/>' +
+      '<text x="' + (padL - 8) + '" y="' + (y2(v) + 4) + '" text-anchor="end" font-size="11" ' +
+      'fill="#667">' + fmtM(v) + '</text>';
+  }
+  let labels2 = '';
+  months.forEach((m, i) => {
+    if (i % labelEvery !== 0 && i !== months.length - 1) return;
+    labels2 += '<text x="' + x(i) + '" y="' + (H2 - padB + 18) + '" text-anchor="end" ' +
+      'font-size="10" fill="#667" transform="rotate(-45 ' + x(i) + ' ' + (H2 - padB + 18) + ')">' +
+      mLabel(m) + '</text>';
+  });
+  let bars = '';
+  months.forEach((m, i) => {
+    [[morsItems, x(i) - bw - 1, 'затраты'], [kpItems, x(i) + 1, 'поступления']]
+      .forEach(pairB => {
+        const mp = pairB[0], bx = pairB[1], nm = pairB[2];
+        let accV = 0;
+        orderK.forEach(k => {
+          const o = mp.get(k);
+          const v = o ? o.vals[i] : 0;
+          if (!v) return;
+          const yTop = y2(accV + v), yBot = y2(accV);
+          bars += '<rect x="' + bx + '" y="' + yTop + '" width="' + bw + '" height="' +
+            Math.max(0.5, yBot - yTop) + '" fill="' + colorOf.get(k) + '">' +
+            '<title>' + escapeHtml(o.name) + ' — ' + nm + ' ' + mLabel(m) + ': ' +
+            fmtM(v) + '</title></rect>';
+          accV += v;
+        });
+      });
+  });
+  const svg2 = '<svg width="' + W + '" height="' + H2 + '" xmlns="http://www.w3.org/2000/svg">' +
+    grid2 +
+    '<line x1="' + padL + '" y1="' + y2(0) + '" x2="' + (W - padR) + '" y2="' + y2(0) +
+    '" stroke="#99a"/>' + bars + labels2 + '</svg>';
+  const legend2 = '<div class="an-legend an-items">' + orderK.map(k => {
+    const name = (morsItems.get(k) || kpItems.get(k)).name;
+    return '<span><span class="an-dot" style="background:' + colorOf.get(k) + '"></span>' +
+      escapeHtml(name) + '</span>';
+  }).join('') + '</div>';
+
   el.innerHTML = head + summary + '<div class="an-chart">' + svg + '</div>' +
-    '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц. Суммы в млн руб.</div>';
+    '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц. Суммы в млн руб.</div>' +
+    '<div class="check-head" style="margin-top:18px">Помесячно по статьям</div>' +
+    '<div class="check-desc">В каждом месяце пара столбцов: слева затраты (МОРС), ' +
+    'справа поступления (Форма КП); цвет — статья, наведите на сегмент для суммы</div>' +
+    '<div class="an-chart">' + svg2 + '</div>' + legend2;
 }
 
 // График «Аналитики» подстраивается под ширину окна — при resize перерисовать.
