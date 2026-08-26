@@ -2080,6 +2080,36 @@ function renderBudget() {
  * разрез по статьям в данных уже есть — на будущее. График — рукописный SVG,
  * без библиотек (как весь проект).
  */
+// Статьи, относящиеся к отделке (список пользователя 26.08.2026, скриншот из
+// сводника) — только они входят в линии «Аналитики»; остальные статьи МОРС
+// (фасады, монолит, инженерка и т.п.) отбрасываются. Сравнение после norm()
+// с заменой длинного тире на дефис; статьи с началом «паркинг»/«лобби»
+// проходят по префиксу (в «Форме КП» это «Паркинг - МОП - …»).
+// Новая статья отделки в МОРС/КП — дописать сюда.
+const AN_ITEMS = [
+  'СБ3 - МОП - Стяжка', 'СБ3 - МОП - Чистовая отделка - ПОЛ', 'СБ3 - МОП - ГКЛ',
+  'СБ3 - МОП - Двери, люки', 'СБ3 - МОП - Декоративные элементы',
+  'СБ3 - МОП - Чистовая отделка - СТЕНЫ', 'СБ3 - МОП - Чистовая отделка - ПОТОЛОК',
+  'СБ3 - МОП - Штукатурка',
+  'СБ3 - Отделка MR Base Стяжка', 'СБ3 - Отделка MR Base ГКЛ перегородки',
+  'СБ3 - Отделка MR Base Шпатлевка стен', 'СБ3 - Отделка MR Base Штукатурка стен',
+  'СБ3 - Отделка MR Base Грунтовка потолка',
+  'Собственные силы факт на 01.08.2026 (табели и премии) почасовщики',
+  'Собственные силы выше 0,000 план с 01.08. Почасовщики',
+  'Затраты на сдельщиков', 'Собственные силы ниже 0,000. Почасовщики',
+  'Содержание Овчинников', 'Содержание Смирнов', 'Содержание Джамал',
+  'Содержание Элшод',
+  'Отделка МОП', 'Отделка МОП (перенос)',
+  'Отделка квартир MR Base', 'Отделка квартир MR Base (перенос)',
+  'Содержание отделки'
+];
+const anNorm = s => norm(s).replace(/–/g, '-');
+const AN_SET = new Set(AN_ITEMS.map(anNorm));
+const anMatch = name => {
+  const k = anNorm(name);
+  return AN_SET.has(k) || k.startsWith('паркинг') || k.startsWith('лобби');
+};
+
 async function loadAnalytics() {
   state.analyticsStatus = 'loading';
   try {
@@ -2098,8 +2128,8 @@ function renderAnalytics() {
   const el = document.getElementById('analytics-screen');
   if (state.analyticsStatus === 'idle') loadAnalytics();
   const head = '<div class="check-head">Аналитика</div>' +
-    '<div class="check-desc">Накопительно по месяцам: затраты — факт платежей из «МОРС», ' +
-    'поступления — закрытие у заказчика из «Формы КП»</div>';
+    '<div class="check-desc">Накопительно по месяцам, только статьи отделки: ' +
+    'затраты — факт платежей из «МОРС», поступления — закрытие у заказчика из «Формы КП»</div>';
   if (state.analyticsStatus !== 'ready') {
     el.innerHTML = head + '<div class="side-note">' +
       (state.analyticsStatus === 'error'
@@ -2109,16 +2139,24 @@ function renderAnalytics() {
     return;
   }
   const a = state.analytics || {};
-  const months = a.months || [];
+  let months = a.months || [];
   if (!months.length) {
     el.innerHTML = head + '<div class="side-note">Данных пока нет — проверьте листы «МОРС» и «Форма КП».</div>';
     return;
   }
-  // Помесячные суммы по всем статьям источника, затем накопительный итог.
-  const sumSrc = src => months.map(m =>
-    Object.keys(src || {}).reduce((acc, it) => acc + ((src[it] || {})[m] || 0), 0));
-  const costs = sumSrc(a.mors);
-  const income = sumSrc(a.kp);
+  // Помесячные суммы по статьям отделки (AN_ITEMS), затем накопительный итог.
+  const sumSrc = src => {
+    const keys = Object.keys(src || {}).filter(anMatch);
+    return months.map(m => keys.reduce((acc, it) => acc + ((src[it] || {})[m] || 0), 0));
+  };
+  let costs = sumSrc(a.mors);
+  let income = sumSrc(a.kp);
+  // Пустые месяцы в начале (до первых движений по отделке) не показываем.
+  let start = 0;
+  while (start < months.length - 1 && !costs[start] && !income[start]) start++;
+  months = months.slice(start);
+  costs = costs.slice(start);
+  income = income.slice(start);
   const cum = arr => { let s = 0; return arr.map(v => (s += v)); };
   const cCosts = cum(costs);
   const cIncome = cum(income);

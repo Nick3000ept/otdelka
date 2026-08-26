@@ -81,6 +81,8 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
 - Пункт сайдбара `data-screen="analytics"` (под «Бюджетом»), контейнер
   `#analytics-screen`, CSS `.an-legend`/`.an-dot`/`.an-chart` (~367);
   `state.analytics`/`analyticsStatus`; ветка isAnalytics в `setScreen`
+- `AN_ITEMS`/`anNorm`/`anMatch` (перед `loadAnalytics`) — зашитый список статей
+  отделки (26.08): только они входят в линии; «паркинг»/«лобби» по префиксу
 - `loadAnalytics`/`renderAnalytics` (после `renderBudget`, перед `alignBudgetHead`) —
   накопительные линии «затраты (МОРС)» и «поступления (Форма КП)», рукописный SVG
   (сетка с «круглым» шагом, подписи месяцев под −45°, title-подсказки на точках,
