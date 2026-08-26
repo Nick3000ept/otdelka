@@ -1128,12 +1128,16 @@ function renderTable() {
   // набор = выбранный подрядчик ∪ СС-четвёрка при галочке (как budgetSelSet на
   // «Бюджете»); работа проходит, если в поэтажке по ней есть хоть один из набора.
   // Пока сводка floors грузится — не фильтруем (иначе список мигал бы пустым).
-  const contrSet = new Set(state.contrSel ? [state.contrSel] : []);
+  // «— не назначено —» (26.08.2026): работы, у которых в сводке поэтажки нет
+  // ни одной строки с подрядчиком.
+  const noneSel = state.contrSel === '__none__';
+  const contrSet = new Set(state.contrSel && !noneSel ? [state.contrSel] : []);
   if (state.ssSel) BUDGET_SS_CONTRS.forEach(n => contrSet.add(n));
   const contrOk = r => {
-    if (!contrSet.size || state.floorsStatus !== 'ready') return true;
-    return (state.floors[norm(r[WORK_KEY])] || [])
-      .some(c => contrSet.has(String(c[0]).trim()));
+    if (state.floorsStatus !== 'ready' || (!noneSel && !contrSet.size)) return true;
+    const list = state.floors[norm(r[WORK_KEY])] || [];
+    return (noneSel && !list.length) ||
+      (contrSet.size > 0 && list.some(c => contrSet.has(String(c[0]).trim())));
   };
   // Выбранные в списке у поиска работы (26.08.2026): выбор активен — таблица
   // показывает только их, текст в поле тогда сужает лишь выпадающий список.
@@ -4124,7 +4128,11 @@ applyZoom(parseFloat(localStorage.getItem('otdelka_zoom')) || 1);
 document.getElementById('f-contr').addEventListener('change', e => {
   state.contrSel = e.target.value;
   if (state.screen === 'budget') {
-    state.budgetContr = new Set(state.contrSel ? [state.contrSel] : []);
+    // «— не назначено —» на бюджете = строки без подрядчика (ключ ячейки
+    // «— без подрядчика —», в старом выпадающем списке звался «Не определен»).
+    state.budgetContr = new Set(
+      state.contrSel === '__none__' ? ['— без подрядчика —']
+        : state.contrSel ? [state.contrSel] : []);
     renderBudget();
   } else if (state.works.length) {
     renderTable();
@@ -4153,7 +4161,11 @@ function populateContrFilter() {
       if (n) set.add(n);
     });
   });
-  sel.innerHTML = '<option value="">— все —</option>' + Array.from(set)
+  // «— не назначено —» (просьба 26.08.2026): на дереве — работы без единого
+  // подрядчика в поэтажке, на «Бюджете» — строки «— без подрядчика —».
+  sel.innerHTML = '<option value="">— все —</option>' +
+    '<option value="__none__"' + (state.contrSel === '__none__' ? ' selected' : '') +
+    '>— не назначено —</option>' + Array.from(set)
     .sort((a, b) => a.localeCompare(b, 'ru'))
     .map(n => '<option value="' + escapeHtml(n) + '"' +
       (n === state.contrSel ? ' selected' : '') + '>' + escapeHtml(n) + '</option>').join('');
