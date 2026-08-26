@@ -229,7 +229,7 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   FACT_PAID AA «К оплате», RATE AB, RATE_MAT AC, COST_WORK AE, BUDGET_COST AG);
   SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
 - ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v27`, `bfloors_v1`, `changes_v1`,
-  `factref_v1`, `analytics_v1` — все кроме floors чанкованные); ~55 `clearCache`
+  `factref_v1`, `analytics_v4` — все кроме floors чанкованные); ~55 `clearCache`
   (⚠️ новый ключ добавлять сюда). В CONFIG с 26.08 блок «Аналитики»: SHEET_MORS
   «МОРС» (MORS_SUM/MORS_DATE/MORS_ITEM) + KP_MONTHS_START 24 (кол. X «Формы КП»)
 - ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
