@@ -375,8 +375,11 @@
     overflow-x: auto; border: 1px solid var(--border); border-radius: 8px;
     background: #fff; margin-top: 8px; padding: 6px 4px;
   }
-  /* Легенда статей под помесячными столбцами (26.08.2026) — компактнее. */
-  .an-legend.an-items { font-size: 11px; gap: 6px 16px; margin-top: 8px; }
+  /* Таблица «По статьям» на «Аналитике» (26.08.2026): строки кликабельны. */
+  table.check.anitems { max-width: 980px; }
+  table.check.anitems tr.anrow { cursor: pointer; }
+  table.check.anitems tr.anrow:hover td { background: #eef2f8; }
+  table.check.anitems tr.anrow.sel td { background: #dbe7fb; }
   /* Свод бюджета. Колонка статьи/названия занимает всё, что не заняли три числовые
      колонки по 100px: место под текст увеличивалось трижды, последний раз вдвое
      (просьбы 05.08.2026). */
@@ -764,6 +767,7 @@ const state = {
   budgetStatus: 'idle',        // idle | loading | ready | error
   analytics: null,             // затраты/поступления по месяцам (action=analytics, 26.08.2026)
   analyticsStatus: 'idle',     // idle | loading | ready | error
+  anSel: null,                 // выбранная статья на «Аналитике» (ключ anKey) — линии только по ней
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetSectOpen: new Set(),     // РАСКРЫТЫЕ секции статей «Квартиры»/«МОП» (25.08.2026)
@@ -2111,6 +2115,14 @@ const anMatch = name => {
   const k = anNorm(name);
   return AN_SET.has(k) || k.startsWith('паркинг') || k.startsWith('лобби');
 };
+// Ключ статьи для сопоставления МОРС ↔ КП: паркинг- и лобби-статьи схлопываются
+// в одну строку «Паркинг»/«Лобби» (в «Форме КП» они разбиты: «Паркинг - МОП - …»).
+const anKey = name => {
+  const k = anNorm(name);
+  if (k.startsWith('паркинг')) return 'паркинг';
+  if (k.startsWith('лобби')) return 'лобби';
+  return k;
+};
 
 async function loadAnalytics() {
   state.analyticsStatus = 'loading';
@@ -2141,14 +2153,18 @@ function renderAnalytics() {
     return;
   }
   const a = state.analytics || {};
-  let months = a.months || [];
+  const allMonths = a.months || [];
+  let months = allMonths;
   if (!months.length) {
     el.innerHTML = head + '<div class="side-note">Данных пока нет — проверьте листы «МОРС» и «Форма КП».</div>';
     return;
   }
   // Помесячные суммы по статьям отделки (AN_ITEMS), затем накопительный итог.
+  // Если в таблице ниже выбрана статья (state.anSel) — линии только по ней.
+  const selK = state.anSel;
+  const keyOk = it => anMatch(it) && (!selK || anKey(it) === selK);
   const sumSrc = src => {
-    const keys = Object.keys(src || {}).filter(anMatch);
+    const keys = Object.keys(src || {}).filter(keyOk);
     return months.map(m => keys.reduce((acc, it) => acc + ((src[it] || {})[m] || 0), 0));
   };
   let costs = sumSrc(a.mors);
@@ -2225,87 +2241,69 @@ function renderAnalytics() {
     '<span>Разница: <b style="color:' + (diff >= 0 ? COL_IN : COL_COST) + '">' +
     fmtM(diff) + '</b></span></div>';
 
-  // Помесячные столбцы с разбивкой по статьям (просьба 26.08.2026): на каждый
-  // месяц пара столбцов — затраты (МОРС) слева и поступления (КП) справа,
-  // сегменты — статьи (общая палитра, крупные статьи первыми), подсказка на
-  // сегменте: статья, месяц, сумма.
+  // Таблица «По статьям» (просьба 26.08.2026, вместо нечитаемых столбцов):
+  // накопительные затраты (МОРС) и поступления (КП) по каждой статье с разницей.
+  // Итоги — по ВСЕМ месяцам (независимо от выбранной статьи и обрезки). Пустая
+  // ячейка = в этом источнике статьи нет — так видно корректность попадания.
+  // Клик по строке — линии сверху перестраиваются только по этой статье.
   const perItem = src => {
-    const out = new Map();   // anNorm(статья) -> { name, vals: по месяцам }
+    const out = new Map();   // anKey(статья) -> { name, total }
     Object.keys(src || {}).filter(anMatch).forEach(it => {
-      const k = anNorm(it);
-      if (!out.has(k)) out.set(k, { name: it, vals: months.map(() => 0) });
+      const k = anKey(it);
+      const nm = k === 'паркинг' ? 'Паркинг' : (k === 'лобби' ? 'Лобби' : it);
+      if (!out.has(k)) out.set(k, { name: nm, total: 0 });
       const o = out.get(k);
-      months.forEach((m, i) => { o.vals[i] += (src[it] || {})[m] || 0; });
+      allMonths.forEach(m => { o.total += (src[it] || {})[m] || 0; });
     });
     return out;
   };
   const morsItems = perItem(a.mors);
   const kpItems = perItem(a.kp);
-  const totalsK = new Map();
-  [morsItems, kpItems].forEach(mp => mp.forEach((o, k) => {
-    totalsK.set(k, (totalsK.get(k) || 0) + o.vals.reduce((s, v) => s + v, 0));
-  }));
-  const orderK = Array.from(totalsK.keys()).sort((p, q) => totalsK.get(q) - totalsK.get(p));
-  const colorOf = new Map(orderK.map((k, i) =>
-    [k, 'hsl(' + Math.round((i * 137.5) % 360) + ',55%,42%)']));
-
-  const H2 = 380;
-  const maxMon = Math.max(1, ...costs, ...income) * 1.08;
-  const y2 = v => padT + (H2 - padT - padB) * (1 - v / maxMon);
-  const bw = Math.max(4, Math.min(16, stepX * 0.36));
-  const rawStep2 = maxMon / 5;
-  const pow2 = Math.pow(10, Math.floor(Math.log10(rawStep2)));
-  const niceStep2 = [1, 2, 2.5, 5, 10].map(k => k * pow2).find(s => s >= rawStep2);
-  let grid2 = '';
-  for (let v = 0; v <= maxMon; v += niceStep2) {
-    grid2 += '<line x1="' + padL + '" y1="' + y2(v) + '" x2="' + (W - padR) + '" y2="' + y2(v) +
-      '" stroke="#e3e8ef"/>' +
-      '<text x="' + (padL - 8) + '" y="' + (y2(v) + 4) + '" text-anchor="end" font-size="11" ' +
-      'fill="#667">' + fmtM(v) + '</text>';
-  }
-  let labels2 = '';
-  months.forEach((m, i) => {
-    if (i % labelEvery !== 0 && i !== months.length - 1) return;
-    labels2 += '<text x="' + x(i) + '" y="' + (H2 - padB + 18) + '" text-anchor="end" ' +
-      'font-size="10" fill="#667" transform="rotate(-45 ' + x(i) + ' ' + (H2 - padB + 18) + ')">' +
-      mLabel(m) + '</text>';
+  const tRows = Array.from(new Set([...morsItems.keys(), ...kpItems.keys()])).map(k => {
+    const c = morsItems.get(k), p = kpItems.get(k);
+    return { k, name: (c || p).name, cost: c ? c.total : 0, inc: p ? p.total : 0 };
   });
-  let bars = '';
-  months.forEach((m, i) => {
-    [[morsItems, x(i) - bw - 1, 'затраты'], [kpItems, x(i) + 1, 'поступления']]
-      .forEach(pairB => {
-        const mp = pairB[0], bx = pairB[1], nm = pairB[2];
-        let accV = 0;
-        orderK.forEach(k => {
-          const o = mp.get(k);
-          const v = o ? o.vals[i] : 0;
-          if (!v) return;
-          const yTop = y2(accV + v), yBot = y2(accV);
-          bars += '<rect x="' + bx + '" y="' + yTop + '" width="' + bw + '" height="' +
-            Math.max(0.5, yBot - yTop) + '" fill="' + colorOf.get(k) + '">' +
-            '<title>' + escapeHtml(o.name) + ' — ' + nm + ' ' + mLabel(m) + ': ' +
-            fmtM(v) + '</title></rect>';
-          accV += v;
-        });
-      });
-  });
-  const svg2 = '<svg width="' + W + '" height="' + H2 + '" xmlns="http://www.w3.org/2000/svg">' +
-    grid2 +
-    '<line x1="' + padL + '" y1="' + y2(0) + '" x2="' + (W - padR) + '" y2="' + y2(0) +
-    '" stroke="#99a"/>' + bars + labels2 + '</svg>';
-  const legend2 = '<div class="an-legend an-items">' + orderK.map(k => {
-    const name = (morsItems.get(k) || kpItems.get(k)).name;
-    return '<span><span class="an-dot" style="background:' + colorOf.get(k) + '"></span>' +
-      escapeHtml(name) + '</span>';
-  }).join('') + '</div>';
+  // Худшее отклонение (затраты сильнее всего превышают поступления) — сверху.
+  tRows.sort((r1, r2) => (r1.inc - r1.cost) - (r2.inc - r2.cost));
+  const totC = tRows.reduce((s, r0) => s + r0.cost, 0);
+  const totI = tRows.reduce((s, r0) => s + r0.inc, 0);
+  const dTd = d => '<td class="num" style="color:' + (d < 0 ? COL_COST : COL_IN) +
+    ';font-weight:600">' + escapeHtml(fmtInt(Math.round(d))) + '</td>';
+  const tbl = '<table class="check anitems"><thead><tr><th>Статья</th>' +
+    '<th class="num">Затраты (МОРС), руб</th><th class="num">Поступления (КП), руб</th>' +
+    '<th class="num">Разница, руб</th></tr></thead><tbody>' +
+    tRows.map(r0 =>
+      '<tr class="anrow' + (selK === r0.k ? ' sel' : '') + '" data-key="' + escapeHtml(r0.k) + '">' +
+      '<td>' + escapeHtml(r0.name) + '</td>' +
+      '<td class="num">' + (r0.cost ? escapeHtml(fmtInt(Math.round(r0.cost))) : '') + '</td>' +
+      '<td class="num">' + (r0.inc ? escapeHtml(fmtInt(Math.round(r0.inc))) : '') + '</td>' +
+      dTd(r0.inc - r0.cost) + '</tr>').join('') +
+    '</tbody><tfoot><tr><td>Итого</td><td class="num">' + escapeHtml(fmtInt(Math.round(totC))) +
+    '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totI))) + '</td>' +
+    dTd(totI - totC) + '</tr></tfoot></table>';
+  const selName = selK && (morsItems.get(selK) || kpItems.get(selK))
+    ? (morsItems.get(selK) || kpItems.get(selK)).name : '';
+  const selNote = selK
+    ? '<div class="check-desc">Линии показаны только по статье <b>' + escapeHtml(selName) +
+      '</b> — повторный клик по её строке вернёт все статьи</div>'
+    : '';
 
-  el.innerHTML = head + summary + '<div class="an-chart">' + svg + '</div>' +
+  el.innerHTML = head + summary + selNote + '<div class="an-chart">' + svg + '</div>' +
     '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц. Суммы в млн руб.</div>' +
-    '<div class="check-head" style="margin-top:18px">Помесячно по статьям</div>' +
-    '<div class="check-desc">В каждом месяце пара столбцов: слева затраты (МОРС), ' +
-    'справа поступления (Форма КП); цвет — статья, наведите на сегмент для суммы</div>' +
-    '<div class="an-chart">' + svg2 + '</div>' + legend2;
+    '<div class="check-head" style="margin-top:18px">По статьям (накопительно за всё время)</div>' +
+    '<div class="check-desc">Худшие отклонения сверху; пустая ячейка — статьи нет в этом ' +
+    'источнике; клик по строке — динамика этой статьи на графике</div>' +
+    '<div class="bdetail-wrap">' + tbl + '</div>';
 }
+
+// Клик по строке таблицы статей «Аналитики» — линии только по этой статье
+// (повторный клик по той же строке — снова все статьи).
+document.getElementById('analytics-screen').addEventListener('click', e => {
+  const tr = e.target.closest('tr.anrow');
+  if (!tr) return;
+  state.anSel = state.anSel === tr.dataset.key ? null : tr.dataset.key;
+  renderAnalytics();
+});
 
 // График «Аналитики» подстраивается под ширину окна — при resize перерисовать.
 window.addEventListener('resize', () => {
