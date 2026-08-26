@@ -72,7 +72,15 @@ var CONFIG = {
   // Справочно показываем факт из поэтажки: «Процент готовности» (V) и «Объем к закрытию» (Z).
   SHEET_FACT: 'Факт',
   FLOOR_READY: 'Процент готовности',
-  FLOOR_CLOSE: 'Объем к закрытию'
+  FLOOR_CLOSE: 'Объем к закрытию',
+
+  // Вкладка «Аналитика» (26.08.2026): затраты — лист «МОРС» (журнал платежей),
+  // поступления — месячные колонки закрытия у заказчика в «Форме КП».
+  SHEET_MORS: 'МОРС',
+  MORS_SUM: 'Сумма расход',
+  MORS_DATE: 'Дата проводки',
+  MORS_ITEM: 'Статья бюджета',
+  KP_MONTHS_START: 24   // кол. X «Формы КП» — первая месячная колонка (даты в строке 1)
 };
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
@@ -81,19 +89,21 @@ var CACHE_BUDGET = 'budget_v27';  // свод бюджета: статья -> р
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
+var CACHE_AN = 'analytics_v1';    // затраты/поступления по месяцам (вкладка «Аналитика»); чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
   var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
-              CACHE_FACTREF + '_n'];
+              CACHE_FACTREF + '_n', CACHE_AN + '_n'];
   for (var i = 0; i < 10; i++) {
     keys.push(CACHE_VOLS + '_' + i);
     keys.push(CACHE_BUDGET + '_' + i);
     keys.push(CACHE_BFL + '_' + i);
     keys.push(CACHE_CHANGES + '_' + i);
     keys.push(CACHE_FACTREF + '_' + i);
+    keys.push(CACHE_AN + '_' + i);
   }
   cache.removeAll(keys);
 }
@@ -745,6 +755,26 @@ function doGet(e) {
     }
   }
 
+  // Вкладка «Аналитика» (26.08.2026): затраты (МОРС) и поступления («Форма КП»)
+  // по месяцам. Считается по двум листам, ответ маленький — кэш 6 часов.
+  if (action === 'analytics') {
+    try {
+      var cacheA = CacheService.getScriptCache();
+      var cachedA = cacheGetBig_(cacheA, CACHE_AN);
+      if (cachedA) {
+        return ContentService.createTextOutput(cachedA)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssA = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadA = JSON.stringify({ ok: true, analytics: buildAnalytics_(ssA) });
+      cachePutBig_(cacheA, CACHE_AN, payloadA, 21600);
+      return ContentService.createTextOutput(payloadA)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'analytics_failed', message: String(err) });
+    }
+  }
+
   // Проверка «Изменения» (05.08.2026): дифф текущей поэтажки против базового расчёта.
   // Тяжёлый расчёт, кэш 6 ч; кэш сбрасывается при фиксации новой базы (saveBaseline).
   if (action === 'changes') {
@@ -1058,6 +1088,99 @@ function readKp_(ss) {
   return Object.keys(map).map(function (name) {
     return [name, Math.round(map[name])];
   });
+}
+
+/**
+ * Вкладка «Аналитика» (26.08.2026): динамика «затраты — поступления» по месяцам.
+ * Затраты — лист «МОРС» (журнал платежей): «Сумма расход» по месяцу «Даты
+ * проводки», в разрезе «Статьи бюджета». Поступления — лист «Форма КП»:
+ * месячные колонки закрытия у заказчика начиная с кол. X (KP_MONTHS_START,
+ * даты месяцев в строке 1; колонки без даты в заголовке пропускаются),
+ * в разрезе статьи (кол. N). Ответ маленький: список месяцев + словари
+ * статья -> {месяц: сумма} по обоим источникам — накопительные линии строит
+ * фронт, разрез по статьям оставлен в данных на будущее. morsStatus —
+ * диагностика: суммы МОРС по значениям колонки «Статус» (фильтра по статусу
+ * пока нет — появятся непроведённые платежи, решить с пользователем).
+ */
+function buildAnalytics_(ss) {
+  var monthsSet = {};
+  var ym = function (d) {
+    return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2);
+  };
+
+  var mors = {};
+  var morsStatus = {};
+  var shM = ss.getSheetByName(CONFIG.SHEET_MORS);
+  if (shM && shM.getLastRow() > 1) {
+    var lastColM = shM.getLastColumn();
+    var headM = shM.getRange(1, 1, 1, lastColM).getValues()[0];
+    var idxM = {};
+    headM.forEach(function (h, i) { idxM[String(h).trim()] = i + 1; });
+    if (idxM[CONFIG.MORS_SUM] && idxM[CONFIG.MORS_DATE] && idxM[CONFIG.MORS_ITEM]) {
+      var nM = shM.getLastRow() - 1;
+      var sums = shM.getRange(2, idxM[CONFIG.MORS_SUM], nM, 1).getValues();
+      var dates = shM.getRange(2, idxM[CONFIG.MORS_DATE], nM, 1).getValues();
+      var items = shM.getRange(2, idxM[CONFIG.MORS_ITEM], nM, 1).getValues();
+      var stats = idxM['Статус']
+        ? shM.getRange(2, idxM['Статус'], nM, 1).getValues() : null;
+      for (var k = 0; k < nM; k++) {
+        var v = typeof sums[k][0] === 'number' ? sums[k][0] : 0;
+        var d = dates[k][0];
+        if (!v || !(d && d.getTime)) continue;
+        var m = ym(d);
+        var it = String(items[k][0]).trim() || '— без статьи —';
+        if (!mors[it]) mors[it] = {};
+        mors[it][m] = (mors[it][m] || 0) + v;
+        monthsSet[m] = 1;
+        if (stats) {
+          var st = String(stats[k][0]).trim() || '— без статуса —';
+          morsStatus[st] = (morsStatus[st] || 0) + v;
+        }
+      }
+    }
+  }
+
+  var kp = {};
+  var shK = ss.getSheetByName(CONFIG.SHEET_KP);
+  if (shK && shK.getLastRow() > 1) {
+    var lastColK = shK.getLastColumn();
+    var headK = shK.getRange(1, 1, 1, lastColK).getValues()[0];
+    var idxK = {};
+    headK.forEach(function (h, i) { idxK[String(h).trim()] = i + 1; });
+    var startK = CONFIG.KP_MONTHS_START;
+    if (idxK[CONFIG.KP_ITEM] && lastColK >= startK) {
+      var nK = shK.getLastRow() - 1;
+      var itemsK = shK.getRange(2, idxK[CONFIG.KP_ITEM], nK, 1).getValues();
+      var block = shK.getRange(2, startK, nK, lastColK - startK + 1).getValues();
+      var monthCols = [];   // [смещение в блоке, месяц]
+      for (var c = startK - 1; c < lastColK; c++) {
+        var h = headK[c];
+        if (h && h.getTime) monthCols.push([c - (startK - 1), ym(h)]);
+      }
+      for (var r = 0; r < nK; r++) {
+        var name = String(itemsK[r][0]).trim() || '— без статьи —';
+        for (var q = 0; q < monthCols.length; q++) {
+          var val = block[r][monthCols[q][0]];
+          if (typeof val !== 'number' || !val) continue;
+          var mo = monthCols[q][1];
+          if (!kp[name]) kp[name] = {};
+          kp[name][mo] = (kp[name][mo] || 0) + val;
+          monthsSet[mo] = 1;
+        }
+      }
+    }
+  }
+
+  var roundMap = function (src) {
+    Object.keys(src).forEach(function (it) {
+      Object.keys(src[it]).forEach(function (m) { src[it][m] = Math.round(src[it][m]); });
+    });
+  };
+  roundMap(mors);
+  roundMap(kp);
+  Object.keys(morsStatus).forEach(function (s) { morsStatus[s] = Math.round(morsStatus[s]); });
+
+  return { months: Object.keys(monthsSet).sort(), mors: mors, kp: kp, morsStatus: morsStatus };
 }
 
 /**

@@ -76,6 +76,16 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   2020 beforeunload; 2779 `closeModal` — немедленный flush несохранённого
 - 2697 setScreen ветка fact; клик tbody: fact -> openFactModal
 
+## index.html — Аналитика (26.08.2026)
+
+- Пункт сайдбара `data-screen="analytics"` (под «Бюджетом»), контейнер
+  `#analytics-screen`, CSS `.an-legend`/`.an-dot`/`.an-chart` (~367);
+  `state.analytics`/`analyticsStatus`; ветка isAnalytics в `setScreen`
+- `loadAnalytics`/`renderAnalytics` (после `renderBudget`, перед `alignBudgetHead`) —
+  накопительные линии «затраты (МОРС)» и «поступления (Форма КП)», рукописный SVG
+  (сетка с «круглым» шагом, подписи месяцев под −45°, title-подсказки на точках,
+  легенда с итогами и разницей); суммы в млн руб
+
 ## index.html — Бюджет
 
 - ~1505 `loadBudget`; ~1519 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
@@ -181,7 +191,9 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   FACT_PAID AA «К оплате», RATE AB, RATE_MAT AC, COST_WORK AE, BUDGET_COST AG);
   SHEET_FACT «Факт» + FLOOR_READY V / FLOOR_CLOSE Z
 - ~48–53 ключи кэша (`floors_v3`, `vols_v1`, `budget_v27`, `bfloors_v1`, `changes_v1`,
-  `factref_v1` — все кроме floors чанкованные); ~55 `clearCache` (⚠️ новый ключ добавлять сюда)
+  `factref_v1`, `analytics_v1` — все кроме floors чанкованные); ~55 `clearCache`
+  (⚠️ новый ключ добавлять сюда). В CONFIG с 26.08 блок «Аналитики»: SHEET_MORS
+  «МОРС» (MORS_SUM/MORS_DATE/MORS_ITEM) + KP_MONTHS_START 24 (кол. X «Формы КП»)
 - ~70 `cachePutBig_/cacheGetBig_` (чанки 90 КБ, лимит 10 шт)
 - ~96 `setup` (пароль); ~107–140 вопросы: `setupQuestions` (разовая авторизация Drive —
   ВЫПОЛНЕНА), `questionsFile_/readQuestions_/writeQuestions_` (QUESTIONS_FILE_ID)
@@ -195,9 +207,12 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   ветка ДО чтения вопросов) / importShamov (перезапись листа «расчет_Шамов»
   целиком, «Месяц» текстовым форматом; 24.08) / addQuestion / saveBaseline /
   setQuestionStatus (LockService, пароль)
+- `buildAnalytics_` (26.08, перед `readSsFact_`) — затраты МОРС × месяц и закрытия
+  «Формы КП» по месячным колонкам (даты в строке 1, без даты — пропуск), для
+  action=analytics (вкладка «Аналитика»; ответ статья → {месяц: сумма} + morsStatus)
 - ~393 `doGet`: ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
   `#sb-refresh` «Обновить данные» внизу сайдбара) · meta (безопасно из чата) ·
-  probe (агрегаты) · floors · volumes · questions · budget · changes ·
+  probe (агрегаты) · floors · volumes · questions · budget · analytics (26.08) · changes ·
   budgetFloors · fact (отметки, без кэша) · factRef (справка V/Z) · load
 - ~737 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
   ⚠️ ключ склеен через НЕВИДИМЫЙ символ (код 1) — Edit его не находит, править вокруг

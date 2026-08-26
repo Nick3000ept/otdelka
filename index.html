@@ -363,8 +363,18 @@
   table.check.qtab th.c-date { width: 120px; }
   table.check.qtab th.c-who { width: 170px; }
 
-  /* Экраны проверок и бюджета. */
-  #check-screen, #budget-screen { flex: 1; overflow: auto; padding: 14px 16px; }
+  /* Экраны проверок, бюджета и аналитики. */
+  #check-screen, #budget-screen, #analytics-screen { flex: 1; overflow: auto; padding: 14px 16px; }
+  /* Вкладка «Аналитика» (26.08.2026): график затраты — поступления. */
+  .an-legend { display: flex; gap: 24px; flex-wrap: wrap; margin: 10px 0 4px; font-size: 13px; }
+  .an-legend .an-dot {
+    display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+    margin-right: 6px; vertical-align: -1px;
+  }
+  .an-chart {
+    overflow-x: auto; border: 1px solid var(--border); border-radius: 8px;
+    background: #fff; margin-top: 8px; padding: 6px 4px;
+  }
   /* Свод бюджета. Колонка статьи/названия занимает всё, что не заняли три числовые
      колонки по 100px: место под текст увеличивалось трижды, последний раз вдвое
      (просьбы 05.08.2026). */
@@ -588,6 +598,7 @@
     <div class="sb-item" data-screen="volumes">Объемы</div>
     <div class="sb-item" data-screen="fact">Факт</div>
     <div class="sb-item" data-screen="budget">Бюджет</div>
+    <div class="sb-item" data-screen="analytics">Аналитика</div>
     <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
     <div id="sb-checks" style="display:none">
       <div class="sb-item sb-sub" data-screen="check-rates">Недостающие расценки
@@ -634,6 +645,7 @@
     </div>
     <div id="check-screen" style="display:none"></div>
     <div id="budget-screen" style="display:none"></div>
+    <div id="analytics-screen" style="display:none"></div>
     <div id="pane-bottom" style="display:none">
       <div id="pane-work"></div>
       <div id="bottom-cols">
@@ -741,6 +753,8 @@ const state = {
   checkOpen: null,             // раскрытая строка в проверке «Расценки работ»
   budget: null,                // свод статья -> стоимость + работы (action=budget)
   budgetStatus: 'idle',        // idle | loading | ready | error
+  analytics: null,             // затраты/поступления по месяцам (action=analytics, 26.08.2026)
+  analyticsStatus: 'idle',     // idle | loading | ready | error
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetSectOpen: new Set(),     // РАСКРЫТЫЕ секции статей «Квартиры»/«МОП» (25.08.2026)
@@ -2045,6 +2059,117 @@ function renderBudget() {
     '</tr></tfoot></table>';
   el.innerHTML = head + filterHtml + table;
   alignBudgetHead();
+}
+
+/**
+ * Вкладка «Аналитика» (26.08.2026): накопительная динамика «затраты —
+ * поступления». Затраты — лист «МОРС» (факт платежей, месяц из «Даты
+ * проводки»), поступления — месячные колонки закрытия у заказчика из «Формы
+ * КП» (с кол. X). Бэкенд отдаёт список месяцев и словари статья -> {месяц:
+ * сумма} (action=analytics, кэш 6 ч); две накопительные линии строятся здесь,
+ * разрез по статьям в данных уже есть — на будущее. График — рукописный SVG,
+ * без библиотек (как весь проект).
+ */
+async function loadAnalytics() {
+  state.analyticsStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=analytics&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.analytics = json.analytics || null;
+    state.analyticsStatus = 'ready';
+  } catch (e) {
+    state.analyticsStatus = 'error';
+  }
+  if (state.screen === 'analytics') renderAnalytics();
+}
+
+function renderAnalytics() {
+  const el = document.getElementById('analytics-screen');
+  if (state.analyticsStatus === 'idle') loadAnalytics();
+  const head = '<div class="check-head">Аналитика</div>' +
+    '<div class="check-desc">Накопительно по месяцам: затраты — факт платежей из «МОРС», ' +
+    'поступления — закрытие у заказчика из «Формы КП»</div>';
+  if (state.analyticsStatus !== 'ready') {
+    el.innerHTML = head + '<div class="side-note">' +
+      (state.analyticsStatus === 'error'
+        ? 'Не удалось загрузить данные. Обновите страницу.'
+        : 'Данные считаются по «МОРС» и «Форме КП» — на холодном кэше это может занять до полуминуты…') +
+      '</div>';
+    return;
+  }
+  const a = state.analytics || {};
+  const months = a.months || [];
+  if (!months.length) {
+    el.innerHTML = head + '<div class="side-note">Данных пока нет — проверьте листы «МОРС» и «Форма КП».</div>';
+    return;
+  }
+  // Помесячные суммы по всем статьям источника, затем накопительный итог.
+  const sumSrc = src => months.map(m =>
+    Object.keys(src || {}).reduce((acc, it) => acc + ((src[it] || {})[m] || 0), 0));
+  const costs = sumSrc(a.mors);
+  const income = sumSrc(a.kp);
+  const cum = arr => { let s = 0; return arr.map(v => (s += v)); };
+  const cCosts = cum(costs);
+  const cIncome = cum(income);
+
+  // Геометрия: ширина от числа месяцев, контейнер прокручивается по горизонтали.
+  const padL = 92, padR = 28, padT = 16, padB = 64, stepX = 56, H = 440;
+  const W = padL + padR + stepX * Math.max(1, months.length - 1);
+  const maxV = Math.max(cCosts[cCosts.length - 1], cIncome[cIncome.length - 1], 1) * 1.06;
+  const x = i => padL + i * stepX;
+  const y = v => padT + (H - padT - padB) * (1 - v / maxV);
+  const fmtM = v => fmtInt(Math.round(v / 1e6)) + ' млн';
+  const mLabel = m => m.slice(5) + '.' + m.slice(2, 4);
+
+  // Горизонтальная сетка с «круглым» шагом.
+  const rawStep = maxV / 5;
+  const pow = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const niceStep = [1, 2, 2.5, 5, 10].map(k => k * pow).find(s => s >= rawStep);
+  let grid = '';
+  for (let v = 0; v <= maxV; v += niceStep) {
+    grid += '<line x1="' + padL + '" y1="' + y(v) + '" x2="' + (W - padR) + '" y2="' + y(v) +
+      '" stroke="#e3e8ef"/>' +
+      '<text x="' + (padL - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="11" ' +
+      'fill="#667">' + fmtM(v) + '</text>';
+  }
+
+  const line = (arr, color) =>
+    '<polyline fill="none" stroke="' + color + '" stroke-width="2.5" points="' +
+    arr.map((v, i) => x(i) + ',' + y(v)).join(' ') + '"/>';
+  const dots = (arr, monthly, color, name) => arr.map((v, i) =>
+    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="3.5" fill="' + color + '">' +
+    '<title>' + name + ' на ' + mLabel(months[i]) + ': ' + fmtM(v) +
+    ' (за месяц ' + fmtM(monthly[i]) + ')</title></circle>').join('');
+  let labels = '';
+  months.forEach((m, i) => {
+    labels += '<text x="' + x(i) + '" y="' + (H - padB + 18) + '" text-anchor="end" ' +
+      'font-size="10" fill="#667" transform="rotate(-45 ' + x(i) + ' ' + (H - padB + 18) + ')">' +
+      mLabel(m) + '</text>';
+  });
+
+  const COL_COST = '#b42121', COL_IN = '#1d7d38';
+  const svg = '<svg width="' + W + '" height="' + H + '" xmlns="http://www.w3.org/2000/svg">' +
+    grid +
+    '<line x1="' + padL + '" y1="' + y(0) + '" x2="' + (W - padR) + '" y2="' + y(0) +
+    '" stroke="#99a"/>' +
+    line(cCosts, COL_COST) + line(cIncome, COL_IN) +
+    dots(cCosts, costs, COL_COST, 'Затраты') + dots(cIncome, income, COL_IN, 'Поступления') +
+    labels + '</svg>';
+
+  const tCost = cCosts[cCosts.length - 1];
+  const tIn = cIncome[cIncome.length - 1];
+  const diff = tIn - tCost;
+  const summary = '<div class="an-legend">' +
+    '<span><span class="an-dot" style="background:' + COL_COST + '"></span>Затраты (МОРС): ' +
+    fmtM(tCost) + '</span>' +
+    '<span><span class="an-dot" style="background:' + COL_IN + '"></span>Поступления (Форма КП): ' +
+    fmtM(tIn) + '</span>' +
+    '<span>Разница: <b style="color:' + (diff >= 0 ? COL_IN : COL_COST) + '">' +
+    fmtM(diff) + '</b></span></div>';
+
+  el.innerHTML = head + summary + '<div class="an-chart">' + svg + '</div>' +
+    '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц. Суммы в млн руб.</div>';
 }
 
 // Липкая шапка бюджета в два ряда: второму ряду нужен отступ сверху на высоту
@@ -3534,15 +3659,18 @@ function setScreen(screen) {
 
   const isCheck = !!CHECK_SCREENS[screen];
   const isBudget = screen === 'budget';
-  document.querySelector('header').style.display = (isCheck || isBudget) ? 'none' : '';
+  const isAnalytics = screen === 'analytics';
+  document.querySelector('header').style.display = (isCheck || isBudget || isAnalytics) ? 'none' : '';
   document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
   document.getElementById('budget-screen').style.display = isBudget ? 'block' : 'none';
-  if (isCheck || isBudget) {
+  document.getElementById('analytics-screen').style.display = isAnalytics ? 'block' : 'none';
+  if (isCheck || isBudget || isAnalytics) {
     document.getElementById('pane-top').style.display = 'none';
     document.getElementById('pane-bottom').style.display = 'none';
     document.getElementById('status').style.display = 'none';
     if (isCheck) CHECK_SCREENS[screen]();
-    else renderBudget();
+    else if (isBudget) renderBudget();
+    else renderAnalytics();
     return;
   }
 
