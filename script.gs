@@ -87,7 +87,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v27';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг, лобби, Подсоба Шамов, СС факт, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v28';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг с переделками 10%, лобби, Подсоба Шамов, СС факт, НР, переделки); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1456,8 +1456,12 @@ function readPark_(ss) {
     var works = Object.keys(map[item].works)
       .map(function (wKey) {
         var w = map[item].works[wKey];
+        // Переделки паркинга — плановые 10% от стоимости строки (просьба
+        // 26.08.2026): коэф. 0,1 в cell[4], сумма — в cell[14] (тот же индекс,
+        // что у переделок поэтажки AG−AI; 9–13 заняты спец-сводной Шамова).
         var cell = ['— без подрядчика —', 'Паркинг', Math.round(w.total),
-                    Math.round(w.vol * 100) / 100, 0, Math.round(w.w), 0, 0, 0];
+                    Math.round(w.vol * 100) / 100, 0.1, Math.round(w.w), 0, 0, 0,
+                    0, 0, 0, 0, 0, Math.round(w.total * 0.1)];
         return [w.name, Math.round(w.total), [cell], w.grp || '— без группы —', w.srf || ''];
       })
       .sort(function (a, b) { return b[1] - a[1]; });
