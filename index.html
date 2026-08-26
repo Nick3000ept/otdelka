@@ -2340,11 +2340,17 @@ async function openAnPayments(key, name) {
   }
 }
 
+// Служебные колонки МОРС в модалке не показываем (просьба 26.08.2026):
+// статья и очередь и так заданы фильтром, договорные колонки дублируют назначение.
+const AN_PAY_HIDDEN = new Set(['статья бюджета', 'договор контрагента',
+  'договор корректировка', 'очередь']);
+
 function anPaymentsHtml(json) {
   const head = json.header || [];
   const rows = (json.rows || []).slice();
   const di = head.findIndex(h => String(h).trim() === 'Дата проводки');
   if (di >= 0) rows.sort((r1, r2) => String(r2[di] || '').localeCompare(String(r1[di] || '')));
+  const vis = head.map((h, i) => i).filter(i => !AN_PAY_HIDDEN.has(norm(head[i])));
   const fmtN = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
   const cellV = v => {
     if (typeof v === 'number') return fmtN.format(v);
@@ -2356,11 +2362,13 @@ function anPaymentsHtml(json) {
     ' · сумма ' + escapeHtml(fmtInt(json.sum || 0)) + ' руб' +
     (json.truncated ? ' · показаны первые ' + rows.length : '') + '</div>' +
     '<div class="bdetail-wrap"><table class="check anpays"><thead><tr>' +
-    head.map(c => '<th>' + escapeHtml(String(c)) + '</th>').join('') +
+    vis.map(i => '<th>' + escapeHtml(String(head[i])) + '</th>').join('') +
     '</tr></thead><tbody>' +
-    rows.map(r0 => '<tr>' + r0.map(v =>
-      '<td' + (typeof v === 'number' ? ' class="num"' : '') + '>' +
-      escapeHtml(cellV(v)) + '</td>').join('') + '</tr>').join('') +
+    rows.map(r0 => '<tr>' + vis.map(i => {
+      const v = r0[i];
+      return '<td' + (typeof v === 'number' ? ' class="num"' : '') + '>' +
+        escapeHtml(cellV(v)) + '</td>';
+    }).join('') + '</tr>').join('') +
     '</tbody></table></div>';
 }
 

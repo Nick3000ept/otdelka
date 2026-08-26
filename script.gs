@@ -80,6 +80,8 @@ var CONFIG = {
   MORS_SUM: 'Сумма расход',
   MORS_DATE: 'Дата проводки',
   MORS_ITEM: 'Статья бюджета',
+  MORS_QUEUE: 'Очередь',       // кол. H: в журнале смешаны СБ3 и СБ5 — берём только СБ3
+  MORS_QUEUE_VALUE: 'СБ3',
   KP_MONTHS_START: 24   // кол. X «Формы КП» — первая месячная колонка (даты в строке 1)
 };
 
@@ -89,7 +91,7 @@ var CACHE_BUDGET = 'budget_v27';  // свод бюджета: статья -> р
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
-var CACHE_AN = 'analytics_v1';    // затраты/поступления по месяцам (вкладка «Аналитика»); чанкованный
+var CACHE_AN = 'analytics_v2';    // затраты/поступления по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
@@ -787,10 +789,11 @@ function doGet(e) {
       var dataMr = shMr.getDataRange().getValues();
       if (dataMr.length < 2) return jsonOut_({ ok: true, header: [], rows: [], count: 0, sum: 0 });
       var headMr = dataMr[0].map(function (h) { return String(h); });
-      var itemColMr = -1, sumColMr = -1;
+      var itemColMr = -1, sumColMr = -1, queueColMr = -1;
       headMr.forEach(function (h, i) {
         if (h.trim() === CONFIG.MORS_ITEM) itemColMr = i;
         if (h.trim() === CONFIG.MORS_SUM) sumColMr = i;
+        if (h.trim() === CONFIG.MORS_QUEUE) queueColMr = i;
       });
       if (itemColMr < 0) return jsonOut_({ ok: false, error: 'no_item_col' });
       var normMr = function (s) {
@@ -805,6 +808,9 @@ function doGet(e) {
         var hitMr = keyMr === 'паркинг' ? kM.indexOf('паркинг') === 0
           : keyMr === 'лобби' ? kM.indexOf('лобби') === 0 : kM === keyMr;
         if (!hitMr) continue;
+        // Как и в аналитике — только платежи очереди СБ3 (26.08.2026).
+        if (queueColMr >= 0 &&
+            String(dataMr[rM][queueColMr]).trim() !== CONFIG.MORS_QUEUE_VALUE) continue;
         totalMr++;
         if (sumColMr >= 0 && typeof dataMr[rM][sumColMr] === 'number') {
           sumMr += dataMr[rM][sumColMr];
@@ -1167,10 +1173,15 @@ function buildAnalytics_(ss) {
       var items = shM.getRange(2, idxM[CONFIG.MORS_ITEM], nM, 1).getValues();
       var stats = idxM['Статус']
         ? shM.getRange(2, idxM['Статус'], nM, 1).getValues() : null;
+      // Только очередь СБ3 (просьба 26.08.2026): в журнале есть и СБ5-платежи,
+      // общие статьи («Отделка МОП» и т.п.) без фильтра завышались.
+      var queues = idxM[CONFIG.MORS_QUEUE]
+        ? shM.getRange(2, idxM[CONFIG.MORS_QUEUE], nM, 1).getValues() : null;
       for (var k = 0; k < nM; k++) {
         var v = typeof sums[k][0] === 'number' ? sums[k][0] : 0;
         var d = dates[k][0];
         if (!v || !(d && d.getTime)) continue;
+        if (queues && String(queues[k][0]).trim() !== CONFIG.MORS_QUEUE_VALUE) continue;
         var m = ym(d);
         var it = String(items[k][0]).trim() || '— без статьи —';
         if (!mors[it]) mors[it] = {};
