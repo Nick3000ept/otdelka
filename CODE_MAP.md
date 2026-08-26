@@ -95,6 +95,11 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   фильтр `contrOk` (набор = подрядчик ∪ BUDGET_SS_CONTRS при галочке); на
   budget транслируются в budgetContr/budgetSS; на проверках скрыты
   (#flt-contr-wrap display none)
+- Список работ у поиска `#search-dd` (26.08): `searchWorkList` (дерево или
+  бюджет) → `buildSearchDd` (выбранные сверху, кап 300), `state.workSel`,
+  `refreshAfterWorkSel`; в renderTable `wSelOk`, в renderBudget wMatch по Set +
+  q-маркер 'sel'. Блок фильтров бюджета (.bfilter/#bsearch/#bss-check) и
+  `budgetContrOpen` УДАЛЕНЫ 26.08 — управление из шапки
 
 - `AN_ITEMS`/`anNorm`/`anMatch` (перед `loadAnalytics`) — зашитый список статей
   отделки (26.08): только они входят в линии; «паркинг»/«лобби» по префиксу

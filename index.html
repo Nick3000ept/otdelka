@@ -95,6 +95,25 @@
   /* Галочка «Собственные силы» в шапке (26.08.2026). */
   .fss { font-size: 12px; color: var(--text-dim); cursor: pointer; white-space: nowrap; margin-left: 8px; }
   .fss input { vertical-align: -2px; }
+  /* Выпадающий список работ у поиска с мультивыбором (26.08.2026). */
+  .search-wrap { position: relative; }
+  #search-dd {
+    position: absolute; top: calc(100% + 4px); right: 0; z-index: 60;
+    background: #fff; border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.12); min-width: 420px; max-height: 340px;
+    overflow: auto; padding: 6px; text-align: left;
+  }
+  #search-dd label {
+    display: block; padding: 4px 8px; font-size: 12px; cursor: pointer;
+    border-radius: 6px; color: var(--text);
+  }
+  #search-dd label:hover { background: #eef2f8; }
+  #search-dd input { vertical-align: -2px; margin-right: 6px; }
+  #search-dd .sdd-top {
+    font-size: 12px; color: var(--text-dim); padding: 4px 8px; cursor: pointer;
+    border-bottom: 1px solid var(--border); margin-bottom: 4px;
+  }
+  #search-dd .sdd-top:hover { color: var(--text); }
   /* Кнопки масштаба текста таблиц А− / 100% / А+ (14.08.2026). */
   .zbtn {
     padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border);
@@ -493,48 +512,8 @@
   .bdetail-wrap { overflow-x: auto; }
   .check-head { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .check-desc { font-size: 12px; color: var(--text-dim); margin-bottom: 12px; }
-  /* Фильтр «Бюджета» по подрядчикам (2026-08-12) */
-  .bfilter { position: relative; display: inline-block; margin-bottom: 12px; }
-  .bfilter-btn {
-    background: var(--panel); border: 1px solid var(--border); color: var(--text);
-    border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer;
-  }
-  .bfilter-btn:hover { background: var(--panel2); }
-  .bfilter-btn.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
-  .bfilter-dd {
-    position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
-    box-shadow: 0 6px 20px rgba(0,0,0,.15); min-width: 260px; max-height: 320px;
-    overflow: auto; padding: 4px 0;
-  }
-  .bfilter-item {
-    display: flex; align-items: center; gap: 8px;
-    padding: 5px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
-  }
-  .bfilter-item:hover { background: var(--panel2); }
-  .bfilter-item .box {
-    flex: none; width: 14px; height: 14px; border: 1px solid var(--border);
-    border-radius: 3px; background: #fff; text-align: center;
-    line-height: 13px; font-size: 11px; color: #fff;
-  }
-  .bfilter-item.on .box { background: var(--accent); border-color: var(--accent); }
-  .bfilter-reset {
-    padding: 6px 12px; font-size: 12px; color: var(--accent); cursor: pointer;
-    border-top: 1px solid var(--border);
-  }
-  .bfilter-reset:hover { background: var(--panel2); }
-  /* Фильтр «Бюджета» по названию работы (18.08.2026). */
-  .bfilter #bsearch {
-    margin-left: 8px; padding: 6px 10px; border-radius: 6px;
-    border: 1px solid var(--border); background: var(--panel); font-size: 12px; width: 280px;
-  }
-  /* Галочка «Собственные силы» (18.08.2026). */
-  .bss {
-    margin-left: 10px; font-size: 12px; color: var(--text);
-    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-    vertical-align: middle;
-  }
-  .bss input { cursor: pointer; }
+  /* Собственный блок фильтров бюджета (.bfilter/.bss) убран 26.08.2026 —
+     фильтры теперь в шапке страницы. */
   table.check { border-collapse: collapse; width: 100%; font-size: 13px; table-layout: fixed; }
   table.check th {
     text-align: left; padding: 7px 8px; border-bottom: 2px solid var(--border);
@@ -656,7 +635,8 @@
           title="Мельче — чтобы длинные значения помещались в ячейки">А−</button>
         <button id="zoom-reset" type="button" class="zbtn" title="Обычный масштаб">100%</button>
         <button id="zoom-in" type="button" class="zbtn" title="Крупнее">А+</button>
-        <input id="search" type="text" placeholder="Поиск...">
+        <input id="search" type="text" placeholder="Поиск..." autocomplete="off">
+        <div id="search-dd" style="display:none"></div>
       </div>
     </div>
   </header>
@@ -785,13 +765,14 @@ const state = {
   checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
   contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
   ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
+  workSel: new Set(),          // выбранные в списке у поиска работы (norm-имена, 26.08.2026)
   budgetOpen: new Set(),       // раскрытые статьи бюджета (по умолчанию свернуто)
   budgetWorkOpen: new Set(),   // раскрытые работы бюджета: 'индексСтатьи|индексРаботы'
   budgetSectOpen: new Set(),     // РАСКРЫТЫЕ секции статей «Квартиры»/«МОП» (25.08.2026)
   budgetGrpOpen: new Set(),      // РАСКРЫТЫЕ группы работ внутри статей (по умолчанию всё свернуто, 25.08.2026)
   budgetSubOpen: new Set(),      // РАСКРЫТЫЕ подгруппы-поверхности паркинга (25.08.2026)
   budgetContr: new Set(),      // фильтр «Бюджета» по подрядчикам (пусто = показывать всех)
-  budgetContrOpen: false,      // открыт ли выпадающий список выбора подрядчиков
+  // budgetContrOpen убран 26.08.2026 вместе с выпадающим списком подрядчиков бюджета
   budgetQuery: '',             // фильтр «Бюджета» по названию работы (18.08.2026)
   budgetSS: false,             // галочка «Собственные силы» — фильтр по СС-четвёрке
   budgetFloors: null,          // расшифровка ячеек бюджета по этажам (action=budgetFloors)
@@ -1136,9 +1117,12 @@ function renderTable() {
     return (state.floors[norm(r[WORK_KEY])] || [])
       .some(c => contrSet.has(String(c[0]).trim()));
   };
+  // Выбранные в списке у поиска работы (26.08.2026): выбор активен — таблица
+  // показывает только их, текст в поле тогда сужает лишь выпадающий список.
+  const wSelOk = r => !state.workSel.size || state.workSel.has(norm(r[WORK_KEY]));
   const filtered = rows.filter(r =>
-    passesFilters(r) && contrOk(r) &&
-    (!q || keys.some(h => String(r[h]).toLowerCase().includes(q)))
+    passesFilters(r) && contrOk(r) && wSelOk(r) &&
+    (state.workSel.size > 0 || !q || keys.some(h => String(r[h]).toLowerCase().includes(q)))
   );
   // Выбранная работа исчезла из отфильтрованного списка — снимаем выбор,
   // иначе внизу висели бы данные работы, которой на экране нет.
@@ -1663,36 +1647,21 @@ function renderBudget() {
   const wSum = w => active
     ? (w[2] || []).reduce((acc, c) => acc + (eSel.has(String(c[0])) ? c[2] : 0), 0)
     : w[1];
-  const shownName = n => n === UNDEF_KEY ? 'Не определен' : n;
-  const contrList = Array.from(contrAll).sort((a, b) => {
-    if (a === UNDEF_KEY) return -1;
-    if (b === UNDEF_KEY) return 1;
-    return a.localeCompare(b, 'ru');
-  });
-  const btnLabel = !sel.size ? 'Подрядчики: все'
-    : sel.size === 1 ? 'Подрядчик: ' + shownName(Array.from(sel)[0])
-    : 'Подрядчики: выбрано ' + sel.size;
-  const filterHtml = '<div class="bfilter">' +
-    '<button type="button" id="bfilter-btn" class="bfilter-btn' + (active ? ' on' : '') +
-    '">' + escapeHtml(btnLabel) + ' &#9662;</button>' +
-    (state.budgetContrOpen
-      ? '<div class="bfilter-dd">' + contrList.map(n =>
-          '<div class="bfilter-item' + (sel.has(n) ? ' on' : '') + '" data-contr="' +
-          escapeHtml(n) + '"><span class="box">' + (sel.has(n) ? '&#10003;' : '') +
-          '</span>' + escapeHtml(shownName(n)) + '</div>').join('') +
-        (active ? '<div class="bfilter-reset" id="bfilter-reset">Сбросить выбор</div>' : '') +
-        '</div>'
-      : '') +
-    '<input id="bsearch" type="text" placeholder="Фильтр по работе..." value="' +
-    escapeHtml(state.budgetQuery) + '">' +
-    '<label class="bss"><input type="checkbox" id="bss-check"' +
-    (state.budgetSS ? ' checked' : '') + '> Собственные силы</label>' +
-    '</div>';
+  // Собственный блок фильтров бюджета (подрядчики/работа/СС) убран 26.08.2026 —
+  // дублировал фильтры в шапке, а его выпадающий список перекрывал первую
+  // колонку таблицы. Управление фильтрами — только из шапки (#f-contr, #f-ss,
+  // #search); state.budgetContr/budgetSS/budgetQuery остались прежними.
   // Фильтр по названию работы (просьба 18.08.2026, как поиск в «Расценках»):
   // совпавшие работы показываются с раскрытыми статьями и группами, суммы статей,
   // групп и «Итого» пересчитываются только по совпавшим работам.
-  const q = norm(state.budgetQuery);
-  const wMatch = w => !q || norm(String(w[0])).includes(q);
+  // Выбор работ из списка у поиска (26.08.2026) действует как текстовый фильтр:
+  // q ниже используется как признак «фильтр активен» (автораскрытие, пересчёт
+  // сумм по совпавшим), поэтому при выборе подставляется строка-маркер.
+  const qText = norm(state.budgetQuery);
+  const q = state.workSel.size ? 'sel' : qText;
+  const wMatch = w => state.workSel.size
+    ? state.workSel.has(norm(String(w[0])))
+    : (!qText || norm(String(w[0])).includes(qText));
   // Бюджет собственных сил — БЕЗ накладных расходов (просьба 25.08.2026):
   // при галочке «Собственные силы» статья «Накладные расходы» исключается
   // и из таблицы, и из «Итого» (rowsT — статьи, участвующие в итогах).
@@ -2102,7 +2071,7 @@ function renderBudget() {
     factSplitTd(totalFW, totalFM) + factTd(totalF) + lkTd(totalLk) + kpTd(totalKp) +
     '<td class="num bsep"></td>' + redoTd(totalR) +
     '</tr></tfoot></table>';
-  el.innerHTML = head + filterHtml + table;
+  el.innerHTML = head + table;
   alignBudgetHead();
 }
 
@@ -2682,64 +2651,12 @@ async function openBudgetCellModal(bi, wi, contr, corp) {
     body + '</tbody><tfoot>' + foot + '</tfoot></table>';
 }
 
-// Фильтр по названию работы (18.08.2026): перерисовка с задержкой, фокус и курсор
-// возвращаются в поле (перерисовка пересоздаёт input).
-let bsearchTimer = null;
-document.getElementById('budget-screen').addEventListener('input', e => {
-  if (e.target.id !== 'bsearch') return;
-  const v = e.target.value;
-  clearTimeout(bsearchTimer);
-  bsearchTimer = setTimeout(() => {
-    state.budgetQuery = v;
-    document.getElementById('search').value = v;   // поле в шапке — то же самое
-    renderBudget();
-    const inp = document.getElementById('bsearch');
-    if (inp) {
-      inp.focus();
-      inp.setSelectionRange(inp.value.length, inp.value.length);
-    }
-  }, 200);
-});
-
-// Галочка «Собственные силы» (18.08.2026) — фильтр по СС-четвёрке.
-document.getElementById('budget-screen').addEventListener('change', e => {
-  if (e.target.id !== 'bss-check') return;
-  state.budgetSS = e.target.checked;
-  state.ssSel = e.target.checked;
-  document.getElementById('f-ss').checked = e.target.checked;   // галочка в шапке — та же
-  renderBudget();
-});
+// Обработчики собственных полей фильтра бюджета (bsearch/bss-check/bfilter)
+// удалены 26.08.2026 вместе с блоком — фильтры бюджета управляются из шапки.
 
 // Клик по статье бюджета — раскрыть/свернуть работы; по группе работ — её работы;
 // по работе — выпадающая сводная; по сумме в сводной — расшифровка по этажам.
 document.getElementById('budget-screen').addEventListener('click', e => {
-  // Галочку СС обрабатывает change-обработчик — клику здесь делать нечего.
-  if (e.target.closest('.bss')) return;
-  // Панель фильтра по подрядчикам (12.08.2026) — обрабатываем раньше строк таблицы.
-  const fi = e.target.closest('.bfilter-item');
-  if (fi) {
-    const n = fi.dataset.contr;
-    if (state.budgetContr.has(n)) state.budgetContr.delete(n);
-    else state.budgetContr.add(n);
-    renderBudget();   // список остаётся открытым — можно отметить нескольких подряд
-    return;
-  }
-  if (e.target.closest('#bfilter-reset')) {
-    state.budgetContr.clear();
-    renderBudget();
-    return;
-  }
-  if (e.target.closest('#bfilter-btn')) {
-    state.budgetContrOpen = !state.budgetContrOpen;
-    renderBudget();
-    return;
-  }
-  if (state.budgetContrOpen) {
-    // Клик мимо открытого списка — просто закрыть его, строки таблицы не трогаем.
-    state.budgetContrOpen = false;
-    renderBudget();
-    return;
-  }
   const bc = e.target.closest('td.bcell');
   if (bc) {
     const det = e.target.closest('tr.bdetail');
@@ -3900,6 +3817,7 @@ function setScreen(screen) {
     isBudget ? state.budgetQuery : (isCheck ? state.checkQuery : state.query);
   // Фильтр «Подрядчик» на «Проверках» не действует — там его прячем.
   document.getElementById('flt-contr-wrap').style.display = isCheck ? 'none' : '';
+  document.getElementById('search-dd').style.display = 'none';   // список работ закрыть
   document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
   document.getElementById('budget-screen').style.display = isBudget ? 'block' : 'none';
   document.getElementById('analytics-screen').style.display = isAnalytics ? 'block' : 'none';
@@ -4189,7 +4107,7 @@ document.getElementById('f-contr').addEventListener('change', e => {
 });
 
 // Галочка «Собственные силы» в шапке (26.08.2026): на дереве работ добавляет
-// СС-четвёрку к фильтру, на «Бюджете» — та же галочка, что #bss-check.
+// СС-четвёрку к фильтру, на «Бюджете» управляет budgetSS.
 document.getElementById('f-ss').addEventListener('change', e => {
   state.ssSel = e.target.checked;
   if (state.screen === 'budget') {
@@ -4221,6 +4139,7 @@ document.getElementById('f-reset').addEventListener('click', () => {
   state.query = '';
   state.contrSel = '';
   state.ssSel = false;
+  state.workSel.clear();
   ['f-group', 'f-place', 'f-surface', 'f-contr'].forEach(id => { document.getElementById(id).value = ''; });
   document.getElementById('f-ss').checked = false;
   document.getElementById('search').value = '';
@@ -4351,6 +4270,7 @@ function submitPassword() {
 
 let searchTimer;
 document.getElementById('search').addEventListener('input', e => {
+  buildSearchDd();   // список работ под полем обновляется сразу, без задержки
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
     const v = e.target.value;
@@ -4366,6 +4286,80 @@ document.getElementById('search').addEventListener('input', e => {
       if (state.works.length) renderTable();
     }
   }, 150);
+});
+
+// Выпадающий список работ у поиска с мультивыбором (просьба 26.08.2026):
+// при фокусе/вводе показывает работы текущего экрана (дерево или бюджет)
+// с галочками; отмеченные работы фильтруют экран, текст сужает только список.
+function searchWorkList() {
+  const out = new Map();   // norm -> отображаемое имя
+  if (state.screen === 'budget') {
+    (state.budget || []).forEach(r => (r[2] || []).forEach(w => {
+      const k = norm(String(w[0]));
+      if (k && !out.has(k)) out.set(k, String(w[0]));
+    }));
+  } else {
+    state.works.forEach(r => {
+      const k = norm(r[WORK_KEY]);
+      if (k && !out.has(k)) out.set(k, String(r[WORK_KEY]));
+    });
+  }
+  return out;
+}
+
+function buildSearchDd() {
+  const dd = document.getElementById('search-dd');
+  if (CHECK_SCREENS[state.screen]) { dd.style.display = 'none'; return; }
+  const all = searchWorkList();
+  if (!all.size) { dd.style.display = 'none'; return; }
+  const qq = norm(document.getElementById('search').value);
+  const items = [];
+  all.forEach((name, k) => {
+    // Выбранные работы в списке остаются всегда, остальные сужаются текстом.
+    if (qq && !k.includes(qq) && !state.workSel.has(k)) return;
+    items.push([k, name]);
+  });
+  items.sort((p1, p2) => {
+    const s1 = state.workSel.has(p1[0]) ? 0 : 1;
+    const s2 = state.workSel.has(p2[0]) ? 0 : 1;
+    return s1 - s2 || p1[1].localeCompare(p2[1], 'ru');
+  });
+  dd.innerHTML = '<div class="sdd-top" id="sdd-reset">' +
+    (state.workSel.size
+      ? 'Выбрано работ: ' + state.workSel.size + ' — сбросить выбор'
+      : 'Отметьте работы галочками — можно несколько') + '</div>' +
+    items.slice(0, 300).map(p =>
+      '<label><input type="checkbox" data-wk="' + escapeHtml(p[0]) + '"' +
+      (state.workSel.has(p[0]) ? ' checked' : '') + '>' + escapeHtml(p[1]) +
+      '</label>').join('');
+  dd.style.display = 'block';
+}
+
+function refreshAfterWorkSel() {
+  if (state.screen === 'budget') renderBudget();
+  else if (state.works.length) renderTable();
+}
+
+document.getElementById('search').addEventListener('focus', buildSearchDd);
+document.getElementById('search-dd').addEventListener('change', e => {
+  const cb = e.target.closest('input[data-wk]');
+  if (!cb) return;
+  if (cb.checked) state.workSel.add(cb.dataset.wk);
+  else state.workSel.delete(cb.dataset.wk);
+  buildSearchDd();
+  refreshAfterWorkSel();
+});
+document.getElementById('search-dd').addEventListener('click', e => {
+  if (e.target.id === 'sdd-reset' && state.workSel.size) {
+    state.workSel.clear();
+    buildSearchDd();
+    refreshAfterWorkSel();
+  }
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) {
+    document.getElementById('search-dd').style.display = 'none';
+  }
 });
 
 // Поиск на «Проверках» (26.08.2026): простой фильтр по тексту — строки таблиц
