@@ -2110,9 +2110,10 @@ function renderBudget() {
  * поступления». Затраты — лист «МОРС» (факт платежей, месяц из «Даты
  * проводки»), поступления — месячные колонки закрытия у заказчика из «Формы
  * КП» (с кол. X). Бэкенд отдаёт список месяцев и словари статья -> {месяц:
- * сумма} (action=analytics, кэш 6 ч); две накопительные линии строятся здесь,
- * разрез по статьям в данных уже есть — на будущее. График — рукописный SVG,
- * без библиотек (как весь проект).
+ * сумма} (action=analytics, кэш 6 ч); накопительные линии строятся здесь.
+ * С 27.08.2026 линия затрат одна — МОРС + ТУЗИО, под ней двухслойная заливка
+ * (снизу МОРС, сверху ТУЗИО). График — рукописный SVG, без библиотек
+ * (как весь проект).
  */
 // Статьи, относящиеся к отделке (список пользователя 26.08.2026, скриншот из
 // сводника) — только они входят в линии «Аналитики»; остальные статьи МОРС
@@ -2171,7 +2172,8 @@ function renderAnalytics() {
   if (state.analyticsStatus === 'idle') loadAnalytics();
   const head = '<div class="check-head">Аналитика</div>' +
     '<div class="check-desc">Накопительно по месяцам, только статьи отделки: ' +
-    'затраты — факт платежей из «МОРС», поступления — закрытие у заказчика из «Формы КП»</div>';
+    'затраты — «МОРС» (нижняя заливка) + «ТУЗИО» (верхняя), ' +
+    'поступления — закрытие у заказчика из «Формы КП»</div>';
   if (state.analyticsStatus !== 'ready') {
     el.innerHTML = head + '<div class="side-note">' +
       (state.analyticsStatus === 'error'
@@ -2197,8 +2199,10 @@ function renderAnalytics() {
   };
   let costs = sumSrc(a.mors);
   let income = sumSrc(a.kp);
-  // Третья линия — «ТУЗИО» (26.08.2026): тот же фильтр отделочных статей и
-  // выбранной статьи, что у МОРС/КП (уточнение пользователя 26.08).
+  // «ТУЗИО» (26.08.2026): тот же фильтр отделочных статей и выбранной статьи,
+  // что у МОРС/КП. С 27.08 не отдельная линия, а часть общей линии затрат:
+  // одна накопительная «МОРС + ТУЗИО», заливка под ней двумя слоями —
+  // снизу доля МОРС, сверху доля ТУЗИО (просьба пользователя 27.08).
   let tuz = sumSrc(a.tuzio);
   const hasTuz = tuz.some(v => v);
   // Пустые месяцы в начале (до первых движений по отделке) не показываем.
@@ -2213,6 +2217,8 @@ function renderAnalytics() {
   const cCosts = cum(costs);
   const cIncome = cum(income);
   const cTuz = cum(tuz);
+  // Общая линия затрат: накопительно МОРС + ТУЗИО.
+  const cTotal = cCosts.map((v, i) => v + cTuz[i]);
 
   // Геометрия: график вписывается в ширину экрана без прокрутки (просьба 26.08.2026) —
   // шаг между месяцами считается от ширины контейнера, при resize перерисовка.
@@ -2220,8 +2226,7 @@ function renderAnalytics() {
   const availW = Math.max(480, (el.clientWidth || 900) - 44);
   const stepX = Math.max(8, (availW - padL - padR) / Math.max(1, months.length - 1));
   const W = Math.round(padL + padR + stepX * Math.max(1, months.length - 1));
-  const maxV = Math.max(cCosts[cCosts.length - 1], cIncome[cIncome.length - 1],
-    hasTuz ? cTuz[cTuz.length - 1] : 0, 1) * 1.06;
+  const maxV = Math.max(cTotal[cTotal.length - 1], cIncome[cIncome.length - 1], 1) * 1.06;
   const x = i => padL + i * stepX;
   const y = v => padT + (H - padT - padB) * (1 - v / maxV);
   const fmtM = v => fmtInt(Math.round(v / 1e6)) + ' млн';
@@ -2242,6 +2247,15 @@ function renderAnalytics() {
   const line = (arr, color) =>
     '<polyline fill="none" stroke="' + color + '" stroke-width="2.5" points="' +
     arr.map((v, i) => x(i) + ',' + y(v)).join(' ') + '"/>';
+  // Заливка между двумя накопительными рядами (27.08): полигон — верхняя
+  // граница слева направо, затем нижняя справа налево.
+  const band = (lowArr, highArr, color) => {
+    const top = highArr.map((v, i) => x(i) + ',' + y(v));
+    const bottom = lowArr.map((v, i) => x(i) + ',' + y(v)).reverse();
+    return '<polygon fill="' + color + '" opacity="0.16" stroke="none" points="' +
+      top.concat(bottom).join(' ') + '"/>';
+  };
+  const zeros = months.map(() => 0);
   // Точки и подписи месяцев кликабельны (просьба 26.08.2026): клик выбирает
   // месяц — таблица «По статьям» и модалка «Платежи» показывают только его.
   const dotR = stepX < 22 ? 2.5 : 3.5;
@@ -2250,6 +2264,13 @@ function renderAnalytics() {
     '" data-m="' + months[i] + '" style="cursor:pointer">' +
     '<title>' + name + ' на ' + mLabel(months[i]) + ': ' + fmtM(v) +
     ' (за месяц ' + fmtM(monthly[i]) + '). Клик — детали месяца в таблице ниже</title></circle>').join('');
+  // Точки общей линии затрат — в подсказке разбивка месяца на МОРС и ТУЗИО.
+  const dotsCost = cTotal.map((v, i) =>
+    '<circle cx="' + x(i) + '" cy="' + y(v) + '" r="' + dotR + '" fill="' + '#b42121' +
+    '" data-m="' + months[i] + '" style="cursor:pointer">' +
+    '<title>Затраты (МОРС + ТУЗИО) на ' + mLabel(months[i]) + ': ' + fmtM(v) +
+    ' (за месяц ' + fmtM(costs[i] + tuz[i]) + ': МОРС ' + fmtM(costs[i]) +
+    ', ТУЗИО ' + fmtM(tuz[i]) + '). Клик — детали месяца в таблице ниже</title></circle>').join('');
   // Подписи месяцев прореживаются, чтобы не налезали при сжатом шаге.
   const labelEvery = Math.max(1, Math.ceil(34 / stepX));
   let labels = '';
@@ -2273,22 +2294,26 @@ function renderAnalytics() {
     grid + selBand +
     '<line x1="' + padL + '" y1="' + y(0) + '" x2="' + (W - padR) + '" y2="' + y(0) +
     '" stroke="#99a"/>' +
-    line(cCosts, COL_COST) + line(cIncome, COL_IN) +
-    (hasTuz ? line(cTuz, COL_TUZ) : '') +
-    dots(cCosts, costs, COL_COST, 'Затраты') + dots(cIncome, income, COL_IN, 'Поступления') +
-    (hasTuz ? dots(cTuz, tuz, COL_TUZ, 'ТУЗИО') : '') +
+    band(zeros, cCosts, COL_COST) +
+    (hasTuz ? band(cCosts, cTotal, COL_TUZ) : '') +
+    line(cTotal, COL_COST) + line(cIncome, COL_IN) +
+    dotsCost + dots(cIncome, income, COL_IN, 'Поступления') +
     labels + '</svg>';
 
-  const tCost = cCosts[cCosts.length - 1];
+  const tCost = cTotal[cTotal.length - 1];
+  const tMors = cCosts[cCosts.length - 1];
+  const tTuz = cTuz[cTuz.length - 1];
   const tIn = cIncome[cIncome.length - 1];
   const diff = tIn - tCost;
   const summary = '<div class="an-legend">' +
-    '<span><span class="an-dot" style="background:' + COL_COST + '"></span>Затраты (МОРС): ' +
+    '<span><span class="an-dot" style="background:' + COL_COST + '"></span>Затраты (МОРС + ТУЗИО): ' +
     fmtM(tCost) + '</span>' +
+    '<span><span class="an-dot" style="background:' + COL_COST + ';opacity:.3"></span>МОРС (нижняя заливка): ' +
+    fmtM(tMors) + '</span>' +
+    (hasTuz ? '<span><span class="an-dot" style="background:' + COL_TUZ + ';opacity:.3"></span>ТУЗИО (верхняя заливка): ' +
+      fmtM(tTuz) + '</span>' : '') +
     '<span><span class="an-dot" style="background:' + COL_IN + '"></span>Поступления (Форма КП): ' +
     fmtM(tIn) + '</span>' +
-    (hasTuz ? '<span><span class="an-dot" style="background:' + COL_TUZ + '"></span>ТУЗИО: ' +
-      fmtM(cTuz[cTuz.length - 1]) + '</span>' : '') +
     '<span>Разница: <b style="color:' + (diff >= 0 ? COL_IN : COL_COST) + '">' +
     fmtM(diff) + '</b></span></div>';
 
@@ -2312,13 +2337,21 @@ function renderAnalytics() {
   };
   const morsItems = perItem(a.mors);
   const kpItems = perItem(a.kp);
-  const tRows = Array.from(new Set([...morsItems.keys(), ...kpItems.keys()])).map(k => {
-    const c = morsItems.get(k), p = kpItems.get(k);
-    return { k, name: (c || p).name, cost: c ? c.total : 0, inc: p ? p.total : 0 };
-  });
+  // Колонка ТУЗИО в разбивке по статьям (просьба пользователя 27.08.2026);
+  // при выбранном месяце (tblMonths) — суммы ТУЗИО только за него.
+  const tuzItems = perItem(a.tuzio);
+  const tRows = Array.from(new Set([...morsItems.keys(), ...tuzItems.keys(), ...kpItems.keys()]))
+    .map(k => {
+      const c = morsItems.get(k), t = tuzItems.get(k), p = kpItems.get(k);
+      return { k, name: (c || t || p).name, cost: c ? c.total : 0,
+               tuz: t ? t.total : 0, inc: p ? p.total : 0 };
+    });
   // Худшее отклонение (затраты сильнее всего превышают поступления) — сверху.
-  tRows.sort((r1, r2) => (r1.inc - r1.cost) - (r2.inc - r2.cost));
+  // Затраты статьи с 27.08 — МОРС + ТУЗИО.
+  const rowDiff = r0 => r0.inc - r0.cost - r0.tuz;
+  tRows.sort((r1, r2) => rowDiff(r1) - rowDiff(r2));
   const totC = tRows.reduce((s, r0) => s + r0.cost, 0);
+  const totT = tRows.reduce((s, r0) => s + r0.tuz, 0);
   const totI = tRows.reduce((s, r0) => s + r0.inc, 0);
   const dTd = d => '<td class="num" style="color:' + (d < 0 ? COL_COST : COL_IN) +
     ';font-weight:600">' + escapeHtml(fmtInt(Math.round(d))) + '</td>';
@@ -2326,8 +2359,9 @@ function renderAnalytics() {
     '<tr class="anrow' + (selK === r0.k ? ' sel' : '') + '" data-key="' + escapeHtml(r0.k) + '">' +
     '<td>' + escapeHtml(r0.name) + '</td>' +
     '<td class="num">' + (r0.cost ? escapeHtml(fmtInt(Math.round(r0.cost))) : '') + '</td>' +
+    '<td class="num">' + (r0.tuz ? escapeHtml(fmtInt(Math.round(r0.tuz))) : '') + '</td>' +
     '<td class="num">' + (r0.inc ? escapeHtml(fmtInt(Math.round(r0.inc))) : '') + '</td>' +
-    dTd(r0.inc - r0.cost) +
+    dTd(rowDiff(r0)) +
     '<td class="num">' + (r0.cost ? '<button type="button" class="anpay" data-key="' +
       escapeHtml(r0.k) + '" data-name="' + escapeHtml(r0.name) +
       '" title="Показать платежи МОРС по статье">Платежи</button>' : '') + '</td></tr>';
@@ -2336,21 +2370,25 @@ function renderAnalytics() {
   const withInc = tRows.filter(r0 => r0.inc);
   const noInc = tRows.filter(r0 => !r0.inc);
   const noIncC = noInc.reduce((s, r0) => s + r0.cost, 0);
+  const noIncT = noInc.reduce((s, r0) => s + r0.tuz, 0);
   const noIncBlock = noInc.length
     ? '<tr class="an-noinc"><td>Нет в бюджете с Заказчиком (' + noInc.length + ')</td>' +
       '<td class="num">' + escapeHtml(fmtInt(Math.round(noIncC))) + '</td>' +
-      '<td class="num"></td>' + dTd(-noIncC) + '<td></td></tr>' +
+      '<td class="num">' + escapeHtml(fmtInt(Math.round(noIncT))) + '</td>' +
+      '<td class="num"></td>' + dTd(-noIncC - noIncT) + '<td></td></tr>' +
       noInc.map(rowHtml).join('')
     : '';
   const tbl = '<table class="check anitems"><thead><tr><th>Статья</th>' +
-    '<th class="num">Затраты (МОРС), руб</th><th class="num">Поступления (КП), руб</th>' +
+    '<th class="num">Затраты (МОРС), руб</th><th class="num">ТУЗИО, руб</th>' +
+    '<th class="num">Поступления (КП), руб</th>' +
     '<th class="num">Разница, руб</th><th></th></tr></thead><tbody>' +
     withInc.map(rowHtml).join('') + noIncBlock +
     '</tbody><tfoot><tr><td>Итого</td><td class="num">' + escapeHtml(fmtInt(Math.round(totC))) +
+    '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totT))) +
     '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totI))) + '</td>' +
-    dTd(totI - totC) + '<td></td></tr></tfoot></table>';
-  const selName = selK && (morsItems.get(selK) || kpItems.get(selK))
-    ? (morsItems.get(selK) || kpItems.get(selK)).name : '';
+    dTd(totI - totC - totT) + '<td></td></tr></tfoot></table>';
+  const selName = selK && (morsItems.get(selK) || tuzItems.get(selK) || kpItems.get(selK))
+    ? (morsItems.get(selK) || tuzItems.get(selK) || kpItems.get(selK)).name : '';
   const selNote = selK
     ? '<div class="check-desc">Линии показаны только по статье <b>' + escapeHtml(selName) +
       '</b> — повторный клик по её строке вернёт все статьи</div>'
@@ -2366,8 +2404,8 @@ function renderAnalytics() {
       ? '<div class="check-desc">Показан месяц ' + mTitle + ' — <span id="an-month-reset" ' +
         'style="color:var(--accent);cursor:pointer">показать всё время</span>; кнопка «Платежи» ' +
         'откроет платежи только этого месяца</div>'
-      : '<div class="check-desc">Худшие отклонения сверху; пустая ячейка — статьи нет в этом ' +
-        'источнике; клик по строке — динамика этой статьи на графике</div>') +
+      : '<div class="check-desc">Худшие отклонения сверху; разница = поступления − МОРС − ТУЗИО; ' +
+        'пустая ячейка — статьи нет в этом источнике; клик по строке — динамика этой статьи на графике</div>') +
     '<div class="bdetail-wrap">' + tbl + '</div>';
 }
 
