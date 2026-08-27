@@ -2244,16 +2244,24 @@ function renderAnalytics() {
       'fill="#667">' + fmtM(v) + '</text>';
   }
 
-  const line = (arr, color) =>
-    '<polyline fill="none" stroke="' + color + '" stroke-width="2.5" points="' +
+  // Выделение ряда кликом по легенде (просьба пользователя 27.08.2026):
+  // state.anHl — 'cost' (общая линия затрат) | 'mors' | 'tuz' (заливки) |
+  // 'in' (поступления); выбранный ряд ярче/толще, остальные приглушены.
+  const hl = state.anHl;
+  const lineOp = k => !hl ? 1 : (hl === k ? 1 : 0.22);
+  const lineW = k => hl === k ? 4 : 2.5;
+  const bandOp = k => !hl ? 0.16 : (hl === k ? 0.42 : 0.05);
+  const line = (arr, color, w, op) =>
+    '<polyline fill="none" stroke="' + color + '" stroke-width="' + (w || 2.5) +
+    '" opacity="' + (op == null ? 1 : op) + '" points="' +
     arr.map((v, i) => x(i) + ',' + y(v)).join(' ') + '"/>';
   // Заливка между двумя накопительными рядами (27.08): полигон — верхняя
   // граница слева направо, затем нижняя справа налево.
-  const band = (lowArr, highArr, color) => {
+  const band = (lowArr, highArr, color, op) => {
     const top = highArr.map((v, i) => x(i) + ',' + y(v));
     const bottom = lowArr.map((v, i) => x(i) + ',' + y(v)).reverse();
-    return '<polygon fill="' + color + '" opacity="0.16" stroke="none" points="' +
-      top.concat(bottom).join(' ') + '"/>';
+    return '<polygon fill="' + color + '" opacity="' + (op == null ? 0.16 : op) +
+      '" stroke="none" points="' + top.concat(bottom).join(' ') + '"/>';
   };
   const zeros = months.map(() => 0);
   // Точки и подписи месяцев кликабельны (просьба 26.08.2026): клик выбирает
@@ -2294,10 +2302,12 @@ function renderAnalytics() {
     grid + selBand +
     '<line x1="' + padL + '" y1="' + y(0) + '" x2="' + (W - padR) + '" y2="' + y(0) +
     '" stroke="#99a"/>' +
-    band(zeros, cCosts, COL_COST) +
-    (hasTuz ? band(cCosts, cTotal, COL_TUZ) : '') +
-    line(cTotal, COL_COST) + line(cIncome, COL_IN) +
-    dotsCost + dots(cIncome, income, COL_IN, 'Поступления') +
+    band(zeros, cCosts, COL_COST, bandOp('mors')) +
+    (hasTuz ? band(cCosts, cTotal, COL_TUZ, bandOp('tuz')) : '') +
+    line(cTotal, COL_COST, lineW('cost'), lineOp('cost')) +
+    line(cIncome, COL_IN, lineW('in'), lineOp('in')) +
+    '<g opacity="' + lineOp('cost') + '">' + dotsCost + '</g>' +
+    '<g opacity="' + lineOp('in') + '">' + dots(cIncome, income, COL_IN, 'Поступления') + '</g>' +
     labels + '</svg>';
 
   const tCost = cTotal[cTotal.length - 1];
@@ -2305,15 +2315,17 @@ function renderAnalytics() {
   const tTuz = cTuz[cTuz.length - 1];
   const tIn = cIncome[cIncome.length - 1];
   const diff = tIn - tCost;
+  // Элемент легенды кликабелен (27.08): клик выделяет свой ряд на графике,
+  // повторный клик снимает выделение (обработчик по data-hl ниже).
+  const leg = (k, dotStyle, text) =>
+    '<span data-hl="' + k + '" title="Клик — выделить на графике" style="cursor:pointer' +
+    (hl === k ? ';font-weight:700;text-decoration:underline' : (hl ? ';opacity:.45' : '')) +
+    '"><span class="an-dot" style="' + dotStyle + '"></span>' + text + '</span>';
   const summary = '<div class="an-legend">' +
-    '<span><span class="an-dot" style="background:' + COL_COST + '"></span>Затраты (МОРС + ТУЗИО): ' +
-    fmtM(tCost) + '</span>' +
-    '<span><span class="an-dot" style="background:' + COL_COST + ';opacity:.3"></span>МОРС (нижняя заливка): ' +
-    fmtM(tMors) + '</span>' +
-    (hasTuz ? '<span><span class="an-dot" style="background:' + COL_TUZ + ';opacity:.3"></span>ТУЗИО (верхняя заливка): ' +
-      fmtM(tTuz) + '</span>' : '') +
-    '<span><span class="an-dot" style="background:' + COL_IN + '"></span>Поступления (Форма КП): ' +
-    fmtM(tIn) + '</span>' +
+    leg('cost', 'background:' + COL_COST, 'Затраты (МОРС + ТУЗИО): ' + fmtM(tCost)) +
+    leg('mors', 'background:' + COL_COST + ';opacity:.3', 'МОРС (нижняя заливка): ' + fmtM(tMors)) +
+    (hasTuz ? leg('tuz', 'background:' + COL_TUZ + ';opacity:.3', 'ТУЗИО (верхняя заливка): ' + fmtM(tTuz)) : '') +
+    leg('in', 'background:' + COL_IN, 'Поступления (Форма КП): ' + fmtM(tIn)) +
     '<span>Разница: <b style="color:' + (diff >= 0 ? COL_IN : COL_COST) + '">' +
     fmtM(diff) + '</b></span></div>';
 
@@ -2397,7 +2409,8 @@ function renderAnalytics() {
   const mTitle = state.anMonth ? mLabel(state.anMonth) : '';
   el.innerHTML = head + summary + selNote + '<div class="an-chart">' + svg + '</div>' +
     '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц; ' +
-    'клик по точке или подписи месяца — таблица ниже за этот месяц. Суммы в млн руб.</div>' +
+    'клик по точке или подписи месяца — таблица ниже за этот месяц; ' +
+    'клик по названию в легенде — выделить эту линию на графике. Суммы в млн руб.</div>' +
     '<div class="check-head" style="margin-top:18px">По статьям (' +
     (mTitle ? 'за ' + mTitle : 'накопительно за всё время') + ')</div>' +
     (mTitle
@@ -2415,6 +2428,14 @@ function renderAnalytics() {
 document.getElementById('analytics-screen').addEventListener('click', e => {
   const pb = e.target.closest('button.anpay');
   if (pb) { openAnPayments(pb.dataset.key, pb.dataset.name); return; }
+  // Клик по элементу легенды — выделить ряд на графике (27.08.2026),
+  // повторный клик по нему же — снять выделение.
+  const hlEl = e.target.closest('[data-hl]');
+  if (hlEl) {
+    state.anHl = state.anHl === hlEl.dataset.hl ? null : hlEl.dataset.hl;
+    renderAnalytics();
+    return;
+  }
   // Клик по точке/подписи месяца на графике — таблица за этот месяц (26.08.2026).
   const mEl = e.target.closest('[data-m]');
   if (mEl && mEl.dataset && mEl.dataset.m) {
