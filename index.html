@@ -410,7 +410,12 @@
     background: #fff; margin-top: 8px; padding: 6px 4px;
   }
   /* Таблица «По статьям» на «Аналитике» (26.08.2026): строки кликабельны. */
-  table.check.anitems { max-width: 980px; }
+  /* На всю ширину экрана (27.08): числовые столбцы и столбец кнопок фиксированы,
+     всё остальное место — столбцу «Статья». */
+  table.check.anitems { max-width: none; }
+  table.check.anitems th.num { width: 170px; }
+  table.check.anitems th:last-child { width: 110px; }
+  table.check.anitems td:first-child { white-space: normal; }
   table.check.anitems tr.anrow { cursor: pointer; }
   table.check.anitems tr.anrow:hover td { background: #eef2f8; }
   table.check.anitems tr.anrow.sel td { background: #dbe7fb; }
