@@ -2170,10 +2170,9 @@ async function loadAnalytics() {
 function renderAnalytics() {
   const el = document.getElementById('analytics-screen');
   if (state.analyticsStatus === 'idle') loadAnalytics();
-  const head = '<div class="check-head">Аналитика</div>' +
-    '<div class="check-desc">Накопительно по месяцам, только статьи отделки: ' +
-    'затраты — «МОРС» (нижняя заливка) + «ТУЗИО» (верхняя), ' +
-    'поступления — закрытие у заказчика из «Формы КП»</div>';
+  // Пояснительные подписи и комментарии убраны с экрана (просьба 27.08.2026) —
+  // описание источников и подсказки живут в CLAUDE.md, на экране только данные.
+  const head = '<div class="check-head">Аналитика</div>';
   if (state.analyticsStatus !== 'ready') {
     el.innerHTML = head + '<div class="side-note">' +
       (state.analyticsStatus === 'error'
@@ -2399,26 +2398,15 @@ function renderAnalytics() {
     '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totT))) +
     '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totI))) + '</td>' +
     dTd(totI - totC - totT) + '<td></td></tr></tfoot></table>';
-  const selName = selK && (morsItems.get(selK) || tuzItems.get(selK) || kpItems.get(selK))
-    ? (morsItems.get(selK) || tuzItems.get(selK) || kpItems.get(selK)).name : '';
-  const selNote = selK
-    ? '<div class="check-desc">Линии показаны только по статье <b>' + escapeHtml(selName) +
-      '</b> — повторный клик по её строке вернёт все статьи</div>'
-    : '';
-
   const mTitle = state.anMonth ? mLabel(state.anMonth) : '';
-  el.innerHTML = head + summary + selNote + '<div class="an-chart">' + svg + '</div>' +
-    '<div class="side-note">Наведите на точку — накопительный итог и сумма за месяц; ' +
-    'клик по точке или подписи месяца — таблица ниже за этот месяц; ' +
-    'клик по названию в легенде — выделить эту линию на графике. Суммы в млн руб.</div>' +
+  // При выбранном месяце оставлена только рабочая ссылка сброса — без комментариев.
+  el.innerHTML = head + summary + '<div class="an-chart">' + svg + '</div>' +
     '<div class="check-head" style="margin-top:18px">По статьям (' +
     (mTitle ? 'за ' + mTitle : 'накопительно за всё время') + ')</div>' +
     (mTitle
-      ? '<div class="check-desc">Показан месяц ' + mTitle + ' — <span id="an-month-reset" ' +
-        'style="color:var(--accent);cursor:pointer">показать всё время</span>; кнопка «Платежи» ' +
-        'откроет платежи только этого месяца</div>'
-      : '<div class="check-desc">Худшие отклонения сверху; разница = поступления − МОРС − ТУЗИО; ' +
-        'пустая ячейка — статьи нет в этом источнике; клик по строке — динамика этой статьи на графике</div>') +
+      ? '<div class="check-desc"><span id="an-month-reset" ' +
+        'style="color:var(--accent);cursor:pointer">показать всё время</span></div>'
+      : '') +
     '<div class="bdetail-wrap">' + tbl + '</div>';
 }
 
