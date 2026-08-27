@@ -413,8 +413,11 @@
   /* На всю ширину экрана (27.08): числовые столбцы и столбец кнопок фиксированы,
      всё остальное место — столбцу «Статья». */
   table.check.anitems { max-width: none; }
-  table.check.anitems th.num { width: 150px; }
-  table.check.anitems th:last-child { width: 110px; }
+  /* Ширины в процентах: в фиксированной раскладке пиксельные ширины браузер
+     растягивал пропорционально, и «Статья» оставалась узкой (27.08, вторая
+     итерация). 6 числовых × 10% + кнопки 6% = 66%, «Статье» — остальное. */
+  table.check.anitems th.num { width: 10%; }
+  table.check.anitems th:last-child { width: 6%; }
   table.check.anitems td:first-child { white-space: normal; }
   table.check.anitems tr.anrow { cursor: pointer; }
   table.check.anitems tr.anrow:hover td { background: #eef2f8; }
@@ -2143,7 +2146,10 @@ const AN_ITEMS = [
   'Содержание Элшод',
   'Отделка МОП', 'Отделка МОП (перенос)',
   'Отделка квартир MR Base', 'Отделка квартир MR Base (перенос)',
-  'Содержание отделки'
+  'Содержание отделки',
+  // Статьи свода «Бюджет», которых не было в списке (27.08.2026) — чтобы
+  // «Прогнозный бюджет» в аналитике сходился с «Итого» вкладки «Бюджет».
+  'Подсоба Шамов', 'Накладные расходы'
 ];
 const anNorm = s => norm(s).replace(/–/g, '-');
 const AN_SET = new Set(AN_ITEMS.map(anNorm));
