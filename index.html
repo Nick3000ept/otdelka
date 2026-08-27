@@ -413,7 +413,7 @@
   /* На всю ширину экрана (27.08): числовые столбцы и столбец кнопок фиксированы,
      всё остальное место — столбцу «Статья». */
   table.check.anitems { max-width: none; }
-  table.check.anitems th.num { width: 170px; }
+  table.check.anitems th.num { width: 150px; }
   table.check.anitems th:last-child { width: 110px; }
   table.check.anitems td:first-child { white-space: normal; }
   table.check.anitems tr.anrow { cursor: pointer; }
@@ -1628,6 +1628,8 @@ async function loadBudget() {
   // Свод бюджета нужен и проверке «Изменения» — там из него берётся
   // соответствие «работа -> статья/группа» для группировки (14.08.2026).
   if (state.screen === 'check-changes') renderCheckChanges();
+  // И «Аналитике» — колонка «Прогнозный бюджет» по статьям (27.08.2026).
+  if (state.screen === 'analytics') renderAnalytics();
 }
 
 // СС-подрядчики для галочки «Собственные силы» на «Бюджете» (просьба 18.08.2026;
@@ -2340,14 +2342,14 @@ function renderAnalytics() {
   // Клик по строке — линии сверху перестраиваются только по этой статье.
   // Выбран месяц (клик по графику) — таблица за него, иначе за всё время.
   const tblMonths = state.anMonth ? [state.anMonth] : allMonths;
-  const perItem = src => {
+  const perItem = (src, mList) => {
     const out = new Map();   // anKey(статья) -> { name, total }
     Object.keys(src || {}).filter(anMatch).forEach(it => {
       const k = anKey(it);
       const nm = k === 'паркинг' ? 'Паркинг' : (k === 'лобби' ? 'Лобби' : it);
       if (!out.has(k)) out.set(k, { name: nm, total: 0 });
       const o = out.get(k);
-      tblMonths.forEach(m => { o.total += (src[it] || {})[m] || 0; });
+      (mList || tblMonths).forEach(m => { o.total += (src[it] || {})[m] || 0; });
     });
     return out;
   };
@@ -2356,27 +2358,56 @@ function renderAnalytics() {
   // Колонка ТУЗИО в разбивке по статьям (просьба пользователя 27.08.2026);
   // при выбранном месяце (tblMonths) — суммы ТУЗИО только за него.
   const tuzItems = perItem(a.tuzio);
-  const tRows = Array.from(new Set([...morsItems.keys(), ...tuzItems.keys(), ...kpItems.keys()]))
+  // «Прогнозный бюджет» по статьям (27.08.2026) — свод экрана «Бюджет»
+  // (state.budget: [статья, сумма, работы]) без фильтров, паркинг/лобби
+  // схлопнуты тем же anKey. «Остаток» = бюджет − МОРС − ТУЗИО, всегда по
+  // накопительным затратам за всё время (даже при выбранном месяце — иначе
+  // цифра теряет смысл). Свод ещё не загружен — колонки пустые, дорисуются.
+  if (state.budgetStatus === 'idle') loadBudget();
+  const budgetReady = state.budgetStatus === 'ready';
+  const budItems = new Map();   // anKey -> сумма
+  const budNames = new Map();   // anKey -> название (для статей только из бюджета)
+  (budgetReady ? state.budget : []).forEach(r0 => {
+    const nm = String(r0[0] || '');
+    if (!anMatch(nm)) return;
+    const k = anKey(nm);
+    budItems.set(k, (budItems.get(k) || 0) + (r0[1] || 0));
+    if (!budNames.has(k)) budNames.set(k, k === 'паркинг' ? 'Паркинг' : (k === 'лобби' ? 'Лобби' : nm));
+  });
+  const morsAll = state.anMonth ? perItem(a.mors, allMonths) : morsItems;
+  const tuzAll = state.anMonth ? perItem(a.tuzio, allMonths) : tuzItems;
+  // Статьи, которые есть только в бюджете (затрат ещё нет), тоже в таблице —
+  // у них остаток равен всему прогнозу.
+  const tRows = Array.from(new Set([...morsItems.keys(), ...tuzItems.keys(), ...kpItems.keys(),
+                                    ...budItems.keys()]))
     .map(k => {
       const c = morsItems.get(k), t = tuzItems.get(k), p = kpItems.get(k);
-      return { k, name: (c || t || p).name, cost: c ? c.total : 0,
-               tuz: t ? t.total : 0, inc: p ? p.total : 0 };
+      const bud = budItems.get(k) || 0;
+      const cAll = morsAll.get(k), tAll = tuzAll.get(k);
+      return { k, name: (c || t || p || { name: budNames.get(k) }).name, cost: c ? c.total : 0,
+               tuz: t ? t.total : 0, inc: p ? p.total : 0, bud,
+               rest: bud - (cAll ? cAll.total : 0) - (tAll ? tAll.total : 0) };
     });
   // Худшее отклонение (затраты сильнее всего превышают поступления) — сверху.
   // Затраты статьи с 27.08 — МОРС + ТУЗИО.
   const rowDiff = r0 => r0.inc - r0.cost - r0.tuz;
   tRows.sort((r1, r2) => rowDiff(r1) - rowDiff(r2));
-  const totC = tRows.reduce((s, r0) => s + r0.cost, 0);
-  const totT = tRows.reduce((s, r0) => s + r0.tuz, 0);
-  const totI = tRows.reduce((s, r0) => s + r0.inc, 0);
+  const sumOf = (rows, f) => rows.reduce((s, r0) => s + f(r0), 0);
+  const totC = sumOf(tRows, r0 => r0.cost);
+  const totT = sumOf(tRows, r0 => r0.tuz);
+  const totI = sumOf(tRows, r0 => r0.inc);
+  const totB = sumOf(tRows, r0 => r0.bud);
+  const totR = sumOf(tRows, r0 => r0.rest);
+  const nTd = v => '<td class="num">' + (v ? escapeHtml(fmtInt(Math.round(v))) : '') + '</td>';
   const dTd = d => '<td class="num" style="color:' + (d < 0 ? COL_COST : COL_IN) +
     ';font-weight:600">' + escapeHtml(fmtInt(Math.round(d))) + '</td>';
+  // Остаток: пусто, пока бюджет не загружен или статьи в нём нет (нет прогноза —
+  // нет и остатка); иначе цветом, как разница.
+  const restTd = r0 => (budgetReady && budItems.has(r0.k)) ? dTd(r0.rest) : '<td class="num"></td>';
   const rowHtml = r0 =>
     '<tr class="anrow' + (selK === r0.k ? ' sel' : '') + '" data-key="' + escapeHtml(r0.k) + '">' +
     '<td>' + escapeHtml(r0.name) + '</td>' +
-    '<td class="num">' + (r0.cost ? escapeHtml(fmtInt(Math.round(r0.cost))) : '') + '</td>' +
-    '<td class="num">' + (r0.tuz ? escapeHtml(fmtInt(Math.round(r0.tuz))) : '') + '</td>' +
-    '<td class="num">' + (r0.inc ? escapeHtml(fmtInt(Math.round(r0.inc))) : '') + '</td>' +
+    nTd(r0.bud) + nTd(r0.cost) + nTd(r0.tuz) + restTd(r0) + nTd(r0.inc) +
     dTd(rowDiff(r0)) +
     '<td class="num">' + (r0.cost ? '<button type="button" class="anpay" data-key="' +
       escapeHtml(r0.k) + '" data-name="' + escapeHtml(r0.name) +
@@ -2385,23 +2416,26 @@ function renderAnalytics() {
   // по ним нет закрытия у заказчика, т.е. их нет в бюджете с заказчиком.
   const withInc = tRows.filter(r0 => r0.inc);
   const noInc = tRows.filter(r0 => !r0.inc);
-  const noIncC = noInc.reduce((s, r0) => s + r0.cost, 0);
-  const noIncT = noInc.reduce((s, r0) => s + r0.tuz, 0);
+  const noIncC = sumOf(noInc, r0 => r0.cost);
+  const noIncT = sumOf(noInc, r0 => r0.tuz);
+  const noIncB = sumOf(noInc, r0 => r0.bud);
+  const noIncR = sumOf(noInc, r0 => r0.rest);
   const noIncBlock = noInc.length
     ? '<tr class="an-noinc"><td>Нет в бюджете с Заказчиком (' + noInc.length + ')</td>' +
-      '<td class="num">' + escapeHtml(fmtInt(Math.round(noIncC))) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtInt(Math.round(noIncT))) + '</td>' +
+      nTd(noIncB) + nTd(noIncC) + nTd(noIncT) +
+      (budgetReady ? dTd(noIncR) : '<td class="num"></td>') +
       '<td class="num"></td>' + dTd(-noIncC - noIncT) + '<td></td></tr>' +
       noInc.map(rowHtml).join('')
     : '';
   const tbl = '<table class="check anitems"><thead><tr><th>Статья</th>' +
+    '<th class="num">Прогнозный бюджет, руб</th>' +
     '<th class="num">Затраты (МОРС), руб</th><th class="num">ТУЗИО, руб</th>' +
+    '<th class="num">Остаток, руб</th>' +
     '<th class="num">Поступления (КП), руб</th>' +
     '<th class="num">Разница, руб</th><th></th></tr></thead><tbody>' +
     withInc.map(rowHtml).join('') + noIncBlock +
-    '</tbody><tfoot><tr><td>Итого</td><td class="num">' + escapeHtml(fmtInt(Math.round(totC))) +
-    '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totT))) +
-    '</td><td class="num">' + escapeHtml(fmtInt(Math.round(totI))) + '</td>' +
+    '</tbody><tfoot><tr><td>Итого</td>' + nTd(totB) + nTd(totC) + nTd(totT) +
+    (budgetReady ? dTd(totR) : '<td class="num"></td>') + nTd(totI) +
     dTd(totI - totC - totT) + '<td></td></tr></tfoot></table>';
   const mTitle = state.anMonth ? mLabel(state.anMonth) : '';
   // При выбранном месяце оставлена только рабочая ссылка сброса — без комментариев.
