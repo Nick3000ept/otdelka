@@ -403,9 +403,14 @@
   }
   /* Вкладки «МОЛ» и «Материалы» (28.08.2026). */
   table.check.mtab { max-width: none; }
-  table.check.mtab th.num { width: 15%; }
+  table.check.mtab th.num { width: 13%; }
   table.check.mtab th.c-unit { width: 6%; }
   table.check.mtab td.num { white-space: nowrap; }
+  /* ⚠️ Вложенная таблица-расшифровка наследовала ширины от .mtab th.num (13% × 7
+     колонок = 91%), из-за чего название работы сжималось в узкий столбец и рвалось
+     на 6 строк. Задаём её колонки отдельно (28.08.2026). */
+  table.check.mtab table.inner th:first-child { width: 34%; }
+  table.check.mtab table.inner th.num { width: 9.4%; }
   /* Шапка вкладок «МОЛ»/«Материалы» не липкая: у таблицы бюджета МОЛ она в два
      ряда, а sticky-шапка из table.check тогда наезжает сама на себя. Таблицы
      здесь короткие — прокрутка под шапкой не нужна. */
@@ -2821,16 +2826,18 @@ function renderMol() {
         html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
           '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
           '<th class="num">Итого (расчет)</th>' +
-          '<th class="num">Выполнено натурально</th><th class="num">Списано</th>' +
+          '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
+          '<th class="num">Списано</th>' +
           '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + escapeHtml(r.unit) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.off)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
-          '<td class="num"></td><td class="num"></td>' +
+          '<td class="num"></td><td class="num"></td><td class="num"></td>' +
           '<td class="num">' + escapeHtml(fmtR(tCost)) +
           '</td></tr></tfoot></table></div>';
       }
@@ -2880,16 +2887,17 @@ function renderMaterials() {
       '<td>' + escapeHtml(r.unit) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="6">' +
+    body += '<tr class="mdetail"><td colspan="7">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем материала</th><th class="num">Выполнено натурально</th>' +
-      '<th class="num">Цена за ед., руб</th>' +
+      '<th class="num">Остаток</th><th class="num">Цена за ед., руб</th>' +
       '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
       works.map(w => '<tr><td>' + escapeHtml(w.work) +
         (matKey(w.name) === 'гкл-листы' ? ' <i>(' + escapeHtml(w.name) + ')</i>' : '') +
@@ -2898,6 +2906,7 @@ function renderMaterials() {
         '<td class="num">' + escapeHtml(fmtQ(w.rate)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(w.matVol)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(w.done)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(w.matVol - w.done)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(w.price)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtR(w.cost)) + '</td></tr>').join('') +
       '</tbody></table></td></tr>';
@@ -2906,10 +2915,11 @@ function renderMaterials() {
     '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
     '<th class="num">Объем материала итого</th>' +
     '<th class="num">Выполнено натурально</th>' +
+    '<th class="num">Остаток</th>' +
     '<th class="num">Списано итого</th>' +
     '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
-    '<td class="num"></td><td class="num"></td>' +
+    '<td class="num"></td><td class="num"></td><td class="num"></td>' +
     '<td class="num">' + escapeHtml(fmtR(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
 }
