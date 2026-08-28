@@ -129,15 +129,20 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   считает tblMonths, openAnPayments фильтрует строки по месяцу даты
   (new Date, не substring ISO)
 
-## index.html — Материалы (28.08.2026)
+## index.html — МОЛ и Материалы (28.08.2026)
 
-- Пункт сайдбара `data-screen="materials"` (под «Аналитикой»), контейнер
-  `#materials-screen`, CSS `.mtab`/`tr.mtype`/`tr.mmat`/`tr.mmol`;
-  `state.writeoff`/`writeoffStatus`/`expenses`; ветка isMaterials в `setScreen`
-- `M_TYPES`/`GKL_RE`/`GKL_TITLE`/`matKey`/`calcMaterialVolumes` +
-  `loadWriteoff`/`renderMaterials` — после обработчика кликов `#analytics-screen`,
-  перед `openAnPayments`. Расчётный объём = Σ(расход J × объём работ L) из
-  `state.expenses`; все виды ГКЛ сведены в одну строку через `matKey`
+- Пункты сайдбара `data-screen="mol"` и `data-screen="materials"` (под
+  «Аналитикой»), контейнеры `#mol-screen`/`#materials-screen`, CSS `.mtab`,
+  `.mol-block`/`.mol-name`/`.mol-sec`, `tr.mrow`/`tr.mdetail`;
+  `state.writeoff`/`writeoffStatus`/`expenses`/`matOpen`; ветки isMol/isMaterials
+  в `setScreen`; обработчик кликов `#materials-screen` (раскрытие материала) —
+  сразу после навешивания кликов на `.sb-item`
+- Общий слой (после обработчика `#analytics-screen`, перед `openAnPayments`):
+  `M_TYPES`, `GKL_RE`/`GKL_TITLE`/`matKey`/`matTitle`, `MOL_LIST`,
+  `buildMaterialCalc(volByWork)` (материал → объём/стоимость + список работ;
+  без аргумента — объёмы работ из «Расходов», с аргументом — из бюджета по МОЛ),
+  `molWorkVolumes(mol)`, `molBudget(mol)`, `fmtQ`/`fmtR`,
+  `loadWriteoff`, `renderMol`, `renderMaterials`
 - script.gs: `readWriteoff_` (перед `readLk_`), обработчик `action=writeoff`
   в doGet перед `morsRows`, `CACHE_WO = 'writeoff_v1'` (+ в `clearCache`),
   блок CONFIG `SHEET_WRITEOFF`/`WO_*`

@@ -398,18 +398,26 @@
      этих признаков в данных бюджета нет (26.08.2026). */
   header.bmode #flt-place-wrap, header.bmode #flt-surface-wrap { display: none; }
   /* Экраны проверок, бюджета и аналитики. */
-  #check-screen, #budget-screen, #analytics-screen, #materials-screen {
+  #check-screen, #budget-screen, #analytics-screen, #materials-screen, #mol-screen {
     flex: 1; overflow: auto; padding: 14px 16px;
   }
-  /* Вкладка «Материалы» (28.08.2026): списание в разрезе материал × МОЛ. */
+  /* Вкладки «МОЛ» и «Материалы» (28.08.2026). */
   table.check.mtab { max-width: none; }
-  table.check.mtab th.num { width: 16%; }
-  table.check.mtab th.c-unit { width: 8%; }
-  table.check.mtab tr.mtype td {
-    font-weight: 700; background: #dde4ed; border-bottom: 1px solid var(--border);
+  table.check.mtab th.num { width: 15%; }
+  table.check.mtab th.c-unit { width: 7%; }
+  /* Блок одного МОЛ и заголовки его разделов «Бюджет» / «Материалы». */
+  .mol-block { margin-bottom: 26px; }
+  .mol-name {
+    font-size: 15px; font-weight: 700; padding: 6px 10px; margin-bottom: 6px;
+    background: #dde4ed; border-radius: 4px;
   }
-  table.check.mtab tr.mmat td { font-weight: 600; background: #eef1f5; }
-  table.check.mtab tr.mmol td:first-child { padding-left: 28px; color: var(--text-dim); }
+  .mol-sec { font-size: 13px; font-weight: 700; color: var(--text-dim); margin: 10px 0 4px; }
+  /* «Материалы»: строка материала раскрывается в расшифровку по работам. */
+  table.check.mtab tr.mrow { cursor: pointer; }
+  table.check.mtab tr.mrow:hover td { background: #eef2f8; }
+  table.check.mtab tr.mrow.open td { background: #dbe7ff; font-weight: 600; }
+  table.check.mtab tr.mrow .chev { color: var(--accent); }
+  table.check.mtab tr.mdetail > td { background: #fafbfc; padding: 8px 12px 12px; }
   /* Вкладка «Аналитика» (26.08.2026): график затраты — поступления. */
   .an-legend { display: flex; gap: 24px; flex-wrap: wrap; margin: 10px 0 4px; font-size: 13px; }
   .an-legend .an-dot {
@@ -636,6 +644,7 @@
     <div class="sb-item" data-screen="fact">Факт</div>
     <div class="sb-item" data-screen="budget">Бюджет</div>
     <div class="sb-item" data-screen="analytics">Аналитика</div>
+    <div class="sb-item" data-screen="mol">МОЛ</div>
     <div class="sb-item" data-screen="materials">Материалы</div>
     <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
     <div id="sb-checks" style="display:none">
@@ -692,6 +701,7 @@
     <div id="check-screen" style="display:none"></div>
     <div id="budget-screen" style="display:none"></div>
     <div id="analytics-screen" style="display:none"></div>
+    <div id="mol-screen" style="display:none"></div>
     <div id="materials-screen" style="display:none"></div>
     <div id="pane-bottom" style="display:none">
       <div id="pane-work"></div>
@@ -807,7 +817,8 @@ const state = {
   anHl: null,                  // выделенный кликом по легенде ряд графика (28.08.2026)
   writeoff: null,              // лист «Списание материалов» (action=writeoff, 28.08.2026)
   writeoffStatus: 'idle',      // idle | loading | ready | error
-  expenses: [],                // лист «Расходы» целиком — нормы расхода для вкладки «Материалы»
+  expenses: [],                // лист «Расходы» целиком — нормы расхода для вкладок «МОЛ»/«Материалы»
+  matOpen: null,               // раскрытый материал на вкладке «Материалы» (ключ matKey)
   checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
   contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
   ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
@@ -1650,6 +1661,8 @@ async function loadBudget() {
   if (state.screen === 'check-changes') renderCheckChanges();
   // И «Аналитике» — колонка «Прогнозный бюджет» по статьям (27.08.2026).
   if (state.screen === 'analytics') renderAnalytics();
+  // И «МОЛ» — разделы «Бюджет» и объёмы работ по МОЛ (28.08.2026).
+  if (state.screen === 'mol') renderMol();
 }
 
 // СС-подрядчики для галочки «Собственные силы» на «Бюджете» (просьба 18.08.2026;
@@ -2521,35 +2534,99 @@ const M_TYPES = [
   { title: 'Плитка (керамогранит)', keys: ['керамогранит', 'плитка'] }
 ];
 
-// Все листовые виды ГКЛ считаем одним материалом (просьба 28.08.2026): в
-// «Расходах» их четыре — ГКЛ / ГКЛВ (влагостойкий) / ГВЛ (гипсоволокно) /
-// «Гипрок Файер» (огнестойкий), в списании только «ГКЛ фирмы Knauf…».
+// Листовые виды ГКЛ считаем одним материалом. Уточнение пользователя 28.08:
+// в модели ТРИ типа — ГКЛ / ГКЛВ (влагостойкий) / ГВЛ (гипсоволокно);
+// «Гипрок Файер» (огнестойкий, 11,6 тыс. м²) остаётся отдельной строкой.
 // Крепёж и клей («Саморез для ГКЛ», «Комплект под ГКЛ», «Knauf Перлфикс»)
 // под правило не попадают — они не начинаются с ГКЛ/ГКЛВ/ГВЛ.
-const GKL_RE = /^(гкл|гклв|гвл)\b|^гипрок файер/;
-const GKL_TITLE = 'ГКЛ (все виды: ГКЛ, ГКЛВ, ГВЛ, Гипрок Файер)';
+const GKL_RE = /^(гкл|гклв|гвл)\b/;
+const GKL_TITLE = 'ГКЛ (ГКЛ + ГКЛВ + ГВЛ)';
 // Ключ материала для сведения списания и норм расхода: у ГКЛ — общий.
 const matKey = name => GKL_RE.test(norm(name)) ? 'гкл-листы' : norm(name);
+const matTitle = (key, name) => key === 'гкл-листы' ? GKL_TITLE : name;
+
+// Материально ответственные — они же подрядчики собственных сил в поэтажке
+// (те же имена, что в BUDGET_SS_CONTRS). Порядок — как просил пользователь.
+const MOL_LIST = ['Овчинников', 'Смирнов', 'Джамал', 'Элшод'];
 
 /**
- * Расчётный объём материала (28.08.2026) — по листу «Расходы»:
- * сумма «Расход в рачет» (кол. J, опечатка в заголовке листа) × «Объем работ»
- * (кол. L) по всем работам, где материал встречается. Совпадает с готовой
- * колонкой листа «Объем материала» (проверено 28.08 до рубля).
- * Возвращает Map: ключ материала (matKey) -> объём.
+ * Расшифровка материалов по листу «Расходы» (28.08.2026).
+ * Для каждого материала — объём (норма расхода × объём работ), стоимость
+ * («Стоимость материала в ед работы» × объём работ) и список работ, из которых
+ * это сложилось. Объёмы работ можно взять не из «Расходов», а из бюджета по
+ * конкретному подрядчику — тогда получается расчёт в разрезе МОЛ (volByWork).
+ * Ключ материала — matKey, поэтому все виды ГКЛ сводятся в одну строку.
+ * ⚠️ Названия колонок листа: «Расход в рачет» (кол. J, опечатка в заголовке),
+ * «Объем работ» (L), «Стоимость материала в ед работы» (K), «Расценка» (I).
  */
-function calcMaterialVolumes() {
-  const out = new Map();
+function buildMaterialCalc(volByWork) {
+  const out = new Map();   // ключ -> { name, unit, vol, cost, works: [] }
   (state.expenses || []).forEach(row => {
     const name = String(row['Материалы'] || '').trim();
     if (!name) return;
+    const work = String(row['Название работы из АР'] || '').trim();
     const rate = Number(row['Расход в рачет']);
-    const vol = Number(row['Объем работ']);
+    // Объём работ: из бюджета по МОЛ (если передан) либо из самого листа.
+    const vol = volByWork ? (volByWork.get(norm(work)) || 0) : Number(row['Объем работ']);
     if (!rate || !vol || !isFinite(rate) || !isFinite(vol)) return;
+    const priceUnit = Number(row['Стоимость материала в ед работы']) || 0;
+    const price = Number(row['Расценка']) || 0;
     const k = matKey(name);
-    out.set(k, (out.get(k) || 0) + rate * vol);
+    if (!out.has(k)) {
+      out.set(k, {
+        name: matTitle(k, name),
+        unit: (state.unitByMaterial && state.unitByMaterial.get(norm(name))) || '',
+        vol: 0, cost: 0, works: []
+      });
+    }
+    const o = out.get(k);
+    o.vol += rate * vol;
+    o.cost += priceUnit * vol;
+    o.works.push({ work, rate, vol, price, matVol: rate * vol, cost: priceUnit * vol, name });
   });
   return out;
+}
+
+/**
+ * Объёмы работ конкретного МОЛ (28.08.2026) — из свода бюджета: в каждой
+ * ячейке [подрядчик, корпус, стоимость, объём, …], подрядчики собственных сил
+ * совпадают по имени с МОЛ. Возвращает Map: norm(работа) -> объём.
+ * Проверено 28.08: сумма объёмов ячеек работы = «Объем работ» листа «Расходы».
+ */
+function molWorkVolumes(mol) {
+  const out = new Map();
+  const key = norm(mol);
+  (state.budget || []).forEach(item => {
+    (item[2] || []).forEach(w => {
+      const wk = norm(String(w[0] || ''));
+      if (!wk) return;
+      (w[2] || []).forEach(c => {
+        if (norm(String(c[0] || '')) !== key) return;
+        out.set(wk, (out.get(wk) || 0) + (c[3] || 0));
+      });
+    });
+  });
+  return out;
+}
+
+/** Свод бюджета по статьям для одного МОЛ — по ячейкам с его именем. */
+function molBudget(mol) {
+  const key = norm(mol);
+  const rows = [];
+  (state.budget || []).forEach(item => {
+    let cost = 0, work = 0, fact = 0, vol = 0;
+    (item[2] || []).forEach(w => (w[2] || []).forEach(c => {
+      if (norm(String(c[0] || '')) !== key) return;
+      cost += c[2] || 0;
+      work += c[5] || 0;
+      fact += c[6] || 0;
+      vol += c[3] || 0;
+    }));
+    if (!cost && !fact) return;
+    rows.push({ item: String(item[0]), cost, work, mat: cost - work, fact });
+  });
+  rows.sort((a, b) => b.cost - a.cost);
+  return rows;
 }
 
 async function loadWriteoff() {
@@ -2563,13 +2640,30 @@ async function loadWriteoff() {
   } catch (e) {
     state.writeoffStatus = 'error';
   }
-  if (state.screen === 'materials') renderMaterials();
+  if (state.screen === 'mol') renderMol();
 }
 
-function renderMaterials() {
-  const el = document.getElementById('materials-screen');
+// Объёмы дробные — два знака, ноль показываем пустой ячейкой.
+const fmtQ = v => v ? new Intl.NumberFormat('ru-RU',
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) : '';
+const fmtR = v => v ? fmtInt(Math.round(v)) : '';
+
+/**
+ * Вкладка «МОЛ» (28.08.2026, бывшая «Материалы») — четыре материально
+ * ответственных, у каждого два раздела:
+ *  · «Бюджет» — те же суммы, что на вкладке «Бюджет», но только по ячейкам
+ *    этого МОЛ (он же подрядчик собственных сил): статья × стоимость/работы/
+ *    материалы/факт;
+ *  · «Материалы» — расчётный объём по его работам (норма расхода × объём
+ *    работ ЭТОГО МОЛ), списано из листа «Списание материалов» и стоимость
+ *    материала; сортировка по убыванию стоимости. Все виды ГКЛ — одной строкой
+ *    (matKey), она и сравнивается со списанием.
+ */
+function renderMol() {
+  const el = document.getElementById('mol-screen');
   if (state.writeoffStatus === 'idle') loadWriteoff();
-  const head = '<div class="check-head">Материалы</div>';
+  if (state.budgetStatus === 'idle') loadBudget();
+  const head = '<div class="check-head">МОЛ</div>';
   if (state.writeoffStatus !== 'ready') {
     el.innerHTML = head + '<div class="side-note">' +
       (state.writeoffStatus === 'error'
@@ -2577,78 +2671,152 @@ function renderMaterials() {
         : 'Данные списания загружаются…') + '</div>';
     return;
   }
-  const rows = state.writeoff || [];
-  if (!rows.length) {
-    el.innerHTML = head + '<div class="side-note">Лист «Списание материалов» пуст.</div>';
-    return;
-  }
-  // Объёмы дробные — показываем с двумя знаками, ноль оставляем пустым.
-  const fmtQ = v => v ? new Intl.NumberFormat('ru-RU',
-    { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) : '';
-  const typeOf = t => {
-    const k = norm(t);
-    return M_TYPES.find(x => x.keys.some(key => k === key || k.startsWith(key))) || null;
-  };
-  // Расчётный объём по нормам расхода (28.08) — общий по материалу, по МОЛ
-  // не делится: норма расхода к материально ответственным не привязана.
-  const calcVol = calcMaterialVolumes();
-  // Тип → материал → МОЛ. Порядок типов — как в M_TYPES, материалы внутри
-  // по убыванию списания, МОЛ — по алфавиту (список у всех материалов один).
-  // Все виды ГКЛ сведены в одну строку (matKey).
-  const byType = new Map();   // title -> Map(ключ -> { name, unit, mols, total })
-  rows.forEach(r => {
-    const t = typeOf(r[0]);
-    if (!t) return;
-    if (!byType.has(t.title)) byType.set(t.title, new Map());
-    const mats = byType.get(t.title);
+  const budgetReady = state.budgetStatus === 'ready';
+  // Списание: ключ материала -> МОЛ -> сумма (все виды ГКЛ сведены matKey).
+  const offByMat = new Map();
+  const unitByMat = new Map();
+  (state.writeoff || []).forEach(r => {
     const k = matKey(r[1]);
-    const nm = k === 'гкл-листы' ? GKL_TITLE : r[1];
-    if (!mats.has(k)) mats.set(k, { name: nm, unit: r[2], mols: new Map(), total: 0 });
-    const o = mats.get(k);
+    if (!offByMat.has(k)) offByMat.set(k, { name: matTitle(k, r[1]), mols: new Map() });
+    const o = offByMat.get(k);
     o.mols.set(r[5], (o.mols.get(r[5]) || 0) + (r[4] || 0));
-    o.total += r[4] || 0;
+    if (r[2] && !unitByMat.has(k)) unitByMat.set(k, r[2]);
   });
-  let body = '';
-  let grand = 0, grandCalc = 0;
-  M_TYPES.forEach(t => {
-    const mats = byType.get(t.title);
-    if (!mats) return;
-    const list = Array.from(mats.entries()).sort((a, b) => b[1].total - a[1].total);
-    const tTotal = list.reduce((s, m) => s + m[1].total, 0);
-    const tCalc = list.reduce((s, m) => s + (calcVol.get(m[0]) || 0), 0);
-    grand += tTotal;
-    grandCalc += tCalc;
-    body += '<tr class="mtype"><td>' + escapeHtml(t.title) + ' (' + list.length + ')</td>' +
-      '<td></td><td class="num">' + escapeHtml(fmtQ(tCalc)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtQ(tTotal)) + '</td></tr>';
-    list.forEach(([k, o]) => {
-      const cv = calcVol.get(k) || 0;
-      body += '<tr class="mmat"><td>' + escapeHtml(o.name) + '</td>' +
-        '<td>' + escapeHtml(o.unit) + '</td>' +
-        '<td class="num">' + escapeHtml(fmtQ(cv)) + '</td>' +
-        '<td class="num">' + escapeHtml(fmtQ(o.total)) + '</td></tr>';
-      Array.from(o.mols.entries()).sort((a, b) => a[0].localeCompare(b[0], 'ru'))
-        .forEach(([mol, v]) => {
-          body += '<tr class="mmol"><td>' + escapeHtml(mol) + '</td>' +
-            '<td>' + escapeHtml(o.unit) + '</td><td class="num"></td>' +
-            '<td class="num">' + escapeHtml(fmtQ(v)) + '</td></tr>';
-        });
-    });
+  let html = head;
+  MOL_LIST.forEach(mol => {
+    html += '<div class="mol-block"><div class="mol-name">' + escapeHtml(mol) + '</div>';
+
+    // --- Раздел «Бюджет» ---
+    html += '<div class="mol-sec">Бюджет</div>';
+    if (!budgetReady) {
+      html += '<div class="side-note">Свод бюджета загружается…</div>';
+    } else {
+      const bRows = molBudget(mol);
+      if (!bRows.length) {
+        html += '<div class="side-note">В бюджете нет строк по этому МОЛ.</div>';
+      } else {
+        const tC = bRows.reduce((s, r) => s + r.cost, 0);
+        const tW = bRows.reduce((s, r) => s + r.work, 0);
+        const tM = bRows.reduce((s, r) => s + r.mat, 0);
+        const tF = bRows.reduce((s, r) => s + r.fact, 0);
+        html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
+          '<th>Статья бюджета</th><th class="num">Стоимость, руб</th>' +
+          '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' +
+          '<th class="num">Факт, руб</th></tr></thead><tbody>' +
+          bRows.map(r => '<tr><td>' + escapeHtml(r.item) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.work)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.mat)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.fact)) + '</td></tr>').join('') +
+          '</tbody><tfoot><tr><td>Итого</td>' +
+          '<td class="num">' + escapeHtml(fmtR(tC)) + '</td>' +
+          '<td class="num">' + escapeHtml(fmtR(tW)) + '</td>' +
+          '<td class="num">' + escapeHtml(fmtR(tM)) + '</td>' +
+          '<td class="num">' + escapeHtml(fmtR(tF)) + '</td></tr></tfoot></table></div>';
+      }
+    }
+
+    // --- Раздел «Материалы» ---
+    html += '<div class="mol-sec">Материалы</div>';
+    if (!budgetReady) {
+      html += '<div class="side-note">Расчёт появится после загрузки бюджета…</div>';
+    } else {
+      const calc = buildMaterialCalc(molWorkVolumes(mol));
+      // Материалы этого МОЛ: расчётные по его работам + те, что ему списаны.
+      const keys = new Set([...calc.keys()]);
+      offByMat.forEach((o, k) => { if (o.mols.get(mol)) keys.add(k); });
+      const list = Array.from(keys).map(k => {
+        const c = calc.get(k);
+        const off = offByMat.get(k);
+        return {
+          k,
+          name: (c && c.name) || (off && off.name) || k,
+          unit: (c && c.unit) || unitByMat.get(k) || '',
+          vol: c ? c.vol : 0,
+          cost: c ? c.cost : 0,
+          off: off ? (off.mols.get(mol) || 0) : 0
+        };
+      }).filter(r => r.vol || r.off)
+        .sort((a, b) => b.cost - a.cost || b.vol - a.vol);
+      if (!list.length) {
+        html += '<div class="side-note">Материалов по этому МОЛ не нашлось.</div>';
+      } else {
+        const tCost = list.reduce((s, r) => s + r.cost, 0);
+        html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
+          '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
+          '<th class="num">Итого (расчет)</th><th class="num">Списано</th>' +
+          '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
+          list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
+            '<td>' + escapeHtml(r.unit) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtQ(r.off)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>').join('') +
+          '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
+          '<td class="num"></td><td class="num">' + escapeHtml(fmtR(tCost)) +
+          '</td></tr></tfoot></table></div>';
+      }
+    }
+    html += '</div>';
   });
-  if (!body) {
-    el.innerHTML = head + '<div class="side-note">Материалов выбранных типов ' +
-      '(ГКЛ, штукатурка, шпатлевка, плитка) в листе не нашлось.</div>';
+  el.innerHTML = html;
+}
+
+/**
+ * Вкладка «Материалы» (28.08.2026) — как формируется стоимость материалов
+ * в бюджете. Строка материала (по убыванию итоговой стоимости) раскрывается
+ * в список работ: объём работ × норма расхода = объём материала, × цену =
+ * стоимость. Источник — лист «Расходы» (нормы и цены), объёмы работ оттуда же.
+ * ⚠️ Итог этой расшифровки МЕНЬШЕ колонки «Материалы» на вкладке «Бюджет»:
+ * бюджет считает материалы по поэтажке (своя цена материалов на единицу и
+ * коэффициент переделки), а здесь — по нормативной модели. Расхождение
+ * показано в подписи под таблицей.
+ */
+function renderMaterials() {
+  const el = document.getElementById('materials-screen');
+  const head = '<div class="check-head">Материалы</div>';
+  if (!(state.expenses || []).length) {
+    el.innerHTML = head + '<div class="side-note">Данные листа «Расходы» загружаются…</div>';
     return;
   }
-  // Итоговая строка складывает разные единицы измерения — как ориентир,
-  // поэтому подписана «Итого (разные ед. изм.)».
+  const calc = buildMaterialCalc(null);
+  const list = Array.from(calc.entries())
+    .map(([k, o]) => ({ k, ...o }))
+    .filter(r => r.cost || r.vol)
+    .sort((a, b) => b.cost - a.cost);
+  const total = list.reduce((s, r) => s + r.cost, 0);
+  const open = state.matOpen;
+  let body = '';
+  list.forEach(r => {
+    const isOpen = open === r.k;
+    body += '<tr class="mrow' + (isOpen ? ' open' : '') + '" data-mat="' + escapeHtml(r.k) + '">' +
+      '<td><span class="chev">' + (isOpen ? '▾' : '▸') + '</span> ' + escapeHtml(r.name) + '</td>' +
+      '<td>' + escapeHtml(r.unit) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>';
+    if (!isOpen) return;
+    // Расшифровка: из каких работ сложилась стоимость этого материала.
+    const works = r.works.slice().sort((a, b) => b.cost - a.cost);
+    body += '<tr class="mdetail"><td colspan="4">' +
+      '<table class="check inner"><thead><tr><th>Работа</th>' +
+      '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
+      '<th class="num">Объем материала</th><th class="num">Цена за ед., руб</th>' +
+      '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
+      works.map(w => '<tr><td>' + escapeHtml(w.work) +
+        (matKey(w.name) === 'гкл-листы' ? ' <i>(' + escapeHtml(w.name) + ')</i>' : '') +
+        '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(w.vol)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(w.rate)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(w.matVol)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(w.price)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtR(w.cost)) + '</td></tr>').join('') +
+      '</tbody></table></td></tr>';
+  });
   const tbl = '<table class="check mtab"><thead><tr>' +
-    '<th>Материал / МОЛ</th><th class="c-unit">Ед. изм</th>' +
-    '<th class="num">Расчетный объем материала Итого</th>' +
-    '<th class="num">Списано</th></tr></thead><tbody>' + body +
-    '</tbody><tfoot><tr><td>Итого (разные ед. изм.)</td><td></td>' +
-    '<td class="num">' + escapeHtml(fmtQ(grandCalc)) + '</td>' +
-    '<td class="num">' + escapeHtml(fmtQ(grand)) + '</td></tr></tfoot></table>';
+    '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
+    '<th class="num">Объем материала итого</th>' +
+    '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
+    body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
+    '<td class="num">' + escapeHtml(fmtR(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
 }
 
@@ -4172,10 +4340,11 @@ function setScreen(screen) {
   const isBudget = screen === 'budget';
   const isAnalytics = screen === 'analytics';
   const isMaterials = screen === 'materials';   // вкладка «Материалы» (28.08.2026)
+  const isMol = screen === 'mol';               // вкладка «МОЛ» (28.08.2026)
   // Шапка с масштабом и поиском — на всех экранах, кроме «Аналитики»
   // (просьба 26.08.2026); на «Бюджете»/«Проверках» — без фильтров дерева работ.
   const hdr = document.querySelector('header');
-  hdr.style.display = (isAnalytics || isMaterials) ? 'none' : '';
+  hdr.style.display = (isAnalytics || isMaterials || isMol) ? 'none' : '';
   hdr.classList.toggle('compact', isCheck);
   hdr.classList.toggle('bmode', isBudget);
   // Поле поиска на каждом экране своё: дерево работ / фильтр бюджета / проверки.
@@ -4188,14 +4357,16 @@ function setScreen(screen) {
   document.getElementById('budget-screen').style.display = isBudget ? 'block' : 'none';
   document.getElementById('analytics-screen').style.display = isAnalytics ? 'block' : 'none';
   document.getElementById('materials-screen').style.display = isMaterials ? 'block' : 'none';
-  if (isCheck || isBudget || isAnalytics || isMaterials) {
+  document.getElementById('mol-screen').style.display = isMol ? 'block' : 'none';
+  if (isCheck || isBudget || isAnalytics || isMaterials || isMol) {
     document.getElementById('pane-top').style.display = 'none';
     document.getElementById('pane-bottom').style.display = 'none';
     document.getElementById('status').style.display = 'none';
     if (isCheck) CHECK_SCREENS[screen]();
     else if (isBudget) renderBudget();
     else if (isAnalytics) renderAnalytics();
-    else renderMaterials();
+    else if (isMaterials) renderMaterials();
+    else renderMol();
     return;
   }
 
@@ -4222,6 +4393,15 @@ function setScreen(screen) {
 
 document.querySelectorAll('.sb-item').forEach(el => {
   el.addEventListener('click', () => setScreen(el.dataset.screen));
+});
+
+// Вкладка «Материалы» (28.08.2026): клик по строке материала раскрывает
+// расшифровку по работам, повторный клик — сворачивает.
+document.getElementById('materials-screen').addEventListener('click', e => {
+  const tr = e.target.closest('tr.mrow');
+  if (!tr) return;
+  state.matOpen = state.matOpen === tr.dataset.mat ? null : tr.dataset.mat;
+  renderMaterials();
 });
 
 // Проверка «Расценки работ»: клик по заголовку группы сворачивает/разворачивает её,
@@ -4594,9 +4774,10 @@ async function loadData() {
     fillFilters();
     renderTable();
     updateCheckBadges();
-    // Вкладка «Материалы» могла открыться до прихода «Расходов» (28.08.2026) —
-    // перерисуем, чтобы расчётные объёмы появились без обновления страницы.
+    // Вкладки «Материалы»/«МОЛ» могли открыться до прихода «Расходов»
+    // (28.08.2026) — перерисуем, чтобы расчёт появился без обновления страницы.
     if (state.screen === 'materials') renderMaterials();
+    if (state.screen === 'mol') renderMol();
     loadFloors();      // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
     loadQuestions();   // вопросы — тоже фоном: файл маленький, нужен бейдж-счётчик
     if (state.volsStatus === 'idle') loadVols();   // объёмы из поэтажки — для колонки
