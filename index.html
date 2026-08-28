@@ -2563,8 +2563,8 @@ const MOL_LIST = ['Овчинников', 'Смирнов', 'Джамал', 'Э�
  * ⚠️ Названия колонок листа: «Расход в рачет» (кол. J, опечатка в заголовке),
  * «Объем работ» (L), «Стоимость материала в ед работы» (K), «Расценка» (I).
  */
-function buildMaterialCalc(volByWork) {
-  const out = new Map();   // ключ -> { name, unit, vol, cost, works: [] }
+function buildMaterialCalc(volByWork, factVolByWork) {
+  const out = new Map();   // ключ -> { name, unit, vol, done, cost, works: [] }
   (state.expenses || []).forEach(row => {
     const name = String(row['Материалы'] || '').trim();
     if (!name) return;
@@ -2573,6 +2573,9 @@ function buildMaterialCalc(volByWork) {
     // Объём работ: из бюджета по МОЛ (если передан) либо из самого листа.
     const vol = volByWork ? (volByWork.get(norm(work)) || 0) : Number(row['Объем работ']);
     if (!rate || !vol || !isFinite(rate) || !isFinite(vol)) return;
+    // Натурально выполнено (28.08.2026): та же норма расхода, но на ФАКТИЧЕСКИЙ
+    // объём работ — «Объем к закрытию» (кол. Z поэтажки), cell[15] бюджета.
+    const factVol = factVolByWork ? (factVolByWork.get(norm(work)) || 0) : 0;
     const priceUnit = Number(row['Стоимость материала в ед работы']) || 0;
     const price = Number(row['Расценка']) || 0;
     const k = matKey(name);
@@ -2580,13 +2583,15 @@ function buildMaterialCalc(volByWork) {
       out.set(k, {
         name: matTitle(k, name),
         unit: (state.unitByMaterial && state.unitByMaterial.get(norm(name))) || '',
-        vol: 0, cost: 0, works: []
+        vol: 0, done: 0, cost: 0, works: []
       });
     }
     const o = out.get(k);
     o.vol += rate * vol;
+    o.done += rate * factVol;
     o.cost += priceUnit * vol;
-    o.works.push({ work, rate, vol, price, matVol: rate * vol, cost: priceUnit * vol, name });
+    o.works.push({ work, rate, vol, price, matVol: rate * vol,
+                   done: rate * factVol, cost: priceUnit * vol, name });
   });
   return out;
 }
@@ -2597,21 +2602,25 @@ function buildMaterialCalc(volByWork) {
  * совпадают по имени с МОЛ. Возвращает Map: norm(работа) -> объём.
  * Проверено 28.08: сумма объёмов ячеек работы = «Объем работ» листа «Расходы».
  */
-function molWorkVolumes(mol) {
+function molWorkVolumes(mol, idx) {
   const out = new Map();
   const key = norm(mol);
+  const at = idx === undefined ? 3 : idx;   // 3 — плановый объём, 15 — факт (Z)
   (state.budget || []).forEach(item => {
     (item[2] || []).forEach(w => {
       const wk = norm(String(w[0] || ''));
       if (!wk) return;
       (w[2] || []).forEach(c => {
-        if (norm(String(c[0] || '')) !== key) return;
-        out.set(wk, (out.get(wk) || 0) + (c[3] || 0));
+        if (mol && norm(String(c[0] || '')) !== key) return;
+        out.set(wk, (out.get(wk) || 0) + (c[at] || 0));
       });
     });
   });
   return out;
 }
+
+/** Фактически выполненный объём по всем работам (без разреза по МОЛ). */
+function allFactVolumes() { return molWorkVolumes(null, 15); }
 
 /**
  * Свод бюджета по статьям для одного МОЛ — по ячейкам с его именем.
@@ -2780,7 +2789,7 @@ function renderMol() {
     } else if (!budgetReady) {
       html += '<div class="side-note">Расчёт появится после загрузки бюджета…</div>';
     } else {
-      const calc = buildMaterialCalc(molWorkVolumes(mol));
+      const calc = buildMaterialCalc(molWorkVolumes(mol), molWorkVolumes(mol, 15));
       // Материалы этого МОЛ: расчётные по его работам + те, что ему списаны.
       const keys = new Set([...calc.keys()]);
       offByMat.forEach((o, k) => { if (o.mols.get(mol)) keys.add(k); });
@@ -2792,6 +2801,7 @@ function renderMol() {
           name: (c && c.name) || (off && off.name) || k,
           unit: (c && c.unit) || unitByMat.get(k) || '',
           vol: c ? c.vol : 0,
+          done: c ? c.done : 0,
           cost: c ? c.cost : 0,
           off: off ? (off.mols.get(mol) || 0) : 0
         };
@@ -2803,15 +2813,18 @@ function renderMol() {
         const tCost = list.reduce((s, r) => s + r.cost, 0);
         html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
           '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
-          '<th class="num">Итого (расчет)</th><th class="num">Списано</th>' +
+          '<th class="num">Итого (расчет)</th>' +
+          '<th class="num">Выполнено натурально</th><th class="num">Списано</th>' +
           '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + escapeHtml(r.unit) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.off)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
-          '<td class="num"></td><td class="num">' + escapeHtml(fmtR(tCost)) +
+          '<td class="num"></td><td class="num"></td>' +
+          '<td class="num">' + escapeHtml(fmtR(tCost)) +
           '</td></tr></tfoot></table></div>';
       }
     }
@@ -2845,7 +2858,7 @@ function renderMaterials() {
     const k = matKey(r[1]);
     offTotal.set(k, (offTotal.get(k) || 0) + (r[4] || 0));
   });
-  const calc = buildMaterialCalc(null);
+  const calc = buildMaterialCalc(null, allFactVolumes());
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
     .filter(r => r.cost || r.vol)
@@ -2859,15 +2872,17 @@ function renderMaterials() {
       '<td><span class="chev">' + (isOpen ? '▾' : '▸') + '</span> ' + escapeHtml(r.name) + '</td>' +
       '<td>' + escapeHtml(r.unit) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="5">' +
+    body += '<tr class="mdetail"><td colspan="6">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
-      '<th class="num">Объем материала</th><th class="num">Цена за ед., руб</th>' +
+      '<th class="num">Объем материала</th><th class="num">Выполнено натурально</th>' +
+      '<th class="num">Цена за ед., руб</th>' +
       '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
       works.map(w => '<tr><td>' + escapeHtml(w.work) +
         (matKey(w.name) === 'гкл-листы' ? ' <i>(' + escapeHtml(w.name) + ')</i>' : '') +
@@ -2875,6 +2890,7 @@ function renderMaterials() {
         '<td class="num">' + escapeHtml(fmtQ(w.vol)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(w.rate)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(w.matVol)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(w.done)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(w.price)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtR(w.cost)) + '</td></tr>').join('') +
       '</tbody></table></td></tr>';
@@ -2882,10 +2898,11 @@ function renderMaterials() {
   const tbl = '<table class="check mtab"><thead><tr>' +
     '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
     '<th class="num">Объем материала итого</th>' +
+    '<th class="num">Выполнено натурально</th>' +
     '<th class="num">Списано итого</th>' +
     '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
-    '<td class="num"></td>' +
+    '<td class="num"></td><td class="num"></td>' +
     '<td class="num">' + escapeHtml(fmtR(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
 }

@@ -99,7 +99,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v28';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг с переделками 10%, лобби, Подсоба Шамов, СС факт, НР, переделки); чанкованный
+var CACHE_BUDGET = 'budget_v29';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг с переделками 10%, лобби, Подсоба Шамов, СС факт, НР, переделки, натуральный факт Z в cell[15]); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -1805,7 +1805,7 @@ function buildBudget_(ss) {
       if (gName) w[work].grp = gName;
     }
     var cellKey = p + '' + c;
-    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0, f: 0, fw: 0, fm: 0, rd: 0 };
+    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0, f: 0, fw: 0, fm: 0, rd: 0, z: 0 };
     var cellObj = w[work].cells[cellKey];
     cellObj.c += v;                       // стоимость (кол. AG)
     cellObj.v += vv;                      // объём (кол. D)
@@ -1815,6 +1815,7 @@ function buildBudget_(ss) {
     if (fp && typeof fp[k][0] === 'number') cellObj.f += fp[k][0]; // факт «К оплате» (кол. AA)
     var z = (zc && typeof zc[k][0] === 'number') ? zc[k][0] : 0;   // объём к закрытию (кол. Z)
     if (z) {
+      cellObj.z += z;                       // натуральный факт работ — для вкладок «МОЛ»/«Материалы» (28.08.2026)
       if (rb && typeof rb[k][0] === 'number') cellObj.fw += z * rb[k][0]; // факт работы (Z × AB)
       if (rm && typeof rm[k][0] === 'number') cellObj.fm += z * rm[k][0]; // факт материалы (Z × AC)
     }
@@ -1828,12 +1829,13 @@ function buildBudget_(ss) {
             var parts = key.split('');
             var cell = w.cells[key];
             // Индексы 9..13 заняты спец-сводной СС Шамова (readShamov_) —
-            // сумма переделок идёт в cell[14], чтобы не пересечься.
+            // сумма переделок идёт в cell[14], натуральный факт (Z) в cell[15].
             return [parts[0], parts[1], Math.round(cell.c),
                     Math.round(cell.v * 100) / 100, cell.r, Math.round(cell.w),
                     Math.round(cell.f || 0), Math.round(cell.fw || 0),
                     Math.round(cell.fm || 0), 0, 0, 0, 0, 0,
-                    Math.round(cell.rd || 0)];
+                    Math.round(cell.rd || 0),
+                    Math.round((cell.z || 0) * 100) / 100];
           });
           return [wName, Math.round(w.total), cells, w.grp || '— без группы —'];
         })
