@@ -403,17 +403,24 @@
   }
   /* Вкладки «МОЛ» и «Материалы» (28.08.2026). */
   table.check.mtab { max-width: none; }
-  table.check.mtab th.num { width: 13%; }
-  table.check.mtab th.c-unit { width: 7%; }
+  table.check.mtab th.num { width: 15%; }
+  table.check.mtab th.c-unit { width: 6%; }
+  table.check.mtab td.num { white-space: nowrap; }
   /* Шапка вкладок «МОЛ»/«Материалы» не липкая: у таблицы бюджета МОЛ она в два
      ряда, а sticky-шапка из table.check тогда наезжает сама на себя. Таблицы
      здесь короткие — прокрутка под шапкой не нужна. */
   table.check.mtab th { position: static; top: auto; }
-  /* Таблица бюджета МОЛ: 7 числовых колонок, поэтому уже. */
-  table.check.mbud th.num { width: 11%; }
+  /* Таблица бюджета МОЛ. ⚠️ При table-layout: fixed раскладку задаёт ПЕРВЫЙ ряд
+     шапки (там объединённые ячейки групп), ширины второго ряда игнорируются —
+     из-за этого суммы сначала обрезались. Ширины — на ячейках первого ряда. */
+  table.check.mbud thead tr:first-child th:first-child { width: 19%; }
+  table.check.mbud th.grphead[colspan="3"] { width: 30%; }
+  table.check.mbud th.grphead.lk { width: 21%; }
   table.check.mbud th.grphead {
     text-align: center; background: #edf2fb; border-bottom: 1px solid var(--border);
   }
+  /* Суммы не переносим и не сжимаем — колонка растягивается под число. */
+  table.check.mbud td.num, table.check.mbud th.num { white-space: nowrap; }
   table.check.mbud thead tr.sub th { background: #edf2fb; font-weight: 600; }
   table.check.mbud th.bsep, table.check.mbud td.bsep { border-left: 2px solid var(--border); }
   /* Блок одного МОЛ и заголовки его разделов «Бюджет» / «Материалы». */
@@ -2760,9 +2767,9 @@ function renderMol() {
           '<td class="num">' + escapeHtml(fmtR(t)) + '</td>';
         html += '<div class="bdetail-wrap"><table class="check mtab mbud"><thead>' +
           '<tr><th rowspan="2">Статья бюджета</th>' +
-          '<th colspan="3" class="num bsep grphead">Бюджет</th>' +
-          '<th colspan="3" class="num bsep grphead">Факт (модель)</th>' +
-          '<th class="num bsep grphead">Личный кабинет</th></tr>' +
+          '<th colspan="3" class="bsep grphead">Бюджет</th>' +
+          '<th colspan="3" class="bsep grphead">Факт (модель)</th>' +
+          '<th class="bsep grphead lk">Личный кабинет</th></tr>' +
           '<tr class="sub"><th class="num bsep">Материалы, руб</th>' +
           '<th class="num">Работы, руб</th><th class="num">Итого, руб</th>' +
           '<th class="num bsep">Материалы, руб</th>' +
