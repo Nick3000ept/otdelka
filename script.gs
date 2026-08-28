@@ -84,7 +84,17 @@ var CONFIG = {
   MORS_QUEUE_VALUE: 'СБ3',
   SHEET_TUZIO: 'ТУЗИО',        // третья линия «Аналитики» (26.08.2026)
   TUZIO_MONTHS_START: 3,       // кол. C — первая месячная колонка (даты в строке 1)
-  KP_MONTHS_START: 24   // кол. X «Формы КП» — первая месячная колонка (даты в строке 1)
+  KP_MONTHS_START: 24,  // кол. X «Формы КП» — первая месячная колонка (даты в строке 1)
+
+  // Вкладка «Материалы» (28.08.2026): лист «Списание материалов» —
+  // 50 материалов × 4 МОЛ, натуральные объёмы без денег.
+  SHEET_WRITEOFF: 'Списание материалов',
+  WO_TYPE: 'Тип материала',
+  WO_MAT: 'Материал',
+  WO_UNIT: 'Ед. изм',
+  WO_VOL: 'Объем материала итого',
+  WO_OFF: 'Материал к списанию итого',
+  WO_MOL: 'МОЛ'
 };
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
@@ -94,11 +104,13 @@ var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюдж�
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
+var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
+  cache.remove(CACHE_WO);
   var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
               CACHE_FACTREF + '_n', CACHE_AN + '_n'];
   for (var i = 0; i < 10; i++) {
@@ -779,6 +791,26 @@ function doGet(e) {
     }
   }
 
+  // Вкладка «Материалы» (28.08.2026): лист «Списание материалов» целиком
+  // (200 строк × 6 колонок — ответ маленький). Кэш 6 часов.
+  if (action === 'writeoff') {
+    try {
+      var cacheW = CacheService.getScriptCache();
+      var cachedW = cacheW.get(CACHE_WO);
+      if (cachedW) {
+        return ContentService.createTextOutput(cachedW)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssW = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadW = JSON.stringify({ ok: true, writeoff: readWriteoff_(ssW) });
+      if (payloadW.length < 95000) cacheW.put(CACHE_WO, payloadW, 21600);
+      return ContentService.createTextOutput(payloadW)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'writeoff_failed', message: String(err) });
+    }
+  }
+
   // Платежи МОРС по одной статье (26.08.2026): все колонки листа для модалки
   // «Платежи» на «Аналитике». Фильтр по «Статье бюджета» с той же нормализацией,
   // что у anKey на фронте (трим, нижний регистр, длинное тире -> дефис;
@@ -1088,6 +1120,49 @@ function buildVolumes_(ss) {
  * отдаётся вместе со сводом бюджета для колонки «Выполнено (ЛК)».
  * Нет листа или нужных колонок — пустой массив, витрина колонку не покажет.
  */
+/**
+ * Лист «Списание материалов» (28.08.2026) для вкладки «Материалы»:
+ * 50 материалов × 4 МОЛ, натуральные объёмы (денег на листе нет).
+ * Отдаём как есть — [[тип, материал, ед. изм., объём, списано, МОЛ], …];
+ * фильтр по типам материалов и группировка — на фронте.
+ * ⚠️ «Тип материала» заполнен не у всех строк (на 27.08 — 84 из 200).
+ */
+function readWriteoff_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_WRITEOFF);
+  if (!sh) return [];
+  var lastRow = sh.getLastRow();
+  var lastCol = sh.getLastColumn();
+  if (lastRow < 2) return [];
+  var data = sh.getRange(1, 1, lastRow, lastCol).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  var cT = idx[CONFIG.WO_TYPE], cM = idx[CONFIG.WO_MAT], cU = idx[CONFIG.WO_UNIT];
+  var cV = idx[CONFIG.WO_VOL], cO = idx[CONFIG.WO_OFF], cL = idx[CONFIG.WO_MOL];
+  if (cM === undefined || cL === undefined) return [];
+  var num = function (v) {
+    if (typeof v === 'number') return v;
+    // Значения могут прийти текстом с десятичной запятой («2115,00»).
+    var s = String(v).trim().replace(/\s/g, '').replace(',', '.');
+    var n = parseFloat(s);
+    return isNaN(n) ? 0 : n;
+  };
+  var out = [];
+  for (var r = 1; r < data.length; r++) {
+    var mat = String(data[r][cM]).trim();
+    var mol = String(data[r][cL]).trim();
+    if (!mat && !mol) continue;
+    out.push([
+      cT === undefined ? '' : String(data[r][cT]).trim(),
+      mat,
+      cU === undefined ? '' : String(data[r][cU]).trim(),
+      cV === undefined ? 0 : num(data[r][cV]),
+      cO === undefined ? 0 : num(data[r][cO]),
+      mol
+    ]);
+  }
+  return out;
+}
+
 function readLk_(ss) {
   var sh = ss.getSheetByName(CONFIG.SHEET_LK);
   if (!sh) return [];

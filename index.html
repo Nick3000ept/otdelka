@@ -398,7 +398,18 @@
      этих признаков в данных бюджета нет (26.08.2026). */
   header.bmode #flt-place-wrap, header.bmode #flt-surface-wrap { display: none; }
   /* Экраны проверок, бюджета и аналитики. */
-  #check-screen, #budget-screen, #analytics-screen { flex: 1; overflow: auto; padding: 14px 16px; }
+  #check-screen, #budget-screen, #analytics-screen, #materials-screen {
+    flex: 1; overflow: auto; padding: 14px 16px;
+  }
+  /* Вкладка «Материалы» (28.08.2026): списание в разрезе материал × МОЛ. */
+  table.check.mtab { max-width: none; }
+  table.check.mtab th.num { width: 14%; }
+  table.check.mtab th.c-unit { width: 8%; }
+  table.check.mtab tr.mtype td {
+    font-weight: 700; background: #dde4ed; border-bottom: 1px solid var(--border);
+  }
+  table.check.mtab tr.mmat td { font-weight: 600; background: #eef1f5; }
+  table.check.mtab tr.mmol td:first-child { padding-left: 28px; color: var(--text-dim); }
   /* Вкладка «Аналитика» (26.08.2026): график затраты — поступления. */
   .an-legend { display: flex; gap: 24px; flex-wrap: wrap; margin: 10px 0 4px; font-size: 13px; }
   .an-legend .an-dot {
@@ -625,6 +636,7 @@
     <div class="sb-item" data-screen="fact">Факт</div>
     <div class="sb-item" data-screen="budget">Бюджет</div>
     <div class="sb-item" data-screen="analytics">Аналитика</div>
+    <div class="sb-item" data-screen="materials">Материалы</div>
     <div class="sb-group" id="sb-checks-toggle"><span class="chev">&#9656;</span> Проверки</div>
     <div id="sb-checks" style="display:none">
       <div class="sb-item sb-sub" data-screen="check-rates">Недостающие расценки
@@ -680,6 +692,7 @@
     <div id="check-screen" style="display:none"></div>
     <div id="budget-screen" style="display:none"></div>
     <div id="analytics-screen" style="display:none"></div>
+    <div id="materials-screen" style="display:none"></div>
     <div id="pane-bottom" style="display:none">
       <div id="pane-work"></div>
       <div id="bottom-cols">
@@ -791,6 +804,9 @@ const state = {
   analyticsStatus: 'idle',     // idle | loading | ready | error
   anSel: null,                 // выбранная статья на «Аналитике» (ключ anKey) — линии только по ней
   anMonth: null,               // выбранный месяц на «Аналитике» ('ГГГГ-ММ') — таблица и платежи за него
+  anHl: null,                  // выделенный кликом по легенде ряд графика (28.08.2026)
+  writeoff: null,              // лист «Списание материалов» (action=writeoff, 28.08.2026)
+  writeoffStatus: 'idle',      // idle | loading | ready | error
   checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
   contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
   ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
@@ -2488,6 +2504,111 @@ document.getElementById('analytics-screen').addEventListener('click', e => {
 });
 
 /**
+ * Вкладка «Материалы» (28.08.2026) — списание материалов из одноимённого листа
+ * («Списание материалов»: 50 материалов × 4 МОЛ, натуральные объёмы, денег нет).
+ * Таблица: разделы по типу материала → материал (итог по всем МОЛ) → строки МОЛ,
+ * колонка «Списано» (кол. «Материал к списанию итого»).
+ * Пока показываем только четыре типа (просьба пользователя 28.08): ГКЛ,
+ * Штукатурка, Шпатлевка, Плитка. ⚠️ Типа «Плитка» в листе нет — материалы
+ * плитки лежат под типом «Керамогранит», поэтому раздел так и подписан.
+ * Новый тип показать — дописать в M_TYPES.
+ */
+const M_TYPES = [
+  { title: 'ГКЛ', keys: ['гкл'] },
+  { title: 'Штукатурка', keys: ['штукатурка'] },
+  { title: 'Шпатлевка', keys: ['шпатлевка', 'шпаклевка'] },
+  { title: 'Плитка (керамогранит)', keys: ['керамогранит', 'плитка'] }
+];
+
+async function loadWriteoff() {
+  state.writeoffStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=writeoff&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.writeoff = json.writeoff || [];
+    state.writeoffStatus = 'ready';
+  } catch (e) {
+    state.writeoffStatus = 'error';
+  }
+  if (state.screen === 'materials') renderMaterials();
+}
+
+function renderMaterials() {
+  const el = document.getElementById('materials-screen');
+  if (state.writeoffStatus === 'idle') loadWriteoff();
+  const head = '<div class="check-head">Материалы</div>';
+  if (state.writeoffStatus !== 'ready') {
+    el.innerHTML = head + '<div class="side-note">' +
+      (state.writeoffStatus === 'error'
+        ? 'Не удалось загрузить списание материалов. Обновите страницу.'
+        : 'Данные списания загружаются…') + '</div>';
+    return;
+  }
+  const rows = state.writeoff || [];
+  if (!rows.length) {
+    el.innerHTML = head + '<div class="side-note">Лист «Списание материалов» пуст.</div>';
+    return;
+  }
+  // Объёмы дробные — показываем с двумя знаками, ноль оставляем пустым.
+  const fmtQ = v => v ? new Intl.NumberFormat('ru-RU',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) : '';
+  const typeOf = t => {
+    const k = norm(t);
+    return M_TYPES.find(x => x.keys.some(key => k === key || k.startsWith(key))) || null;
+  };
+  // Тип → материал → МОЛ. Порядок типов — как в M_TYPES, материалы внутри
+  // по убыванию списания, МОЛ — по алфавиту (список у всех материалов один).
+  const byType = new Map();   // title -> Map(материал -> { unit, mols: Map(мол -> списано), total })
+  rows.forEach(r => {
+    const t = typeOf(r[0]);
+    if (!t) return;
+    if (!byType.has(t.title)) byType.set(t.title, new Map());
+    const mats = byType.get(t.title);
+    const mat = r[1];
+    if (!mats.has(mat)) mats.set(mat, { unit: r[2], mols: new Map(), total: 0 });
+    const o = mats.get(mat);
+    o.mols.set(r[5], (o.mols.get(r[5]) || 0) + (r[4] || 0));
+    o.total += r[4] || 0;
+  });
+  let body = '';
+  let grand = 0;
+  M_TYPES.forEach(t => {
+    const mats = byType.get(t.title);
+    if (!mats) return;
+    const list = Array.from(mats.entries()).sort((a, b) => b[1].total - a[1].total);
+    const tTotal = list.reduce((s, m) => s + m[1].total, 0);
+    grand += tTotal;
+    body += '<tr class="mtype"><td>' + escapeHtml(t.title) + ' (' + list.length + ')</td>' +
+      '<td></td><td class="num">' + escapeHtml(fmtQ(tTotal)) + '</td></tr>';
+    list.forEach(([mat, o]) => {
+      body += '<tr class="mmat"><td>' + escapeHtml(mat) + '</td>' +
+        '<td>' + escapeHtml(o.unit) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(o.total)) + '</td></tr>';
+      Array.from(o.mols.entries()).sort((a, b) => a[0].localeCompare(b[0], 'ru'))
+        .forEach(([mol, v]) => {
+          body += '<tr class="mmol"><td>' + escapeHtml(mol) + '</td>' +
+            '<td>' + escapeHtml(o.unit) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtQ(v)) + '</td></tr>';
+        });
+    });
+  });
+  if (!body) {
+    el.innerHTML = head + '<div class="side-note">Материалов выбранных типов ' +
+      '(ГКЛ, штукатурка, шпатлевка, плитка) в листе не нашлось.</div>';
+    return;
+  }
+  // Итоговая строка складывает разные единицы измерения — как ориентир,
+  // поэтому подписана «Итого (разные ед. изм.)».
+  const tbl = '<table class="check mtab"><thead><tr>' +
+    '<th>Материал / МОЛ</th><th class="c-unit">Ед. изм</th>' +
+    '<th class="num">Списано</th></tr></thead><tbody>' + body +
+    '</tbody><tfoot><tr><td>Итого (разные ед. изм.)</td><td></td>' +
+    '<td class="num">' + escapeHtml(fmtQ(grand)) + '</td></tr></tfoot></table>';
+  el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
+}
+
+/**
  * Модалка «Платежи» (26.08.2026): все строки МОРС по статье, все колонки листа
  * как есть (action=morsRows, грузится по клику). Сортировка — свежие сверху.
  */
@@ -4006,10 +4127,11 @@ function setScreen(screen) {
   const isCheck = !!CHECK_SCREENS[screen];
   const isBudget = screen === 'budget';
   const isAnalytics = screen === 'analytics';
+  const isMaterials = screen === 'materials';   // вкладка «Материалы» (28.08.2026)
   // Шапка с масштабом и поиском — на всех экранах, кроме «Аналитики»
   // (просьба 26.08.2026); на «Бюджете»/«Проверках» — без фильтров дерева работ.
   const hdr = document.querySelector('header');
-  hdr.style.display = isAnalytics ? 'none' : '';
+  hdr.style.display = (isAnalytics || isMaterials) ? 'none' : '';
   hdr.classList.toggle('compact', isCheck);
   hdr.classList.toggle('bmode', isBudget);
   // Поле поиска на каждом экране своё: дерево работ / фильтр бюджета / проверки.
@@ -4021,13 +4143,15 @@ function setScreen(screen) {
   document.getElementById('check-screen').style.display = isCheck ? 'block' : 'none';
   document.getElementById('budget-screen').style.display = isBudget ? 'block' : 'none';
   document.getElementById('analytics-screen').style.display = isAnalytics ? 'block' : 'none';
-  if (isCheck || isBudget || isAnalytics) {
+  document.getElementById('materials-screen').style.display = isMaterials ? 'block' : 'none';
+  if (isCheck || isBudget || isAnalytics || isMaterials) {
     document.getElementById('pane-top').style.display = 'none';
     document.getElementById('pane-bottom').style.display = 'none';
     document.getElementById('status').style.display = 'none';
     if (isCheck) CHECK_SCREENS[screen]();
     else if (isBudget) renderBudget();
-    else renderAnalytics();
+    else if (isAnalytics) renderAnalytics();
+    else renderMaterials();
     return;
   }
 
