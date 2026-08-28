@@ -2673,6 +2673,8 @@ async function loadWriteoff() {
     state.writeoffStatus = 'error';
   }
   if (state.screen === 'mol') renderMol();
+  // «Материалы» ждут списание для колонки «Списано итого» (28.08.2026).
+  if (state.screen === 'materials') renderMaterials();
 }
 
 // Объёмы дробные — два знака, ноль показываем пустой ячейкой.
@@ -2830,11 +2832,19 @@ function renderMol() {
  */
 function renderMaterials() {
   const el = document.getElementById('materials-screen');
+  if (state.writeoffStatus === 'idle') loadWriteoff();
   const head = '<div class="check-head">Материалы</div>';
   if (!(state.expenses || []).length) {
     el.innerHTML = head + '<div class="side-note">Данные листа «Расходы» загружаются…</div>';
     return;
   }
+  // «Списано итого» (просьба 28.08.2026) — сумма по всем МОЛ из листа
+  // «Списание материалов»; ключ тот же matKey, поэтому ГКЛ сравнивается целиком.
+  const offTotal = new Map();
+  (state.writeoff || []).forEach(r => {
+    const k = matKey(r[1]);
+    offTotal.set(k, (offTotal.get(k) || 0) + (r[4] || 0));
+  });
   const calc = buildMaterialCalc(null);
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
@@ -2849,11 +2859,12 @@ function renderMaterials() {
       '<td><span class="chev">' + (isOpen ? '▾' : '▸') + '</span> ' + escapeHtml(r.name) + '</td>' +
       '<td>' + escapeHtml(r.unit) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="4">' +
+    body += '<tr class="mdetail"><td colspan="5">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем материала</th><th class="num">Цена за ед., руб</th>' +
@@ -2871,8 +2882,10 @@ function renderMaterials() {
   const tbl = '<table class="check mtab"><thead><tr>' +
     '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
     '<th class="num">Объем материала итого</th>' +
+    '<th class="num">Списано итого</th>' +
     '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
+    '<td class="num"></td>' +
     '<td class="num">' + escapeHtml(fmtR(total)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
 }
