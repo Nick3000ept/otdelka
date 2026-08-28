@@ -403,7 +403,7 @@
   }
   /* Вкладки «МОЛ» и «Материалы» (28.08.2026). */
   table.check.mtab { max-width: none; }
-  table.check.mtab th.num { width: 15%; }
+  table.check.mtab th.num { width: 13%; }
   table.check.mtab th.c-unit { width: 7%; }
   /* Блок одного МОЛ и заголовки его разделов «Бюджет» / «Материалы». */
   .mol-block { margin-bottom: 26px; }
@@ -2617,23 +2617,48 @@ function molWorkVolumes(mol) {
   return out;
 }
 
-/** Свод бюджета по статьям для одного МОЛ — по ячейкам с его именем. */
+/**
+ * Свод бюджета по статьям для одного МОЛ — по ячейкам с его именем.
+ * Факт показываем ДВУМЯ колонками (просьба 28.08.2026):
+ *  · «Факт (модель)» — «К оплате» из поэтажки (cell[6]), считает бэкенд;
+ *  · «Факт (ЛК)» — лист «Личные_кабинеты» (МОЛ × статья -> выполнено итого),
+ *    приходит в ответе budget как `lk`; сопоставление по имени МОЛ и статье.
+ */
 function molBudget(mol) {
   const key = norm(mol);
+  // Факт из личных кабинетов: статья -> сумма по этому МОЛ.
+  const lk = new Map();
+  (state.budgetLk || []).forEach(r => {
+    if (norm(String(r[0] || '')) !== key) return;
+    const it = norm(String(r[1] || ''));
+    lk.set(it, (lk.get(it) || 0) + (r[2] || 0));
+  });
   const rows = [];
+  const usedLk = new Set();
   (state.budget || []).forEach(item => {
-    let cost = 0, work = 0, fact = 0, vol = 0;
+    let cost = 0, work = 0, fact = 0;
     (item[2] || []).forEach(w => (w[2] || []).forEach(c => {
       if (norm(String(c[0] || '')) !== key) return;
       cost += c[2] || 0;
       work += c[5] || 0;
       fact += c[6] || 0;
-      vol += c[3] || 0;
     }));
-    if (!cost && !fact) return;
-    rows.push({ item: String(item[0]), cost, work, mat: cost - work, fact });
+    const itKey = norm(String(item[0]));
+    const factLk = lk.get(itKey) || 0;
+    if (factLk) usedLk.add(itKey);
+    if (!cost && !fact && !factLk) return;
+    rows.push({ item: String(item[0]), cost, work, mat: cost - work, fact, factLk });
   });
-  rows.sort((a, b) => b.cost - a.cost);
+  // Статьи ЛК, которых нет в своде бюджета, — отдельными строками, иначе
+  // сумма колонки «Факт (ЛК)» молча теряла бы часть данных.
+  lk.forEach((v, k) => {
+    if (usedLk.has(k) || !v) return;
+    const src = (state.budgetLk || []).find(r =>
+      norm(String(r[0] || '')) === key && norm(String(r[1] || '')) === k);
+    rows.push({ item: (src ? String(src[1]) : k) + ' (только в ЛК)',
+                cost: 0, work: 0, mat: 0, fact: 0, factLk: v });
+  });
+  rows.sort((a, b) => b.cost - a.cost || b.factLk - a.factLk);
   return rows;
 }
 
@@ -2718,20 +2743,24 @@ function renderMol() {
         const tW = bRows.reduce((s, r) => s + r.work, 0);
         const tM = bRows.reduce((s, r) => s + r.mat, 0);
         const tF = bRows.reduce((s, r) => s + r.fact, 0);
+        const tL = bRows.reduce((s, r) => s + r.factLk, 0);
         html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
           '<th>Статья бюджета</th><th class="num">Стоимость, руб</th>' +
           '<th class="num">Работы, руб</th><th class="num">Материалы, руб</th>' +
-          '<th class="num">Факт, руб</th></tr></thead><tbody>' +
+          '<th class="num">Факт (модель), руб</th>' +
+          '<th class="num">Факт (ЛК), руб</th></tr></thead><tbody>' +
           bRows.map(r => '<tr><td>' + escapeHtml(r.item) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.work)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.mat)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtR(r.fact)) + '</td></tr>').join('') +
+            '<td class="num">' + escapeHtml(fmtR(r.fact)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.factLk)) + '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>Итого</td>' +
           '<td class="num">' + escapeHtml(fmtR(tC)) + '</td>' +
           '<td class="num">' + escapeHtml(fmtR(tW)) + '</td>' +
           '<td class="num">' + escapeHtml(fmtR(tM)) + '</td>' +
-          '<td class="num">' + escapeHtml(fmtR(tF)) + '</td></tr></tfoot></table></div>';
+          '<td class="num">' + escapeHtml(fmtR(tF)) + '</td>' +
+          '<td class="num">' + escapeHtml(fmtR(tL)) + '</td></tr></tfoot></table></div>';
       }
     }
 
