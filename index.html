@@ -403,7 +403,7 @@
   }
   /* Вкладка «Материалы» (28.08.2026): списание в разрезе материал × МОЛ. */
   table.check.mtab { max-width: none; }
-  table.check.mtab th.num { width: 14%; }
+  table.check.mtab th.num { width: 16%; }
   table.check.mtab th.c-unit { width: 8%; }
   table.check.mtab tr.mtype td {
     font-weight: 700; background: #dde4ed; border-bottom: 1px solid var(--border);
@@ -807,6 +807,7 @@ const state = {
   anHl: null,                  // выделенный кликом по легенде ряд графика (28.08.2026)
   writeoff: null,              // лист «Списание материалов» (action=writeoff, 28.08.2026)
   writeoffStatus: 'idle',      // idle | loading | ready | error
+  expenses: [],                // лист «Расходы» целиком — нормы расхода для вкладки «Материалы»
   checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
   contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
   ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
@@ -2520,6 +2521,37 @@ const M_TYPES = [
   { title: 'Плитка (керамогранит)', keys: ['керамогранит', 'плитка'] }
 ];
 
+// Все листовые виды ГКЛ считаем одним материалом (просьба 28.08.2026): в
+// «Расходах» их четыре — ГКЛ / ГКЛВ (влагостойкий) / ГВЛ (гипсоволокно) /
+// «Гипрок Файер» (огнестойкий), в списании только «ГКЛ фирмы Knauf…».
+// Крепёж и клей («Саморез для ГКЛ», «Комплект под ГКЛ», «Knauf Перлфикс»)
+// под правило не попадают — они не начинаются с ГКЛ/ГКЛВ/ГВЛ.
+const GKL_RE = /^(гкл|гклв|гвл)\b|^гипрок файер/;
+const GKL_TITLE = 'ГКЛ (все виды: ГКЛ, ГКЛВ, ГВЛ, Гипрок Файер)';
+// Ключ материала для сведения списания и норм расхода: у ГКЛ — общий.
+const matKey = name => GKL_RE.test(norm(name)) ? 'гкл-листы' : norm(name);
+
+/**
+ * Расчётный объём материала (28.08.2026) — по листу «Расходы»:
+ * сумма «Расход в рачет» (кол. J, опечатка в заголовке листа) × «Объем работ»
+ * (кол. L) по всем работам, где материал встречается. Совпадает с готовой
+ * колонкой листа «Объем материала» (проверено 28.08 до рубля).
+ * Возвращает Map: ключ материала (matKey) -> объём.
+ */
+function calcMaterialVolumes() {
+  const out = new Map();
+  (state.expenses || []).forEach(row => {
+    const name = String(row['Материалы'] || '').trim();
+    if (!name) return;
+    const rate = Number(row['Расход в рачет']);
+    const vol = Number(row['Объем работ']);
+    if (!rate || !vol || !isFinite(rate) || !isFinite(vol)) return;
+    const k = matKey(name);
+    out.set(k, (out.get(k) || 0) + rate * vol);
+  });
+  return out;
+}
+
 async function loadWriteoff() {
   state.writeoffStatus = 'loading';
   try {
@@ -2557,38 +2589,48 @@ function renderMaterials() {
     const k = norm(t);
     return M_TYPES.find(x => x.keys.some(key => k === key || k.startsWith(key))) || null;
   };
+  // Расчётный объём по нормам расхода (28.08) — общий по материалу, по МОЛ
+  // не делится: норма расхода к материально ответственным не привязана.
+  const calcVol = calcMaterialVolumes();
   // Тип → материал → МОЛ. Порядок типов — как в M_TYPES, материалы внутри
   // по убыванию списания, МОЛ — по алфавиту (список у всех материалов один).
-  const byType = new Map();   // title -> Map(материал -> { unit, mols: Map(мол -> списано), total })
+  // Все виды ГКЛ сведены в одну строку (matKey).
+  const byType = new Map();   // title -> Map(ключ -> { name, unit, mols, total })
   rows.forEach(r => {
     const t = typeOf(r[0]);
     if (!t) return;
     if (!byType.has(t.title)) byType.set(t.title, new Map());
     const mats = byType.get(t.title);
-    const mat = r[1];
-    if (!mats.has(mat)) mats.set(mat, { unit: r[2], mols: new Map(), total: 0 });
-    const o = mats.get(mat);
+    const k = matKey(r[1]);
+    const nm = k === 'гкл-листы' ? GKL_TITLE : r[1];
+    if (!mats.has(k)) mats.set(k, { name: nm, unit: r[2], mols: new Map(), total: 0 });
+    const o = mats.get(k);
     o.mols.set(r[5], (o.mols.get(r[5]) || 0) + (r[4] || 0));
     o.total += r[4] || 0;
   });
   let body = '';
-  let grand = 0;
+  let grand = 0, grandCalc = 0;
   M_TYPES.forEach(t => {
     const mats = byType.get(t.title);
     if (!mats) return;
     const list = Array.from(mats.entries()).sort((a, b) => b[1].total - a[1].total);
     const tTotal = list.reduce((s, m) => s + m[1].total, 0);
+    const tCalc = list.reduce((s, m) => s + (calcVol.get(m[0]) || 0), 0);
     grand += tTotal;
+    grandCalc += tCalc;
     body += '<tr class="mtype"><td>' + escapeHtml(t.title) + ' (' + list.length + ')</td>' +
-      '<td></td><td class="num">' + escapeHtml(fmtQ(tTotal)) + '</td></tr>';
-    list.forEach(([mat, o]) => {
-      body += '<tr class="mmat"><td>' + escapeHtml(mat) + '</td>' +
+      '<td></td><td class="num">' + escapeHtml(fmtQ(tCalc)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtQ(tTotal)) + '</td></tr>';
+    list.forEach(([k, o]) => {
+      const cv = calcVol.get(k) || 0;
+      body += '<tr class="mmat"><td>' + escapeHtml(o.name) + '</td>' +
         '<td>' + escapeHtml(o.unit) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(cv)) + '</td>' +
         '<td class="num">' + escapeHtml(fmtQ(o.total)) + '</td></tr>';
       Array.from(o.mols.entries()).sort((a, b) => a[0].localeCompare(b[0], 'ru'))
         .forEach(([mol, v]) => {
           body += '<tr class="mmol"><td>' + escapeHtml(mol) + '</td>' +
-            '<td>' + escapeHtml(o.unit) + '</td>' +
+            '<td>' + escapeHtml(o.unit) + '</td><td class="num"></td>' +
             '<td class="num">' + escapeHtml(fmtQ(v)) + '</td></tr>';
         });
     });
@@ -2602,8 +2644,10 @@ function renderMaterials() {
   // поэтому подписана «Итого (разные ед. изм.)».
   const tbl = '<table class="check mtab"><thead><tr>' +
     '<th>Материал / МОЛ</th><th class="c-unit">Ед. изм</th>' +
+    '<th class="num">Расчетный объем материала Итого</th>' +
     '<th class="num">Списано</th></tr></thead><tbody>' + body +
     '</tbody><tfoot><tr><td>Итого (разные ед. изм.)</td><td></td>' +
+    '<td class="num">' + escapeHtml(fmtQ(grandCalc)) + '</td>' +
     '<td class="num">' + escapeHtml(fmtQ(grand)) + '</td></tr></tfoot></table>';
   el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
 }
@@ -4532,6 +4576,9 @@ async function loadData() {
     }
     state.works = json.works || [];
     state.byWork = buildIndex(json.expenses || []);
+    // Лист «Расходы» целиком нужен вкладке «Материалы» (28.08.2026) —
+    // расчётный объём материала = норма расхода × объём работ.
+    state.expenses = json.expenses || [];
     state.contrRates = json.contrRates || [];
     state.ssRates = json.ssRates || [];
     state.ssMap = json.ssMap || [];
@@ -4547,6 +4594,9 @@ async function loadData() {
     fillFilters();
     renderTable();
     updateCheckBadges();
+    // Вкладка «Материалы» могла открыться до прихода «Расходов» (28.08.2026) —
+    // перерисуем, чтобы расчётные объёмы появились без обновления страницы.
+    if (state.screen === 'materials') renderMaterials();
     loadFloors();      // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
     loadQuestions();   // вопросы — тоже фоном: файл маленький, нужен бейдж-счётчик
     if (state.volsStatus === 'idle') loadVols();   // объёмы из поэтажки — для колонки

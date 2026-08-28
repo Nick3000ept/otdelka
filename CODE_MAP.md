@@ -129,6 +129,19 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   считает tblMonths, openAnPayments фильтрует строки по месяцу даты
   (new Date, не substring ISO)
 
+## index.html — Материалы (28.08.2026)
+
+- Пункт сайдбара `data-screen="materials"` (под «Аналитикой»), контейнер
+  `#materials-screen`, CSS `.mtab`/`tr.mtype`/`tr.mmat`/`tr.mmol`;
+  `state.writeoff`/`writeoffStatus`/`expenses`; ветка isMaterials в `setScreen`
+- `M_TYPES`/`GKL_RE`/`GKL_TITLE`/`matKey`/`calcMaterialVolumes` +
+  `loadWriteoff`/`renderMaterials` — после обработчика кликов `#analytics-screen`,
+  перед `openAnPayments`. Расчётный объём = Σ(расход J × объём работ L) из
+  `state.expenses`; все виды ГКЛ сведены в одну строку через `matKey`
+- script.gs: `readWriteoff_` (перед `readLk_`), обработчик `action=writeoff`
+  в doGet перед `morsRows`, `CACHE_WO = 'writeoff_v1'` (+ в `clearCache`),
+  блок CONFIG `SHEET_WRITEOFF`/`WO_*`
+
 ## index.html — Бюджет
 
 - ~1505 `loadBudget`; ~1519 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
