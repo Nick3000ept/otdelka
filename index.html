@@ -409,9 +409,15 @@
   .mol-block { margin-bottom: 26px; }
   .mol-name {
     font-size: 15px; font-weight: 700; padding: 6px 10px; margin-bottom: 6px;
-    background: #dde4ed; border-radius: 4px;
+    background: #dde4ed; border-radius: 4px; cursor: pointer;
   }
-  .mol-sec { font-size: 13px; font-weight: 700; color: var(--text-dim); margin: 10px 0 4px; }
+  .mol-name:hover { background: #d1dae6; }
+  .mol-sec {
+    font-size: 13px; font-weight: 700; color: var(--text-dim);
+    margin: 10px 0 4px; cursor: pointer;
+  }
+  .mol-sec:hover { color: var(--text); }
+  .mol-name .chev, .mol-sec .chev { color: var(--accent); }
   /* «Материалы»: строка материала раскрывается в расшифровку по работам. */
   table.check.mtab tr.mrow { cursor: pointer; }
   table.check.mtab tr.mrow:hover td { background: #eef2f8; }
@@ -819,6 +825,8 @@ const state = {
   writeoffStatus: 'idle',      // idle | loading | ready | error
   expenses: [],                // лист «Расходы» целиком — нормы расхода для вкладок «МОЛ»/«Материалы»
   matOpen: null,               // раскрытый материал на вкладке «Материалы» (ключ matKey)
+  molOpen: new Set(),          // раскрытые блоки МОЛ (на старте все свёрнуты, 28.08.2026)
+  molSecClosed: new Set(),     // свёрнутые разделы внутри МОЛ («Овчинников|budget»)
   checkQuery: '',              // поиск в шапке на экранах «Проверок» (26.08.2026)
   contrSel: '',                // фильтр «Подрядчик» в шапке (26.08.2026, пусто = все)
   ssSel: false,                // галочка «Собственные силы» в шапке (26.08.2026)
@@ -2682,13 +2690,24 @@ function renderMol() {
     o.mols.set(r[5], (o.mols.get(r[5]) || 0) + (r[4] || 0));
     if (r[2] && !unitByMat.has(k)) unitByMat.set(k, r[2]);
   });
+  // Все группы сворачиваемые (просьба 28.08.2026): на старте блоки МОЛ свёрнуты,
+  // внутри раскрытого МОЛ разделы открыты, пока их не свернули отдельно.
+  const chev = o => '<span class="chev">' + (o ? '▾' : '▸') + '</span> ';
   let html = head;
   MOL_LIST.forEach(mol => {
-    html += '<div class="mol-block"><div class="mol-name">' + escapeHtml(mol) + '</div>';
+    const molOpen = state.molOpen.has(mol);
+    html += '<div class="mol-block"><div class="mol-name" data-mol="' + escapeHtml(mol) + '">' +
+      chev(molOpen) + escapeHtml(mol) + '</div>';
+    if (!molOpen) { html += '</div>'; return; }
+    const secOpen = sec => !state.molSecClosed.has(mol + '|' + sec);
 
     // --- Раздел «Бюджет» ---
-    html += '<div class="mol-sec">Бюджет</div>';
-    if (!budgetReady) {
+    const bOpen = secOpen('budget');
+    html += '<div class="mol-sec" data-sec="' + escapeHtml(mol) + '|budget">' +
+      chev(bOpen) + 'Бюджет</div>';
+    if (!bOpen) {
+      // раздел свёрнут — содержимое не строим
+    } else if (!budgetReady) {
       html += '<div class="side-note">Свод бюджета загружается…</div>';
     } else {
       const bRows = molBudget(mol);
@@ -2717,8 +2736,12 @@ function renderMol() {
     }
 
     // --- Раздел «Материалы» ---
-    html += '<div class="mol-sec">Материалы</div>';
-    if (!budgetReady) {
+    const mOpen = secOpen('materials');
+    html += '<div class="mol-sec" data-sec="' + escapeHtml(mol) + '|materials">' +
+      chev(mOpen) + 'Материалы</div>';
+    if (!mOpen) {
+      // раздел свёрнут — содержимое не строим
+    } else if (!budgetReady) {
       html += '<div class="side-note">Расчёт появится после загрузки бюджета…</div>';
     } else {
       const calc = buildMaterialCalc(molWorkVolumes(mol));
@@ -4402,6 +4425,24 @@ document.getElementById('materials-screen').addEventListener('click', e => {
   if (!tr) return;
   state.matOpen = state.matOpen === tr.dataset.mat ? null : tr.dataset.mat;
   renderMaterials();
+});
+
+// Вкладка «МОЛ» (28.08.2026): сворачиваются и блоки МОЛ, и разделы внутри них.
+document.getElementById('mol-screen').addEventListener('click', e => {
+  const sec = e.target.closest('[data-sec]');
+  if (sec) {
+    const k = sec.dataset.sec;
+    if (state.molSecClosed.has(k)) state.molSecClosed.delete(k);
+    else state.molSecClosed.add(k);
+    renderMol();
+    return;
+  }
+  const blk = e.target.closest('[data-mol]');
+  if (!blk) return;
+  const m = blk.dataset.mol;
+  if (state.molOpen.has(m)) state.molOpen.delete(m);
+  else state.molOpen.add(m);
+  renderMol();
 });
 
 // Проверка «Расценки работ»: клик по заголовку группы сворачивает/разворачивает её,
