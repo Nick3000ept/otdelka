@@ -131,7 +131,14 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   напарников в `mates` отдавать не перестал).
   `tzPivot` — сводная «статьи × месяцы» (часы за месяц, столбец и строка
   «Итого», пометка «спр.» у статей вне бюджета, клик по месяцу в шапке =
-  `data-tzm`); CSS `.tz-pivot-wrap`/`table.check.tzpiv` с `table-layout: auto` Бэк — `action=tuzioPerson`
+  `data-tzm`); CSS `.tz-pivot-wrap`/`table.check.tzpiv` с `table-layout: auto`.
+  **Четвёртая итерация 31.08**: сводная раскрывается — `data-tzpivitem`
+  (статья, `state.tzPivOpen`) → строка «Без бригады» `data-tzpivbr`
+  (`state.tzPivBrClosed`, хранит свёрнутые) → строки сотрудников; клик по
+  `td.tzpiv-cell`/`data-tzday` ('статья|человек|месяц', `state.tzPivDay`) →
+  `tzPivDaysRow` с днями. Данные дней — `tzLoadPerson` (кэш
+  `state.tzPersonCache`, тот же `action=tuzioPerson`, что у карточки).
+  Столбец статьи 340px Бэк — `action=tuzioPerson`
   + `buildTuzioPerson_` (перед `buildAnalytics_`), кэш `CACHE_TUZP` на каждое
   ФИО. CSS `.tzp-*`/`table.check.tzp-tab`
 

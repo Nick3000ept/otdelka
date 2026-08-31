@@ -497,12 +497,37 @@
   table.check.tzpiv th.num, table.check.tzpiv td.num {
     width: auto; text-align: right; white-space: nowrap;
   }
-  table.check.tzpiv td:first-child { white-space: normal; }
+  /* Столбец статьи втрое шире месячных (просьба 31.08.2026): при auto-раскладке
+     ширину задаём минимальной шириной первой колонки, месяцам — потолок. */
+  table.check.tzpiv th:first-child, table.check.tzpiv td:first-child {
+    white-space: normal; min-width: 340px; width: 340px;
+  }
+  table.check.tzpiv th.num, table.check.tzpiv td.num { max-width: 110px; }
   table.check.tzpiv th[data-tzm] { cursor: pointer; }
   table.check.tzpiv th[data-tzm]:hover { color: var(--text); }
   table.check.tzpiv .tzpiv-sel { background: #eef3fb; }
   table.check.tzpiv tr.tzpiv-tot td { font-weight: 700; border-top: 2px solid var(--border); }
   table.check.tzpiv .tzpiv-ref { color: var(--text-dim); font-size: 11px; margin-left: 6px; }
+  /* Уровни раскрытия сводной: статья -> бригада -> сотрудник -> дни. */
+  table.check.tzpiv tr.tzpiv-item { cursor: pointer; }
+  table.check.tzpiv tr.tzpiv-item:hover td { background: var(--panel2); }
+  table.check.tzpiv tr.tzpiv-item.open td { background: #dbe7ff; }
+  table.check.tzpiv tr.tzpiv-br { cursor: pointer; }
+  table.check.tzpiv tr.tzpiv-br td { background: #f4f7fb; }
+  table.check.tzpiv tr.tzpiv-br td:first-child { padding-left: 28px; color: var(--text-dim); }
+  table.check.tzpiv tr.tzpiv-emp td:first-child { padding-left: 48px; }
+  table.check.tzpiv tr.tzpiv-emp td[data-tzpi] { color: var(--accent); cursor: pointer; }
+  table.check.tzpiv td.tzpiv-cell { cursor: pointer; }
+  table.check.tzpiv td.tzpiv-cell:hover { background: #dbe7ff; text-decoration: underline; }
+  table.check.tzpiv td.tzpiv-cell.open { background: #dbe7ff; font-weight: 700; }
+  table.check.tzpiv tr.tzpiv-days > td { background: #fafbfc; padding: 8px 12px 10px 48px; }
+  table.check.tzpiv .chev { color: var(--accent); }
+  .tzpiv-days-head { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+  table.tzpiv-days-tab { border-collapse: collapse; font-size: 12px; }
+  table.tzpiv-days-tab th, table.tzpiv-days-tab td {
+    padding: 3px 14px 3px 0; text-align: left; white-space: nowrap;
+  }
+  table.tzpiv-days-tab th { color: var(--text-dim); font-weight: 600; }
   /* Два блока таблиц: статьи бюджета отделки и справочные. */
   /* Строка сотрудника кликабельна — открывает карточку с бригадой (31.08.2026). */
   table.check.tztab table.inner tr.tzp { cursor: pointer; }
@@ -950,6 +975,10 @@ const state = {
   tzKind: '',                  // фильтр вида работ: '' все | 'fin' отделка | 'gen' общестрой
   tzSel: new Set(),            // мультивыбор статей (индексы); пусто = все
   tzSelOpen: false,            // раскрыт ли список статей в фильтре
+  tzPivOpen: new Set(),        // раскрытые статьи в сводной (индексы статей)
+  tzPivBrClosed: new Set(),    // свёрнутые строки «Без бригады» внутри раскрытых статей
+  tzPivDay: null,              // раскрытая ячейка «сотрудник × месяц»: 'статья|человек|месяц'
+  tzPersonCache: new Map(),    // ФИО -> ответ action=tuzioPerson (подневные строки)
   expenses: [],                // лист «Расходы» целиком — нормы расхода для вкладок «МОЛ»/«Материалы»
   matOpen: null,               // раскрытый материал на вкладке «Материалы» (ключ matKey)
   typeByMaterial: new Map(),   // материал -> «Тип материала» из справочника (28.08.2026)
@@ -3365,9 +3394,18 @@ function renderTuzio() {
    фильтрам, что диаграмма. Клик по месяцу в шапке выбирает его для
    расшифровки ниже, выбранный столбец подсвечен. Деление на «бюджет
    отделки / справочно» здесь не дублируем таблицами — статьи вне бюджета
-   помечены «спр.» прямо в строке. */
+   помечены «спр.» прямо в строке.
+
+   Раскрытие (31.08.2026, просьба пользователя):
+     статья -> «Без бригады» -> сотрудники -> подневная разбивка.
+   Уровень бригады назван честно: колонка «Бригада» в исходном экселе пуста
+   во всех месяцах, восстанавливать её по составу табелей пользователь
+   не захотел («если нет бригады — пиши без бригады»), поэтому это одна
+   строка-заглушка, а не выдуманная группировка. Подневные часы берём
+   из action=tuzioPerson (тот же запрос, что у карточки сотрудника),
+   ответы складываем в state.tzPersonCache. */
 function tzPivot(t, months, itemOk, mSel) {
-  const cells = new Map();
+  const cells = new Map();          // статья -> часы по месяцам
   (t.ma || []).forEach(r => {
     if (!itemOk(r[0])) return;
     let a = cells.get(r[0]);
@@ -3375,12 +3413,24 @@ function tzPivot(t, months, itemOk, mSel) {
     a[r[1]] += r[2];
   });
   if (!cells.size) return '';
+  // Сотрудники внутри статьи: часы по месяцам.
+  const emp = new Map();            // статья -> Map(человек -> часы по месяцам)
+  (t.mp || []).forEach(r => {
+    if (!itemOk(r[0])) return;
+    let byP = emp.get(r[0]);
+    if (!byP) { byP = new Map(); emp.set(r[0], byP); }
+    let a = byP.get(r[2]);
+    if (!a) { a = months.map(() => 0); byP.set(r[2], a); }
+    a[r[1]] += r[3];
+  });
+
   const rows = [...cells.entries()]
     .map(e => [e[0], e[1], e[1].reduce((x, v) => x + v, 0)])
     .sort((a, b) => b[2] - a[2]);
   const colSum = months.map((_, i) => rows.reduce((acc, r) => acc + r[1][i], 0));
   const allSum = rows.reduce((acc, r) => acc + r[2], 0);
   const selCls = i => (i === mSel ? ' tzpiv-sel' : '');
+  const cols = months.length + 2;
 
   const thead = '<tr><th>Статья бюджета</th>' +
     months.map((m, i) => '<th class="num' + selCls(i) + '" data-tzm="' + i +
@@ -3388,13 +3438,51 @@ function tzPivot(t, months, itemOk, mSel) {
       tzMonthLabel(m) + '</th>').join('') +
     '<th class="num">Итого</th></tr>';
 
-  const body = rows.map(r => '<tr><td>' + escapeHtml(t.items[r[0]]) +
-    (tzInBudget(t.items[r[0]]) ? ''
-      : '<span class="tzpiv-ref" title="Статьи нет в бюджете отделки">спр.</span>') +
-    '</td>' +
-    r[1].map((v, i) => '<td class="num' + selCls(i) + '">' +
-      (v ? tzInt(v) : '') + '</td>').join('') +
-    '<td class="num"><b>' + tzInt(r[2]) + '</b></td></tr>').join('');
+  const numCells = (arr, tot) =>
+    arr.map((v, i) => '<td class="num' + selCls(i) + '">' + (v ? tzInt(v) : '') + '</td>').join('') +
+    '<td class="num"><b>' + tzInt(tot) + '</b></td>';
+
+  let body = '';
+  rows.forEach(r => {
+    const ii = r[0];
+    const open = state.tzPivOpen.has(ii);
+    body += '<tr class="tzpiv-item' + (open ? ' open' : '') + '" data-tzpivitem="' + ii + '">' +
+      '<td><span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' +
+      escapeHtml(t.items[ii]) +
+      (tzInBudget(t.items[ii]) ? ''
+        : '<span class="tzpiv-ref" title="Статьи нет в бюджете отделки">спр.</span>') +
+      '</td>' + numCells(r[1], r[2]) + '</tr>';
+    if (!open) return;
+
+    const byP = emp.get(ii) || new Map();
+    const brOpen = !state.tzPivBrClosed.has(ii);
+    body += '<tr class="tzpiv-br" data-tzpivbr="' + ii + '">' +
+      '<td><span class="chev">' + (brOpen ? '&#9662;' : '&#9656;') + '</span> ' +
+      'Без бригады <span class="tzpiv-ref">' + byP.size + ' чел. · в файле бригада не заполнена' +
+      '</span></td>' + numCells(r[1], r[2]) + '</tr>';
+    if (!brOpen) return;
+
+    [...byP.entries()]
+      .map(e => [e[0], e[1], e[1].reduce((x, v) => x + v, 0)])
+      .sort((a, b) => b[2] - a[2])
+      .forEach(pr => {
+        const pi = pr[0];
+        body += '<tr class="tzpiv-emp"><td data-tzpi="' + pi +
+          '" title="Открыть карточку сотрудника">' + escapeHtml(t.people[pi]) + '</td>' +
+          pr[1].map((v, i) => {
+            if (!v) return '<td class="num' + selCls(i) + '"></td>';
+            const key = ii + '|' + pi + '|' + i;
+            const on = state.tzPivDay === key;
+            return '<td class="num tzpiv-cell' + selCls(i) + (on ? ' open' : '') +
+              '" data-tzday="' + key + '" title="Показать по дням">' + tzInt(v) + '</td>';
+          }).join('') +
+          '<td class="num"><b>' + tzInt(pr[2]) + '</b></td></tr>';
+        const openKey = state.tzPivDay;
+        if (openKey && openKey.indexOf(ii + '|' + pi + '|') === 0) {
+          body += tzPivDaysRow(t, ii, pi, parseInt(openKey.split('|')[2], 10), months, cols);
+        }
+      });
+  });
 
   const tot = '<tr class="tzpiv-tot"><td>Итого</td>' +
     colSum.map((v, i) => '<td class="num' + selCls(i) + '">' + tzInt(v) + '</td>').join('') +
@@ -3403,10 +3491,40 @@ function tzPivot(t, months, itemOk, mSel) {
   return '<div class="tz-block"><div class="tz-block-head">Сводная: часы по статьям и месяцам</div>' +
     '<div class="tz-block-sub">В ячейках — часы за месяц, не накопительно. ' +
     rows.length + ' статей · ' + tzInt(allSum) + ' ч за ' + months.length +
-    ' месяцев. «спр.» — статьи нет в бюджете отделки. Клик по месяцу в шапке ' +
-    'выбирает его для расшифровки ниже.</div>' +
+    ' месяцев. «спр.» — статьи нет в бюджете отделки. Клик по строке статьи ' +
+    'раскрывает её до сотрудников, клик по часам сотрудника — разбивку по дням. ' +
+    'Клик по месяцу в шапке выбирает его для расшифровки ниже.</div>' +
     '<div class="tz-pivot-wrap"><table class="check tzpiv"><thead>' + thead +
     '</thead><tbody>' + body + tot + '</tbody></table></div></div>';
+}
+
+/* Подневная разбивка одной ячейки «сотрудник × месяц» внутри статьи.
+   Дни берём из ответа action=tuzioPerson (в нём все строки сотрудника
+   за все месяцы) и фильтруем по статье и месяцу. */
+function tzPivDaysRow(t, ii, pi, mi, months, cols) {
+  const fio = t.people[pi];
+  const mon = months[mi];
+  const cell = txt => '<tr class="tzpiv-days"><td colspan="' + cols + '">' + txt + '</td></tr>';
+  const p = state.tzPersonCache.get(fio);
+  if (!p) return cell('<div class="side-note">Загружаем дни сотрудника… ' +
+    'первый запрос по человеку может занять до полуминуты.</div>');
+  if (p === 'error') return cell('<div class="side-note">Не удалось загрузить дни сотрудника.</div>');
+  const item = t.items[ii];
+  const days = (p.rows || [])
+    .filter(r => r[0] === mon && ((r[3] || '(без статьи)') === item))
+    .sort((a, b) => a[1] - b[1]);
+  if (!days.length) return cell('<div class="side-note">Строк за этот месяц по этой статье нет.</div>');
+  const sumH = days.reduce((a, r) => a + r[4], 0);
+  const sumS = days.reduce((a, r) => a + r[5], 0);
+  return cell('<div class="tzpiv-days-head">' + escapeHtml(fio) + ' · ' +
+    escapeHtml(item) + ' · ' + tzMonthLabel(mon) + ' — ' + days.length + ' дней, ' +
+    tzInt(sumH) + ' ч, ' + tzInt(sumS) + ' руб.</div>' +
+    '<table class="tzpiv-days-tab"><thead><tr><th>Дата</th><th>Табель №</th>' +
+    '<th>Часы</th><th>Сумма, руб.</th></tr></thead><tbody>' +
+    days.map(r => '<tr><td>' + ('0' + r[1]).slice(-2) + '.' + mon.slice(5) +
+      '</td><td>' + escapeHtml(r[2] || '—') + '</td><td>' + tzInt(r[4]) +
+      '</td><td>' + tzInt(r[5]) + '</td></tr>').join('') +
+    '</tbody></table>');
 }
 
 /* Один блок таблицы статей (31.08.2026): заголовок с итогами + таблица.
@@ -3500,19 +3618,34 @@ function tzDetailRow(t, ii, inRange) {
    это люди, с которыми сотрудник чаще всего оказывается в одном табеле;
    у постоянного состава совпадение 80–95%, дальше идёт резкий спад.
    Данные — action=tuzioPerson (свой кэш на каждого, холодный ответ ~10-20 сек). */
-async function openTuzioPerson(fio) {
-  document.getElementById('modal-title').textContent = 'Сотрудник';
-  document.getElementById('modal-sub').textContent = fio;
-  document.getElementById('modal-body').innerHTML =
-    '<div class="side-note">Собираем табели и бригаду сотрудника… ' +
-    'на холодном кэше это занимает до полуминуты.</div>';
-  document.getElementById('modal-overlay').style.display = 'flex';
+// Ответ по сотруднику нужен и карточке, и подневной разбивке в сводной —
+// держим его в state.tzPersonCache, чтобы не дёргать бэк повторно.
+async function tzLoadPerson(fio) {
+  const cached = state.tzPersonCache.get(fio);
+  if (cached && cached !== 'error') return cached;
   try {
     const url = GAS_URL + '?action=tuzioPerson&p=' + encodeURIComponent(fio) +
       '&t=' + encodeURIComponent(state.token);
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
-    document.getElementById('modal-body').innerHTML = tzPersonHtml(json.person || {});
+    const person = json.person || { rows: [] };
+    state.tzPersonCache.set(fio, person);
+    return person;
+  } catch (e) {
+    state.tzPersonCache.set(fio, 'error');
+    throw e;
+  }
+}
+
+async function openTuzioPerson(fio) {
+  document.getElementById('modal-title').textContent = 'Сотрудник';
+  document.getElementById('modal-sub').textContent = fio;
+  document.getElementById('modal-body').innerHTML =
+    '<div class="side-note">Собираем табели сотрудника… ' +
+    'на холодном кэше это занимает до полуминуты.</div>';
+  document.getElementById('modal-overlay').style.display = 'flex';
+  try {
+    document.getElementById('modal-body').innerHTML = tzPersonHtml(await tzLoadPerson(fio));
   } catch (e) {
     document.getElementById('modal-body').innerHTML =
       '<div class="side-note">Не удалось загрузить карточку: ' + escapeHtml(e.message) + '</div>';
@@ -3649,6 +3782,41 @@ document.getElementById('tuzio-screen').addEventListener('click', e => {
   const cEl = e.target.closest('[data-tzcum]');
   if (cEl) {
     state.tzCum = cEl.dataset.tzcum === '1';
+    renderTuzio();
+    return;
+  }
+  // Сводная: клик по часам сотрудника раскрывает его дни за этот месяц.
+  const dayEl = e.target.closest('[data-tzday]');
+  if (dayEl) {
+    const key = dayEl.dataset.tzday;
+    state.tzPivDay = state.tzPivDay === key ? null : key;
+    if (state.tzPivDay) {
+      const fio = ((state.tuzio || {}).people || [])[parseInt(key.split('|')[1], 10)];
+      // После неудачной попытки в кэше лежит 'error' — снимаем, чтобы повторный
+      // клик снова сходил на бэк.
+      if (state.tzPersonCache.get(fio) === 'error') state.tzPersonCache.delete(fio);
+      if (fio && !state.tzPersonCache.has(fio)) {
+        tzLoadPerson(fio)
+          .catch(() => {})
+          .then(() => { if (state.screen === 'tuzio') renderTuzio(); });
+      }
+    }
+    renderTuzio();
+    return;
+  }
+  const brEl = e.target.closest('[data-tzpivbr]');
+  if (brEl) {
+    const ii = parseInt(brEl.dataset.tzpivbr, 10);
+    if (state.tzPivBrClosed.has(ii)) state.tzPivBrClosed.delete(ii);
+    else state.tzPivBrClosed.add(ii);
+    renderTuzio();
+    return;
+  }
+  const itemEl = e.target.closest('[data-tzpivitem]');
+  if (itemEl) {
+    const ii = parseInt(itemEl.dataset.tzpivitem, 10);
+    if (state.tzPivOpen.has(ii)) state.tzPivOpen.delete(ii);
+    else state.tzPivOpen.add(ii);
     renderTuzio();
     return;
   }
