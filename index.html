@@ -540,6 +540,12 @@
   .tzp-head { font-size: 13px; font-weight: 700; margin: 14px 0 4px; }
   table.check.tzp-tab th, table.check.tzp-tab td { padding: 5px 8px; }
   .tzp-scroll { max-height: 320px; overflow: auto; }
+  /* Модалка сжимается по содержимому, из-за этого столбец «Статья бюджета»
+     в списке табелей выходил узким и рвался на две строки. Задаём карточке
+     минимальную ширину и сужаем числовые колонки — статья становится вдвое
+     шире (просьба 31.08.2026). */
+  .tzp-card { min-width: min(1040px, 88vw); }
+  table.check.tzp-tab.tzp-docs th.num { width: 100px; }
   table.check.tzp-tab tr.tzp-item { cursor: pointer; }
   table.check.tzp-tab tr.tzp-item:hover td { background: var(--panel2); }
   table.check.tzp-tab tr.tzp-item.open td { background: #dbe7ff; font-weight: 600; }
@@ -3745,8 +3751,8 @@ document.getElementById('modal-body').addEventListener('click', e => {
 function tzPersonHtml(p) {
   const rows = p.rows || [];
   if (!rows.length) {
-    return '<div class="side-note">По этому сотруднику строк нет — возможно, ' +
-      'он есть только в табеле СКУД, который на вкладке не учитывается.</div>';
+    return '<div class="tzp-card"><div class="side-note">По этому сотруднику строк нет — ' +
+      'возможно, он есть только в табеле СКУД, который на вкладке не учитывается.</div></div>';
   }
   const months = [...new Set(rows.map(r => r[0]))].sort();
   const docs = p.docs || 0;
@@ -3796,7 +3802,7 @@ function tzPersonHtml(p) {
   });
   const items = [...byItem.entries()].sort((a, b) => b[1].h - a[1].h);
   const docsTable = list =>
-    '<table class="check tzp-tab"><thead><tr><th class="num">Дата</th>' +
+    '<table class="check tzp-tab tzp-docs"><thead><tr><th class="num">Дата</th>' +
     '<th class="num">Табель №</th><th>Статья бюджета</th><th class="num">Часы</th>' +
     '<th class="num">Сумма, руб.</th></tr></thead><tbody>' +
     list.map(r => '<tr><td class="num">' + ('0' + r[1]).slice(-2) + '.' + r[0].slice(5) +
@@ -3829,7 +3835,7 @@ function tzPersonHtml(p) {
     seenDoc.size + ')</div>' +
     (state.tzpAllDocs ? '<div class="tzp-scroll">' + docsTable(sorted) + '</div>' : '');
 
-  return sum + monthTab + itemTab + allDocs;
+  return '<div class="tzp-card">' + sum + monthTab + itemTab + allDocs + '</div>';
 }
 
 // Статьи, доступные к выбору при текущем фильтре вида работ — нужны кнопке
