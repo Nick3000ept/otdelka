@@ -501,7 +501,6 @@
   .tzp-note { font-size: 12px; color: var(--text-dim); margin: 2px 0 8px; }
   .tzp-head { font-size: 13px; font-weight: 700; margin: 14px 0 4px; }
   table.check.tzp-tab th, table.check.tzp-tab td { padding: 5px 8px; }
-  table.check.tzp-tab tr.core td { font-weight: 600; background: #f2f7ff; }
   .tzp-scroll { max-height: 320px; overflow: auto; }
   .tz-block { margin-top: 18px; }
   .tz-block-head { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
@@ -3492,25 +3491,9 @@ function tzPersonHtml(p) {
         '</td></tr>';
     }).join('') + '</tbody></table>';
 
-  // Бригада: напарники по числу общих табелей. Ядро (от половины табелей)
-  // выделяем — это и есть постоянный состав.
-  const mates = p.mates || [];
-  const core = mates.filter(m => docs && m[1] / docs >= 0.5).length;
-  const mateTab = mates.length
-    ? '<div class="tzp-note">В исходном файле бригада не заполнена. ' +
-      'Здесь — люди, с которыми сотрудник попадает в один табель: в ежедневном ' +
-      'табеле за день записана одна бригада. Постоянный состав (от половины ' +
-      'табелей) — <b>' + core + ' человек</b>, всего пересекался с ' +
-      (p.matesTotal || mates.length) + ' работниками' +
-      (mates.length < (p.matesTotal || 0) ? '; показаны первые ' + mates.length : '') +
-      '.</div>' +
-      '<div class="tzp-scroll"><table class="check tzp-tab"><thead><tr><th>ФИО</th>' +
-      '<th class="num">Общих табелей</th><th class="num">Доля</th></tr></thead><tbody>' +
-      mates.map(m => '<tr' + (docs && m[1] / docs >= 0.5 ? ' class="core"' : '') + '><td>' +
-        escapeHtml(m[0]) + '</td><td class="num">' + m[1] + '</td><td class="num">' +
-        (docs ? Math.round(m[1] / docs * 100) : 0) + '%</td></tr>').join('') +
-      '</tbody></table></div>'
-    : '<div class="side-note">Сотрудник во всех табелях был один — бригаду восстановить не из чего.</div>';
+  // Блок «Бригада — с кем работает» убран с экрана 31.08.2026 (просьба
+  // пользователя). Бэкенд напарников по-прежнему считает и отдаёт в `mates`
+  // (см. buildTuzioPerson_) — понадобится вернуть, хватит вывода здесь.
 
   // Табели: свежие сверху.
   const sorted = rows.slice().sort((a, b) => (b[0] < a[0] ? -1 : b[0] > a[0] ? 1 : 0) || (b[1] - a[1]));
@@ -3524,7 +3507,6 @@ function tzPersonHtml(p) {
     '</tbody></table></div>';
 
   return sum + monthTab +
-    '<div class="tzp-head">Бригада — с кем работает</div>' + mateTab +
     '<div class="tzp-head">Табели сотрудника (' + seenDoc.size + ')</div>' + docTab;
 }
 
