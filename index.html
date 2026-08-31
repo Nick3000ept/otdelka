@@ -491,6 +491,18 @@
   }
   .tz-opt i { margin-left: auto; font-style: normal; color: var(--text-dim); white-space: nowrap; }
   /* Два блока таблиц: статьи бюджета отделки и справочные. */
+  /* Строка сотрудника кликабельна — открывает карточку с бригадой (31.08.2026). */
+  table.check.tztab table.inner tr.tzp { cursor: pointer; }
+  table.check.tztab table.inner tr.tzp:hover td { background: #dbe7ff; }
+  table.check.tztab table.inner tr.tzp td:first-child { color: var(--accent); }
+  /* Карточка сотрудника в модалке. */
+  .tzp-sum { font-size: 13px; margin-bottom: 10px; }
+  .tzp-sum b { font-size: 14px; }
+  .tzp-note { font-size: 12px; color: var(--text-dim); margin: 2px 0 8px; }
+  .tzp-head { font-size: 13px; font-weight: 700; margin: 14px 0 4px; }
+  table.check.tzp-tab th, table.check.tzp-tab td { padding: 5px 8px; }
+  table.check.tzp-tab tr.core td { font-weight: 600; background: #f2f7ff; }
+  .tzp-scroll { max-height: 320px; overflow: auto; }
   .tz-block { margin-top: 18px; }
   .tz-block-head { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
   .tz-block-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
@@ -3387,7 +3399,8 @@ function tzDetailRow(t, ii, inRange) {
   docs.sort((a, b) => (b[1] - a[1]) || (b[3] - a[3]));
 
   const pplRows = [...ppl.entries()].sort((a, b) => b[1].h - a[1].h).map(e =>
-    '<tr><td>' + escapeHtml(t.people[e[0]]) + '</td>' +
+    '<tr class="tzp" data-tzpi="' + e[0] + '" title="Открыть карточку: табели и бригада">' +
+    '<td>' + escapeHtml(t.people[e[0]]) + '</td>' +
     '<td class="num">' + tzInt(e[1].h) + '</td>' +
     '<td class="num">' + tzInt(e[1].s) + '</td>' +
     '<td class="num">' + e[1].n + '</td></tr>').join('');
@@ -3405,7 +3418,8 @@ function tzDetailRow(t, ii, inRange) {
     : '';
 
   return '<tr class="tzdetail"><td colspan="6">' +
-    '<div class="tz-subhead">Сотрудники (' + ppl.size + ') — часы накопительно за период</div>' +
+    '<div class="tz-subhead">Сотрудники (' + ppl.size + ') — часы накопительно за период; ' +
+    'клик по строке открывает табели и бригаду</div>' +
     '<table class="check inner"><thead><tr><th>ФИО</th><th class="num">Часы</th>' +
     '<th class="num">Сумма, руб.</th><th class="num">Месяцев</th></tr></thead><tbody>' +
     pplRows + '</tbody></table>' +
@@ -3414,6 +3428,104 @@ function tzDetailRow(t, ii, inRange) {
     '<table class="check inner"><thead><tr><th>Табель №</th><th class="num">Дата</th>' +
     '<th class="num">Часы</th><th class="num">Сумма, руб.</th><th class="num">Людей</th>' +
     '</tr></thead><tbody>' + docRows + '</tbody></table></td></tr>';
+}
+
+/* Карточка сотрудника (31.08.2026): в какие табели он попадает и с кем работает.
+   Бригады в исходном экселе нет — колонка «Бригада» пуста во всех месяцах.
+   Но в один ежедневный табель за день записывается одна бригада: человек за
+   день встречается ровно в одном табеле (в августе 2 исключения на 6129 пар),
+   в табеле в среднем 11 человек, около 21 табеля в день. Поэтому бригада —
+   это люди, с которыми сотрудник чаще всего оказывается в одном табеле;
+   у постоянного состава совпадение 80–95%, дальше идёт резкий спад.
+   Данные — action=tuzioPerson (свой кэш на каждого, холодный ответ ~10-20 сек). */
+async function openTuzioPerson(fio) {
+  document.getElementById('modal-title').textContent = 'Сотрудник';
+  document.getElementById('modal-sub').textContent = fio;
+  document.getElementById('modal-body').innerHTML =
+    '<div class="side-note">Собираем табели и бригаду сотрудника… ' +
+    'на холодном кэше это занимает до полуминуты.</div>';
+  document.getElementById('modal-overlay').style.display = 'flex';
+  try {
+    const url = GAS_URL + '?action=tuzioPerson&p=' + encodeURIComponent(fio) +
+      '&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    document.getElementById('modal-body').innerHTML = tzPersonHtml(json.person || {});
+  } catch (e) {
+    document.getElementById('modal-body').innerHTML =
+      '<div class="side-note">Не удалось загрузить карточку: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function tzPersonHtml(p) {
+  const rows = p.rows || [];
+  if (!rows.length) {
+    return '<div class="side-note">По этому сотруднику строк нет — возможно, ' +
+      'он есть только в табеле СКУД, который на вкладке не учитывается.</div>';
+  }
+  const months = [...new Set(rows.map(r => r[0]))].sort();
+  const docs = p.docs || 0;
+
+  // Итоги по месяцам: часы, сумма и число табелей.
+  const byM = new Map();
+  const seenDoc = new Set();
+  rows.forEach(r => {
+    const o = byM.get(r[0]) || { h: 0, s: 0, d: new Set() };
+    o.h += r[4]; o.s += r[5]; o.d.add(r[2]);
+    byM.set(r[0], o);
+  });
+  rows.forEach(r => seenDoc.add(r[0] + '|' + r[2]));
+
+  const sum = '<div class="tzp-sum">Всего <b>' + tzInt(p.hours) + ' ч</b> и <b>' +
+    tzInt(p.sum) + ' руб.</b> в <b>' + docs + '</b> табелях · ' +
+    tzMonthLabel(months[0]) + ' — ' + tzMonthLabel(months[months.length - 1]) +
+    '</div><div class="tzp-note">Карточка показывает данные за весь период, ' +
+    'независимо от выбранного на диаграмме месяца.</div>';
+
+  const monthTab = '<table class="check tzp-tab"><thead><tr><th>Месяц</th>' +
+    '<th class="num">Табелей</th><th class="num">Часы</th><th class="num">Сумма, руб.</th>' +
+    '</tr></thead><tbody>' +
+    months.map(m => {
+      const o = byM.get(m);
+      return '<tr><td>' + tzMonthLabel(m) + '</td><td class="num">' + o.d.size +
+        '</td><td class="num">' + tzInt(o.h) + '</td><td class="num">' + tzInt(o.s) +
+        '</td></tr>';
+    }).join('') + '</tbody></table>';
+
+  // Бригада: напарники по числу общих табелей. Ядро (от половины табелей)
+  // выделяем — это и есть постоянный состав.
+  const mates = p.mates || [];
+  const core = mates.filter(m => docs && m[1] / docs >= 0.5).length;
+  const mateTab = mates.length
+    ? '<div class="tzp-note">В исходном файле бригада не заполнена. ' +
+      'Здесь — люди, с которыми сотрудник попадает в один табель: в ежедневном ' +
+      'табеле за день записана одна бригада. Постоянный состав (от половины ' +
+      'табелей) — <b>' + core + ' человек</b>, всего пересекался с ' +
+      (p.matesTotal || mates.length) + ' работниками' +
+      (mates.length < (p.matesTotal || 0) ? '; показаны первые ' + mates.length : '') +
+      '.</div>' +
+      '<div class="tzp-scroll"><table class="check tzp-tab"><thead><tr><th>ФИО</th>' +
+      '<th class="num">Общих табелей</th><th class="num">Доля</th></tr></thead><tbody>' +
+      mates.map(m => '<tr' + (docs && m[1] / docs >= 0.5 ? ' class="core"' : '') + '><td>' +
+        escapeHtml(m[0]) + '</td><td class="num">' + m[1] + '</td><td class="num">' +
+        (docs ? Math.round(m[1] / docs * 100) : 0) + '%</td></tr>').join('') +
+      '</tbody></table></div>'
+    : '<div class="side-note">Сотрудник во всех табелях был один — бригаду восстановить не из чего.</div>';
+
+  // Табели: свежие сверху.
+  const sorted = rows.slice().sort((a, b) => (b[0] < a[0] ? -1 : b[0] > a[0] ? 1 : 0) || (b[1] - a[1]));
+  const docTab = '<div class="tzp-scroll"><table class="check tzp-tab"><thead><tr>' +
+    '<th class="num">Дата</th><th class="num">Табель №</th><th>Статья бюджета</th>' +
+    '<th class="num">Часы</th><th class="num">Сумма, руб.</th></tr></thead><tbody>' +
+    sorted.map(r => '<tr><td class="num">' + ('0' + r[1]).slice(-2) + '.' + r[0].slice(5) +
+      '</td><td class="num">' + escapeHtml(r[2] || '—') + '</td><td>' +
+      escapeHtml(r[3] || '(без статьи)') + '</td><td class="num">' + tzInt(r[4]) +
+      '</td><td class="num">' + tzInt(r[5]) + '</td></tr>').join('') +
+    '</tbody></table></div>';
+
+  return sum + monthTab +
+    '<div class="tzp-head">Бригада — с кем работает</div>' + mateTab +
+    '<div class="tzp-head">Табели сотрудника (' + seenDoc.size + ')</div>' + docTab;
 }
 
 // Статьи, доступные к выбору при текущем фильтре вида работ — нужны кнопке
@@ -3493,6 +3605,14 @@ document.getElementById('tuzio-screen').addEventListener('click', e => {
   if (cEl) {
     state.tzCum = cEl.dataset.tzcum === '1';
     renderTuzio();
+    return;
+  }
+  const pEl = e.target.closest('[data-tzpi]');
+  if (pEl) {
+    const people = (state.tuzio || {}).people || [];
+    const fio = people[parseInt(pEl.dataset.tzpi, 10)];
+    if (fio) openTuzioPerson(fio);
+    if (redraw) renderTuzio();
     return;
   }
   const tr = e.target.closest('tr.tzrow');

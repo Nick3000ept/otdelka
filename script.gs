@@ -109,7 +109,8 @@ var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюдж�
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
-var CACHE_TUZ = 'tuzio_v1';       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
+var CACHE_TUZ = 'tuzio_v1';
+var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотрудника вкладки «ТУЗИО» (31.08.2026); ответ маленький, обычный кэш, ключ = ФИО       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
@@ -899,6 +900,35 @@ function doGet(e) {
     }
   }
 
+  // Карточка сотрудника вкладки «ТУЗИО» (31.08.2026): его табели и бригада.
+  // Бригады в исходном экселе нет (колонка пустая во всех месяцах), но в один
+  // ежедневный табель попадает одна бригада за день: человек за день встречается
+  // ровно в одном табеле (в августе 2 исключения на 6129 пар «день+человек»,
+  // в табеле в среднем 11 человек, около 21 табеля в день). Поэтому «бригада» —
+  // это люди, с которыми сотрудник чаще всего оказывается в одном табеле.
+  // Лист большой, но ответ по одному человеку маленький — кэшируем каждого
+  // отдельно на 6 часов.
+  if (action === 'tuzioPerson') {
+    try {
+      var fioQ = String(params.p || '').trim();
+      if (!fioQ) return jsonOut_({ ok: false, error: 'no_person' });
+      var cacheTp = CacheService.getScriptCache();
+      var keyTp = CACHE_TUZP + Utilities.base64EncodeWebSafe(fioQ).slice(0, 200);
+      var cachedTp = cacheTp.get(keyTp);
+      if (cachedTp) {
+        return ContentService.createTextOutput(cachedTp)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssTp = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadTp = JSON.stringify({ ok: true, person: buildTuzioPerson_(ssTp, fioQ) });
+      if (payloadTp.length < 95000) cacheTp.put(keyTp, payloadTp, 21600);
+      return ContentService.createTextOutput(payloadTp)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'tuzio_person_failed', message: String(err) });
+    }
+  }
+
   // Платежи МОРС по одной статье (26.08.2026): все колонки листа для модалки
   // «Платежи» на «Аналитике». Фильтр по «Статье бюджета» с той же нормализацией,
   // что у anKey на фронте (трим, нижний регистр, длинное тире -> дефис;
@@ -1390,6 +1420,81 @@ function buildTuzio_(ss) {
     var c = md[k];
     out.md.push([c[0], remap[c[1]], c[2], c[3], r2(c[4]), r2(c[5]), c[6]]);
   }
+  return out;
+}
+
+/**
+ * Карточка одного сотрудника для вкладки «ТУЗИО» (31.08.2026).
+ * Возвращает:
+ *   rows  — все его строки: [месяц, день, № табеля, статья, часы, сумма];
+ *   mates — напарники: [ФИО, в скольких его табелях был], по убыванию —
+ *           это и есть бригада (в исходном файле её нет, см. комментарий
+ *           у action=tuzioPerson);
+ *   docs/hours/sum — сколько всего табелей, часов и денег.
+ * Табель отождествляем парой «месяц + номер»: номера сквозные по году, но
+ * на пару полагаться безопаснее. Один человек может попасть в один табель
+ * двумя строками (две статьи в одном табеле бывают) — напарников считаем
+ * по РАЗНЫМ табелям, иначе счётчик задваивается.
+ */
+function buildTuzioPerson_(ss, fio) {
+  var out = { fio: fio, rows: [], mates: [], docs: 0, hours: 0, sum: 0 };
+  var sh = ss.getSheetByName(CONFIG.SHEET_TUZIO_HOURS);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var head = data[0].map(function (h) { return String(h).trim(); });
+  var iMon = head.indexOf('Месяц'), iItem = head.indexOf('Статья');
+  var iDoc = head.indexOf('Табель'), iDay = head.indexOf('День');
+  var iFio = head.indexOf('ФИО'), iH = head.indexOf('Часы'), iS = head.indexOf('Сумма');
+  if (iMon < 0 || iFio < 0) return out;
+  var num = function (v) {
+    if (typeof v === 'number') return v;
+    var n = parseFloat(String(v == null ? '' : v).replace(/\s/g, '').replace(',', '.'));
+    return isNaN(n) ? 0 : n;
+  };
+  var cell = function (row, i) {
+    return i < 0 ? '' : String(row[i] == null ? '' : row[i]).trim();
+  };
+  var target = String(fio).trim().toLowerCase();
+  var r2 = function (x) { return Math.round(x * 100) / 100; };
+
+  // Первый проход: строки сотрудника и множество его табелей.
+  var mine = {}, r, row, key;
+  for (r = 1; r < data.length; r++) {
+    row = data[r];
+    if (cell(row, iFio).toLowerCase() !== target) continue;
+    var mon = cell(row, iMon);
+    var doc = cell(row, iDoc);
+    key = mon + '|' + doc;
+    mine[key] = true;
+    var hrs = num(row[iH]), sum = num(row[iS]);
+    out.hours += hrs; out.sum += sum;
+    out.rows.push([mon, iDay >= 0 ? Math.round(num(row[iDay])) : 0, doc,
+                   cell(row, iItem), r2(hrs), r2(sum)]);
+  }
+  out.hours = r2(out.hours);
+  out.sum = r2(out.sum);
+  var keys = Object.keys(mine);
+  out.docs = keys.length;
+  if (!out.docs) return out;
+
+  // Второй проход: кто ещё был в этих же табелях.
+  var cnt = {}, seen = {};
+  for (r = 1; r < data.length; r++) {
+    row = data[r];
+    key = cell(row, iMon) + '|' + cell(row, iDoc);
+    if (!mine[key]) continue;
+    var f = cell(row, iFio);
+    if (!f || f.toLowerCase() === target) continue;
+    var sk = f + '\u0001' + key;
+    if (seen[sk]) continue;
+    seen[sk] = true;
+    cnt[f] = (cnt[f] || 0) + 1;
+  }
+  var mates = [];
+  for (var name in cnt) if (cnt.hasOwnProperty(name)) mates.push([name, cnt[name]]);
+  mates.sort(function (a, b) { return b[1] - a[1]; });
+  out.mates = mates.slice(0, 60);
+  out.matesTotal = mates.length;
   return out;
 }
 
