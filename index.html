@@ -3282,15 +3282,16 @@ function renderTuzio() {
   let mSel = months.indexOf(state.tzMonth);
   if (mSel < 0) mSel = months.length - 1;
 
-  // Геометрия: диаграмма вписывается в ширину экрана, при resize перерисовывается.
-  const padL = 96, padR = 24, padT = 14, padB = 56, H = 420;
+  // Геометрия — как на «Аналитике» (просьба 31.08.2026: тот же вид диаграммы):
+  // накопительные заливки по статьям снизу вверх, сверху линия общего итога
+  // с точками по месяцам. Вписывается в ширину экрана, при resize перерисовка.
+  const padL = 96, padR = 28, padT = 16, padB = 56, H = 420;
   const availW = Math.max(480, (el.clientWidth || 900) - 44);
-  const stepX = Math.max(46, (availW - padL - padR) / months.length);
-  const W = Math.round(padL + padR + stepX * months.length);
+  const stepX = Math.max(28, (availW - padL - padR) / Math.max(1, months.length - 1));
+  const W = Math.round(padL + padR + stepX * Math.max(1, months.length - 1));
   const maxV = Math.max(1, totals[totals.length - 1]) * 1.06;
-  const xc = i => padL + stepX * (i + 0.5);
+  const px = i => padL + i * stepX;
   const y = v => padT + (H - padT - padB) * (1 - v / maxV);
-  const barW = Math.min(72, stepX * 0.62);
 
   // Горизонтальная сетка с «круглым» шагом — как на «Аналитике».
   const rawStep = maxV / 5;
@@ -3304,36 +3305,44 @@ function renderTuzio() {
       'fill="#667">' + tzMln(v) + '</text>';
   }
 
-  // Клик по легенде подсвечивает статью: её сегменты остаются яркими, прочие гаснут.
+  // Клик по легенде подсвечивает статью: её заливка ярче, остальные гаснут.
   const hl = state.tzHl;
-  const segOp = g => (hl == null || hl === g ? 1 : 0.16);
+  const bandOp = g => (hl == null ? 0.85 : (hl === g ? 0.95 : 0.1));
 
-  // Порядок слоёв важен: прозрачная кнопка-колонка идёт ПОД сегментами, иначе
-  // она перехватывает наведение и подсказки по статьям не появляются.
-  let bars = '';
+  // Подсветка выбранного месяца — вертикальная полоса под заливками.
+  let bars = '<rect x="' + (px(mSel) - stepX / 2) + '" y="' + padT + '" width="' + stepX +
+    '" height="' + (H - padT - padB) + '" fill="#eef3fb"/>';
+
+  // Заливки-полигоны: каждая статья лежит на предыдущей, верхняя граница
+  // последней совпадает с линией общего итога.
+  const base = months.map(() => 0);
+  for (let g = 0; g < G; g++) {
+    const upper = base.map((v, i) => v + cumG[g][i]);
+    if (upper.every((v, i) => v === base[i])) { continue; }
+    const top = upper.map((v, i) => px(i) + ',' + y(v)).join(' ');
+    const bottom = base.map((v, i) => px(i) + ',' + y(v)).reverse().join(' ');
+    bars += '<polygon points="' + top + ' ' + bottom + '" fill="' + grpColor(g) +
+      '" opacity="' + bandOp(g) + '" stroke="#fff" stroke-width="0.5">' +
+      '<title>' + escapeHtml(grpNames[g]) + ': ' + tzInt(cumG[g][months.length - 1]) +
+      ' руб. накопительно за весь период</title></polygon>';
+    for (let i = 0; i < months.length; i++) base[i] = upper[i];
+  }
+
+  // Линия общего итога с точками — точки и подписи месяцев кликабельны.
+  bars += '<polyline fill="none" stroke="#b42121" stroke-width="2.5" points="' +
+    totals.map((v, i) => px(i) + ',' + y(v)).join(' ') + '"/>';
   for (let i = 0; i < months.length; i++) {
-    bars += '<rect data-tzm="' + i + '" x="' + (xc(i) - stepX / 2) + '" y="' + padT +
-      '" width="' + stepX + '" height="' + (H - padT - padB + 40) +
-      '" fill="' + (i === mSel ? '#eef3fb' : '#fff') + '" opacity="' + (i === mSel ? 1 : 0) +
-      '" pointer-events="all" style="cursor:pointer"><title>Показать расшифровку: ' +
-      tzMonthLabel(months[i]) + '</title></rect>';
-    let base = 0;
-    for (let g = 0; g < G; g++) {
-      const v = cumG[g][i];
-      if (v <= 0) continue;
-      const yTop = y(base + v), yBot = y(base);
-      base += v;
-      bars += '<rect class="tz-bar" data-tzm="' + i + '" x="' + (xc(i) - barW / 2) + '" y="' + yTop +
-        '" width="' + barW + '" height="' + Math.max(0.6, yBot - yTop) +
-        '" fill="' + grpColor(g) + '" opacity="' + segOp(g) + '" style="cursor:pointer">' +
-        '<title>' + escapeHtml(grpNames[g]) + ': ' + tzInt(v) + ' руб. накопительно на ' +
-        tzMonthLabel(months[i]) + '</title></rect>';
-    }
-    // Подписи под колонкой: месяц и накопительный итог, тоже кликабельные.
-    bars += '<text class="tz-mlabel" data-tzm="' + i + '" x="' + xc(i) + '" y="' + (H - padB + 20) +
+    bars += '<circle data-tzm="' + i + '" cx="' + px(i) + '" cy="' + y(totals[i]) +
+      '" r="' + (i === mSel ? 6 : 4) + '" fill="#b42121" stroke="#fff" stroke-width="1.5" ' +
+      'style="cursor:pointer"><title>' + tzMonthLabel(months[i]) + ': ' + tzInt(totals[i]) +
+      ' руб. накопительно</title></circle>' +
+      // прозрачный кружок побольше — чтобы в точку было легче попасть мышью
+      '<circle data-tzm="' + i + '" cx="' + px(i) + '" cy="' + y(totals[i]) +
+      '" r="13" fill="#fff" opacity="0" pointer-events="all" style="cursor:pointer"/>' +
+      '<text class="tz-mlabel" data-tzm="' + i + '" x="' + px(i) + '" y="' + (H - padB + 20) +
       '" text-anchor="middle" font-size="12" fill="' + (i === mSel ? '#1a2940' : '#667') +
       '" font-weight="' + (i === mSel ? 700 : 400) + '">' + tzMonthLabel(months[i]) + '</text>' +
-      '<text class="tz-mlabel" data-tzm="' + i + '" x="' + xc(i) + '" y="' + (H - padB + 36) +
+      '<text class="tz-mlabel" data-tzm="' + i + '" x="' + px(i) + '" y="' + (H - padB + 36) +
       '" text-anchor="middle" font-size="11" fill="#8894a8">' + tzMln(totals[i]) + '</text>';
   }
 
@@ -3389,6 +3398,11 @@ function renderTuzio() {
       'Оплачено тем же почасовщикам, но к бюджету отделки не относится.');
 }
 
+/* Статья второй очереди: названия начинаются с «СБ5 - …». Такие статьи
+   с 31.08.2026 показываются ОТДЕЛЬНОЙ таблицей под основной (просьба
+   пользователя) — в остальном ведут себя так же. */
+const tzIsSb5 = name => anNorm(name).indexOf('сб5') === 0;
+
 /* Сводная «статьи × месяцы» (31.08.2026): в ячейках часы ЗА МЕСЯЦ, не
    накопительно — таблица показывает сразу весь год. Подчиняется тем же
    фильтрам, что диаграмма. Клик по месяцу в шапке выбирает его для
@@ -3427,6 +3441,27 @@ function tzPivot(t, months, itemOk, mSel) {
   const rows = [...cells.entries()]
     .map(e => [e[0], e[1], e[1].reduce((x, v) => x + v, 0)])
     .sort((a, b) => b[2] - a[2]);
+  const sb5 = rows.filter(r => tzIsSb5(t.items[r[0]]));
+  const main = rows.filter(r => !tzIsSb5(t.items[r[0]]));
+  const hours = list => list.reduce((acc, r) => acc + r[2], 0);
+
+  return tzPivotTable(t, months, mSel, main, emp,
+      'Сводная: часы по статьям и месяцам',
+      'В ячейках — часы за месяц, не накопительно. «спр.» — статьи нет в бюджете ' +
+      'отделки. Клик по строке статьи раскрывает её до сотрудников, клик по часам ' +
+      'сотрудника — разбивку по дням. Клик по месяцу в шапке выбирает его для ' +
+      'расшифровки ниже.' +
+      (sb5.length ? ' Статьи СБ5 вынесены в отдельную таблицу ниже (' + sb5.length +
+        ' статей, ' + tzInt(hours(sb5)) + ' ч).' : '')) +
+    (sb5.length ? tzPivotTable(t, months, mSel, sb5, emp,
+      'Сводная СБ5: часы по статьям и месяцам',
+      'Статьи второй очереди — отдельно от СБ3 (просьба 31.08.2026). ' +
+      'Устроены так же: раскрываются до сотрудников и дней.') : '');
+}
+
+/* Одна таблица сводной: строки-статьи с раскрытием до сотрудников и дней. */
+function tzPivotTable(t, months, mSel, rows, emp, title, note) {
+  if (!rows.length) return '';
   const colSum = months.map((_, i) => rows.reduce((acc, r) => acc + r[1][i], 0));
   const allSum = rows.reduce((acc, r) => acc + r[2], 0);
   const selCls = i => (i === mSel ? ' tzpiv-sel' : '');
@@ -3488,12 +3523,9 @@ function tzPivot(t, months, itemOk, mSel) {
     colSum.map((v, i) => '<td class="num' + selCls(i) + '">' + tzInt(v) + '</td>').join('') +
     '<td class="num">' + tzInt(allSum) + '</td></tr>';
 
-  return '<div class="tz-block"><div class="tz-block-head">Сводная: часы по статьям и месяцам</div>' +
-    '<div class="tz-block-sub">В ячейках — часы за месяц, не накопительно. ' +
-    rows.length + ' статей · ' + tzInt(allSum) + ' ч за ' + months.length +
-    ' месяцев. «спр.» — статьи нет в бюджете отделки. Клик по строке статьи ' +
-    'раскрывает её до сотрудников, клик по часам сотрудника — разбивку по дням. ' +
-    'Клик по месяцу в шапке выбирает его для расшифровки ниже.</div>' +
+  return '<div class="tz-block"><div class="tz-block-head">' + escapeHtml(title) + '</div>' +
+    '<div class="tz-block-sub">' + rows.length + ' статей · ' + tzInt(allSum) + ' ч за ' +
+    months.length + ' месяцев. ' + note + '</div>' +
     '<div class="tz-pivot-wrap"><table class="check tzpiv"><thead>' + thead +
     '</thead><tbody>' + body + tot + '</tbody></table></div></div>';
 }
@@ -3702,7 +3734,26 @@ function tzPersonHtml(p) {
       '</td><td class="num">' + tzInt(r[5]) + '</td></tr>').join('') +
     '</tbody></table></div>';
 
-  return sum + monthTab +
+  // Свод по статьям бюджета (31.08.2026, просьба пользователя): по 175 строкам
+  // табелей не видно, на чём человек работал, — сворачиваем их в статьи.
+  const byItem = new Map();
+  rows.forEach(r => {
+    const key = r[3] || '(без статьи)';
+    const o = byItem.get(key) || { h: 0, s: 0, d: new Set() };
+    o.h += r[4]; o.s += r[5]; o.d.add(r[0] + '|' + r[2]);
+    byItem.set(key, o);
+  });
+  const itemTab = '<div class="tzp-head">По статьям бюджета (' + byItem.size + ')</div>' +
+    '<div class="tzp-scroll"><table class="check tzp-tab"><thead><tr><th>Статья бюджета</th>' +
+    '<th class="num">Табелей</th><th class="num">Часы</th><th class="num">Сумма, руб.</th>' +
+    '</tr></thead><tbody>' +
+    [...byItem.entries()].sort((a, b) => b[1].h - a[1].h).map(e =>
+      '<tr><td>' + escapeHtml(e[0]) + '</td><td class="num">' + e[1].d.size +
+      '</td><td class="num">' + tzInt(e[1].h) + '</td><td class="num">' + tzInt(e[1].s) +
+      '</td></tr>').join('') +
+    '</tbody></table></div>';
+
+  return sum + monthTab + itemTab +
     '<div class="tzp-head">Табели сотрудника (' + seenDoc.size + ')</div>' + docTab;
 }
 
