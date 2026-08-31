@@ -540,8 +540,20 @@
   .tzp-head { font-size: 13px; font-weight: 700; margin: 14px 0 4px; }
   table.check.tzp-tab th, table.check.tzp-tab td { padding: 5px 8px; }
   .tzp-scroll { max-height: 320px; overflow: auto; }
+  table.check.tzp-tab tr.tzp-item { cursor: pointer; }
+  table.check.tzp-tab tr.tzp-item:hover td { background: var(--panel2); }
+  table.check.tzp-tab tr.tzp-item.open td { background: #dbe7ff; font-weight: 600; }
+  table.check.tzp-tab tr.tzp-item .chev { color: var(--accent); }
+  table.check.tzp-tab tr.tzp-docs > td { background: #fafbfc; padding: 6px 10px 10px 24px; }
+  .tzp-head.clickable { cursor: pointer; }
+  .tzp-head.clickable:hover { color: var(--accent); }
+  .tzp-head .chev { color: var(--accent); }
   .tz-block { margin-top: 18px; }
   .tz-block-head { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
+  .tz-block-head.clickable { cursor: pointer; }
+  .tz-block-head.clickable:hover { color: var(--accent); }
+  .tz-block-head .chev { color: var(--accent); }
+  .tz-block.tz-ref { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 12px; }
   .tz-block-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
   .tz-mlabel { cursor: pointer; }
   /* Переключатель «накопительно / только этот месяц» и подпись выбранного месяца. */
@@ -978,7 +990,11 @@ const state = {
   tzPivOpen: new Set(),        // раскрытые статьи в сводной (индексы статей)
   tzPivBrClosed: new Set(),    // свёрнутые строки «Без бригады» внутри раскрытых статей
   tzPivDay: null,              // раскрытая ячейка «сотрудник × месяц»: 'статья|человек|месяц'
+  tzSb5Open: false,            // раскрыта ли справочная сводная по статьям СБ5
   tzPersonCache: new Map(),    // ФИО -> ответ action=tuzioPerson (подневные строки)
+  tzpFio: null,                // чья карточка открыта в модалке
+  tzpOpenItem: null,           // индекс раскрытой статьи в карточке (её табели)
+  tzpAllDocs: false,           // раскрыт ли общий список табелей сотрудника
   expenses: [],                // лист «Расходы» целиком — нормы расхода для вкладок «МОЛ»/«Материалы»
   matOpen: null,               // раскрытый материал на вкладке «Материалы» (ключ matKey)
   typeByMaterial: new Map(),   // материал -> «Тип материала» из справочника (28.08.2026)
@@ -3390,12 +3406,15 @@ function renderTuzio() {
     '<button data-tzcum="0"' + (!cumMode ? ' class="on"' : '') + '>только этот месяц</button>' +
     '<span class="check-desc" style="margin:0">' + escapeHtml(period) + '</span></div>';
 
-  el.innerHTML = head + filters + legend + chart +
-    tzPivot(t, months, itemOk, mSel) + modes +
+  // Порядок блоков (31.08.2026, просьба пользователя): сразу под диаграммой —
+  // расшифровка выбранного месяца, и только потом сводная «статьи × месяцы»,
+  // а в самом низу справочный блок СБ5 (он внутри tzPivot).
+  el.innerHTML = head + filters + legend + chart + modes +
     tzBlock(t, 'Статьи бюджета отделки', inBud, sumAll, inRange,
       'Те же статьи, по которым считается вкладка «Аналитика».') +
     tzBlock(t, 'Справочно — нет в бюджете отделки', outBud, sumAll, inRange,
-      'Оплачено тем же почасовщикам, но к бюджету отделки не относится.');
+      'Оплачено тем же почасовщикам, но к бюджету отделки не относится.') +
+    tzPivot(t, months, itemOk, mSel);
 }
 
 /* Статья второй очереди: названия начинаются с «СБ5 - …». Такие статьи
@@ -3445,22 +3464,32 @@ function tzPivot(t, months, itemOk, mSel) {
   const main = rows.filter(r => !tzIsSb5(t.items[r[0]]));
   const hours = list => list.reduce((acc, r) => acc + r[2], 0);
 
+  // Статьи СБ5 — отдельным справочным блоком внизу, по умолчанию свёрнутым
+  // (просьба 31.08.2026): это вторая очередь, к бюджету отделки СБ3 отношения
+  // не имеет и в основной таблице только мешает.
+  const sb5Block = sb5.length
+    ? '<div class="tz-block tz-ref"><div class="tz-block-head clickable" data-tzsb5="1">' +
+      '<span class="chev">' + (state.tzSb5Open ? '&#9662;' : '&#9656;') + '</span> ' +
+      'Справочно: статьи СБ5 — ' + sb5.length + ' статей, ' + tzInt(hours(sb5)) + ' ч</div>' +
+      '<div class="tz-block-sub">Вторая очередь, в бюджет отделки СБ3 не входит. ' +
+      (state.tzSb5Open ? 'Клик по заголовку свернёт таблицу.'
+                       : 'Клик по заголовку покажет таблицу.') + '</div>' +
+      (state.tzSb5Open ? tzPivotTable(t, months, mSel, sb5, emp, '', '', true) : '') +
+      '</div>'
+    : '';
+
   return tzPivotTable(t, months, mSel, main, emp,
       'Сводная: часы по статьям и месяцам',
       'В ячейках — часы за месяц, не накопительно. «спр.» — статьи нет в бюджете ' +
       'отделки. Клик по строке статьи раскрывает её до сотрудников, клик по часам ' +
       'сотрудника — разбивку по дням. Клик по месяцу в шапке выбирает его для ' +
       'расшифровки ниже.' +
-      (sb5.length ? ' Статьи СБ5 вынесены в отдельную таблицу ниже (' + sb5.length +
-        ' статей, ' + tzInt(hours(sb5)) + ' ч).' : '')) +
-    (sb5.length ? tzPivotTable(t, months, mSel, sb5, emp,
-      'Сводная СБ5: часы по статьям и месяцам',
-      'Статьи второй очереди — отдельно от СБ3 (просьба 31.08.2026). ' +
-      'Устроены так же: раскрываются до сотрудников и дней.') : '');
+      (sb5.length ? ' Статьи СБ5 — справочным блоком внизу (' + sb5.length +
+        ' статей, ' + tzInt(hours(sb5)) + ' ч).' : '')) + sb5Block;
 }
 
 /* Одна таблица сводной: строки-статьи с раскрытием до сотрудников и дней. */
-function tzPivotTable(t, months, mSel, rows, emp, title, note) {
+function tzPivotTable(t, months, mSel, rows, emp, title, note, bare) {
   if (!rows.length) return '';
   const colSum = months.map((_, i) => rows.reduce((acc, r) => acc + r[1][i], 0));
   const allSum = rows.reduce((acc, r) => acc + r[2], 0);
@@ -3523,11 +3552,13 @@ function tzPivotTable(t, months, mSel, rows, emp, title, note) {
     colSum.map((v, i) => '<td class="num' + selCls(i) + '">' + tzInt(v) + '</td>').join('') +
     '<td class="num">' + tzInt(allSum) + '</td></tr>';
 
+  const table = '<div class="tz-pivot-wrap"><table class="check tzpiv"><thead>' + thead +
+    '</thead><tbody>' + body + tot + '</tbody></table></div>';
+  // bare — вернуть только таблицу: у справочного блока СБ5 своя шапка с раскрытием.
+  if (bare) return table;
   return '<div class="tz-block"><div class="tz-block-head">' + escapeHtml(title) + '</div>' +
     '<div class="tz-block-sub">' + rows.length + ' статей · ' + tzInt(allSum) + ' ч за ' +
-    months.length + ' месяцев. ' + note + '</div>' +
-    '<div class="tz-pivot-wrap"><table class="check tzpiv"><thead>' + thead +
-    '</thead><tbody>' + body + tot + '</tbody></table></div></div>';
+    months.length + ' месяцев. ' + note + '</div>' + table + '</div>';
 }
 
 /* Подневная разбивка одной ячейки «сотрудник × месяц» внутри статьи.
@@ -3670,6 +3701,9 @@ async function tzLoadPerson(fio) {
 }
 
 async function openTuzioPerson(fio) {
+  state.tzpFio = fio;
+  state.tzpOpenItem = null;
+  state.tzpAllDocs = false;
   document.getElementById('modal-title').textContent = 'Сотрудник';
   document.getElementById('modal-sub').textContent = fio;
   document.getElementById('modal-body').innerHTML =
@@ -3677,12 +3711,36 @@ async function openTuzioPerson(fio) {
     'на холодном кэше это занимает до полуминуты.</div>';
   document.getElementById('modal-overlay').style.display = 'flex';
   try {
-    document.getElementById('modal-body').innerHTML = tzPersonHtml(await tzLoadPerson(fio));
+    await tzLoadPerson(fio);
+    tzRenderPerson();
   } catch (e) {
     document.getElementById('modal-body').innerHTML =
       '<div class="side-note">Не удалось загрузить карточку: ' + escapeHtml(e.message) + '</div>';
   }
 }
+
+// Перерисовка открытой карточки: нужна при раскрытии статьи и общего списка.
+function tzRenderPerson() {
+  const p = state.tzPersonCache.get(state.tzpFio);
+  if (!p || p === 'error') return;
+  document.getElementById('modal-body').innerHTML = tzPersonHtml(p);
+}
+
+// Клики внутри карточки сотрудника (31.08.2026): статья раскрывает свои табели,
+// заголовок «Табели сотрудника» — общий список.
+document.getElementById('modal-body').addEventListener('click', e => {
+  const itemEl = e.target.closest('[data-tzpitem]');
+  if (itemEl) {
+    const n = parseInt(itemEl.dataset.tzpitem, 10);
+    state.tzpOpenItem = state.tzpOpenItem === n ? null : n;
+    tzRenderPerson();
+    return;
+  }
+  if (e.target.closest('[data-tzpall]')) {
+    state.tzpAllDocs = !state.tzpAllDocs;
+    tzRenderPerson();
+  }
+});
 
 function tzPersonHtml(p) {
   const rows = p.rows || [];
@@ -3723,19 +3781,12 @@ function tzPersonHtml(p) {
   // пользователя). Бэкенд напарников по-прежнему считает и отдаёт в `mates`
   // (см. buildTuzioPerson_) — понадобится вернуть, хватит вывода здесь.
 
-  // Табели: свежие сверху.
+  // Табели: свежие сверху (общий порядок для всех списков в карточке).
   const sorted = rows.slice().sort((a, b) => (b[0] < a[0] ? -1 : b[0] > a[0] ? 1 : 0) || (b[1] - a[1]));
-  const docTab = '<div class="tzp-scroll"><table class="check tzp-tab"><thead><tr>' +
-    '<th class="num">Дата</th><th class="num">Табель №</th><th>Статья бюджета</th>' +
-    '<th class="num">Часы</th><th class="num">Сумма, руб.</th></tr></thead><tbody>' +
-    sorted.map(r => '<tr><td class="num">' + ('0' + r[1]).slice(-2) + '.' + r[0].slice(5) +
-      '</td><td class="num">' + escapeHtml(r[2] || '—') + '</td><td>' +
-      escapeHtml(r[3] || '(без статьи)') + '</td><td class="num">' + tzInt(r[4]) +
-      '</td><td class="num">' + tzInt(r[5]) + '</td></tr>').join('') +
-    '</tbody></table></div>';
 
-  // Свод по статьям бюджета (31.08.2026, просьба пользователя): по 175 строкам
-  // табелей не видно, на чём человек работал, — сворачиваем их в статьи.
+  // Свод по статьям бюджета (31.08.2026): по сотне строк табелей не видно,
+  // на чём человек работал. Клик по статье раскрывает под ней её табели
+  // (просьба 31.08.2026) — общий список ниже нужен уже редко, поэтому свёрнут.
   const byItem = new Map();
   rows.forEach(r => {
     const key = r[3] || '(без статьи)';
@@ -3743,18 +3794,42 @@ function tzPersonHtml(p) {
     o.h += r[4]; o.s += r[5]; o.d.add(r[0] + '|' + r[2]);
     byItem.set(key, o);
   });
-  const itemTab = '<div class="tzp-head">По статьям бюджета (' + byItem.size + ')</div>' +
-    '<div class="tzp-scroll"><table class="check tzp-tab"><thead><tr><th>Статья бюджета</th>' +
+  const items = [...byItem.entries()].sort((a, b) => b[1].h - a[1].h);
+  const docsTable = list =>
+    '<table class="check tzp-tab"><thead><tr><th class="num">Дата</th>' +
+    '<th class="num">Табель №</th><th>Статья бюджета</th><th class="num">Часы</th>' +
+    '<th class="num">Сумма, руб.</th></tr></thead><tbody>' +
+    list.map(r => '<tr><td class="num">' + ('0' + r[1]).slice(-2) + '.' + r[0].slice(5) +
+      '</td><td class="num">' + escapeHtml(r[2] || '—') + '</td><td>' +
+      escapeHtml(r[3] || '(без статьи)') + '</td><td class="num">' + tzInt(r[4]) +
+      '</td><td class="num">' + tzInt(r[5]) + '</td></tr>').join('') +
+    '</tbody></table>';
+
+  const itemTab = '<div class="tzp-head">По статьям бюджета (' + items.length +
+    ') — клик по статье покажет её табели</div>' +
+    '<table class="check tzp-tab"><thead><tr><th>Статья бюджета</th>' +
     '<th class="num">Табелей</th><th class="num">Часы</th><th class="num">Сумма, руб.</th>' +
     '</tr></thead><tbody>' +
-    [...byItem.entries()].sort((a, b) => b[1].h - a[1].h).map(e =>
-      '<tr><td>' + escapeHtml(e[0]) + '</td><td class="num">' + e[1].d.size +
-      '</td><td class="num">' + tzInt(e[1].h) + '</td><td class="num">' + tzInt(e[1].s) +
-      '</td></tr>').join('') +
-    '</tbody></table></div>';
+    items.map((e, n) => {
+      const open = state.tzpOpenItem === n;
+      const tr = '<tr class="tzp-item' + (open ? ' open' : '') + '" data-tzpitem="' + n + '">' +
+        '<td><span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' +
+        escapeHtml(e[0]) + '</td><td class="num">' + e[1].d.size +
+        '</td><td class="num">' + tzInt(e[1].h) + '</td><td class="num">' + tzInt(e[1].s) +
+        '</td></tr>';
+      if (!open) return tr;
+      const mine = sorted.filter(r => (r[3] || '(без статьи)') === e[0]);
+      return tr + '<tr class="tzp-docs"><td colspan="4"><div class="tzp-scroll">' +
+        docsTable(mine) + '</div></td></tr>';
+    }).join('') +
+    '</tbody></table>';
 
-  return sum + monthTab + itemTab +
-    '<div class="tzp-head">Табели сотрудника (' + seenDoc.size + ')</div>' + docTab;
+  const allDocs = '<div class="tzp-head clickable" data-tzpall="1"><span class="chev">' +
+    (state.tzpAllDocs ? '&#9662;' : '&#9656;') + '</span> Все табели сотрудника (' +
+    seenDoc.size + ')</div>' +
+    (state.tzpAllDocs ? '<div class="tzp-scroll">' + docsTable(sorted) + '</div>' : '');
+
+  return sum + monthTab + itemTab + allDocs;
 }
 
 // Статьи, доступные к выбору при текущем фильтре вида работ — нужны кнопке
@@ -3852,6 +3927,11 @@ document.getElementById('tuzio-screen').addEventListener('click', e => {
           .then(() => { if (state.screen === 'tuzio') renderTuzio(); });
       }
     }
+    renderTuzio();
+    return;
+  }
+  if (e.target.closest('[data-tzsb5]')) {
+    state.tzSb5Open = !state.tzSb5Open;
     renderTuzio();
     return;
   }
