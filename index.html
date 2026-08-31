@@ -2825,9 +2825,9 @@ function renderMol() {
         const tCost = list.reduce((s, r) => s + r.cost, 0);
         html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
           '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
-          '<th class="num">Итого (расчет)</th>' +
+          '<th class="num">Объем итого по модели</th>' +
           '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
-          '<th class="num">Списано</th>' +
+          '<th class="num">К списанию ЛК</th>' +
           '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + escapeHtml(r.unit) + '</td>' +
@@ -2896,7 +2896,7 @@ function renderMaterials() {
     body += '<tr class="mdetail"><td colspan="7">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
-      '<th class="num">Объем материала</th><th class="num">Выполнено натурально</th>' +
+      '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
       '<th class="num">Остаток</th><th class="num">Цена за ед., руб</th>' +
       '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
       works.map(w => '<tr><td>' + escapeHtml(w.work) +
@@ -2913,10 +2913,10 @@ function renderMaterials() {
   });
   const tbl = '<table class="check mtab"><thead><tr>' +
     '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
-    '<th class="num">Объем материала итого</th>' +
+    '<th class="num">Объем итого по модели</th>' +
     '<th class="num">Выполнено натурально</th>' +
     '<th class="num">Остаток</th>' +
-    '<th class="num">Списано итого</th>' +
+    '<th class="num">К списанию ЛК</th>' +
     '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
     '<td class="num"></td><td class="num"></td><td class="num"></td>' +
