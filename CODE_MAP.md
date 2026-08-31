@@ -114,7 +114,16 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   `data-tzm` на колонке/сегменте/подписи), `state.tzHl` (подсветка статьи из
   легенды, `data-tzg`), `state.tzCum` (накопительно / только месяц, `data-tzcum`),
   `state.tzOpen` (раскрытые статьи, `tr.tzrow` → `tzDetailRow`: сотрудники +
-  табели). Данные — `action=tuzio`, CSS `.tz-*`/`table.check.tztab`
+  табели). Данные — `action=tuzio`, CSS `.tz-*`/`table.check.tztab`.
+  **Вторая итерация 31.08**: `tzInBudget` (= `anMatch`) делит расшифровку на два
+  блока `tzBlock` — «Статьи бюджета отделки» и «Справочно»; `tzIsFinish`/
+  `TZ_FIN_CREWS` — разметка отделка/общестрой по названию статьи для фильтра
+  `state.tzKind` (`data-tzkind`); мультивыбор статей `state.tzSel`/
+  `state.tzSelOpen`/`tzPickable` (`data-tzdd` — открыть список, `data-tzitemchk` —
+  статья, `data-tzsel` — все/ничего, `data-tzreset` — сброс). Список статей
+  собран из div'ов (`.tz-opt`), НЕ из label+checkbox: у label клик приходит
+  дважды и выбор не менялся. Оба фильтра применяются до расчёта топ-12,
+  поэтому диаграмма перестраивается вместе с таблицей
 
 - `AN_ITEMS`/`anNorm`/`anMatch` (перед `loadAnalytics`) — зашитый список статей
   отделки (26.08): только они входят в линии; «паркинг»/«лобби» по префиксу
