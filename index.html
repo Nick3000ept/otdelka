@@ -490,6 +490,19 @@
     background: #fff; font-size: 11px; line-height: 13px; text-align: center; color: var(--accent);
   }
   .tz-opt i { margin-left: auto; font-style: normal; color: var(--text-dim); white-space: nowrap; }
+  /* Сводная «статьи × месяцы» (31.08.2026). Ширины колонок — авто (у базовой
+     table.check раскладка fixed и num по 110px, 10 колонок в неё не влезают). */
+  .tz-pivot-wrap { overflow-x: auto; }
+  table.check.tzpiv { max-width: none; table-layout: auto; }
+  table.check.tzpiv th.num, table.check.tzpiv td.num {
+    width: auto; text-align: right; white-space: nowrap;
+  }
+  table.check.tzpiv td:first-child { white-space: normal; }
+  table.check.tzpiv th[data-tzm] { cursor: pointer; }
+  table.check.tzpiv th[data-tzm]:hover { color: var(--text); }
+  table.check.tzpiv .tzpiv-sel { background: #eef3fb; }
+  table.check.tzpiv tr.tzpiv-tot td { font-weight: 700; border-top: 2px solid var(--border); }
+  table.check.tzpiv .tzpiv-ref { color: var(--text-dim); font-size: 11px; margin-left: 6px; }
   /* Два блока таблиц: статьи бюджета отделки и справочные. */
   /* Строка сотрудника кликабельна — открывает карточку с бригадой (31.08.2026). */
   table.check.tztab table.inner tr.tzp { cursor: pointer; }
@@ -3339,11 +3352,61 @@ function renderTuzio() {
     '<button data-tzcum="0"' + (!cumMode ? ' class="on"' : '') + '>только этот месяц</button>' +
     '<span class="check-desc" style="margin:0">' + escapeHtml(period) + '</span></div>';
 
-  el.innerHTML = head + filters + legend + chart + modes +
+  el.innerHTML = head + filters + legend + chart +
+    tzPivot(t, months, itemOk, mSel) + modes +
     tzBlock(t, 'Статьи бюджета отделки', inBud, sumAll, inRange,
       'Те же статьи, по которым считается вкладка «Аналитика».') +
     tzBlock(t, 'Справочно — нет в бюджете отделки', outBud, sumAll, inRange,
       'Оплачено тем же почасовщикам, но к бюджету отделки не относится.');
+}
+
+/* Сводная «статьи × месяцы» (31.08.2026): в ячейках часы ЗА МЕСЯЦ, не
+   накопительно — таблица показывает сразу весь год. Подчиняется тем же
+   фильтрам, что диаграмма. Клик по месяцу в шапке выбирает его для
+   расшифровки ниже, выбранный столбец подсвечен. Деление на «бюджет
+   отделки / справочно» здесь не дублируем таблицами — статьи вне бюджета
+   помечены «спр.» прямо в строке. */
+function tzPivot(t, months, itemOk, mSel) {
+  const cells = new Map();
+  (t.ma || []).forEach(r => {
+    if (!itemOk(r[0])) return;
+    let a = cells.get(r[0]);
+    if (!a) { a = months.map(() => 0); cells.set(r[0], a); }
+    a[r[1]] += r[2];
+  });
+  if (!cells.size) return '';
+  const rows = [...cells.entries()]
+    .map(e => [e[0], e[1], e[1].reduce((x, v) => x + v, 0)])
+    .sort((a, b) => b[2] - a[2]);
+  const colSum = months.map((_, i) => rows.reduce((acc, r) => acc + r[1][i], 0));
+  const allSum = rows.reduce((acc, r) => acc + r[2], 0);
+  const selCls = i => (i === mSel ? ' tzpiv-sel' : '');
+
+  const thead = '<tr><th>Статья бюджета</th>' +
+    months.map((m, i) => '<th class="num' + selCls(i) + '" data-tzm="' + i +
+      '" title="Показать расшифровку: ' + tzMonthLabel(m) + '">' +
+      tzMonthLabel(m) + '</th>').join('') +
+    '<th class="num">Итого</th></tr>';
+
+  const body = rows.map(r => '<tr><td>' + escapeHtml(t.items[r[0]]) +
+    (tzInBudget(t.items[r[0]]) ? ''
+      : '<span class="tzpiv-ref" title="Статьи нет в бюджете отделки">спр.</span>') +
+    '</td>' +
+    r[1].map((v, i) => '<td class="num' + selCls(i) + '">' +
+      (v ? tzInt(v) : '') + '</td>').join('') +
+    '<td class="num"><b>' + tzInt(r[2]) + '</b></td></tr>').join('');
+
+  const tot = '<tr class="tzpiv-tot"><td>Итого</td>' +
+    colSum.map((v, i) => '<td class="num' + selCls(i) + '">' + tzInt(v) + '</td>').join('') +
+    '<td class="num">' + tzInt(allSum) + '</td></tr>';
+
+  return '<div class="tz-block"><div class="tz-block-head">Сводная: часы по статьям и месяцам</div>' +
+    '<div class="tz-block-sub">В ячейках — часы за месяц, не накопительно. ' +
+    rows.length + ' статей · ' + tzInt(allSum) + ' ч за ' + months.length +
+    ' месяцев. «спр.» — статьи нет в бюджете отделки. Клик по месяцу в шапке ' +
+    'выбирает его для расшифровки ниже.</div>' +
+    '<div class="tz-pivot-wrap"><table class="check tzpiv"><thead>' + thead +
+    '</thead><tbody>' + body + tot + '</tbody></table></div></div>';
 }
 
 /* Один блок таблицы статей (31.08.2026): заголовок с итогами + таблица.
