@@ -3401,8 +3401,14 @@ function renderTuzio() {
   const hoursAll = list.reduce((acc, r) => acc + r[1].h, 0);
 
   // Деление на статьи бюджета отделки и справочные (31.08.2026).
-  const inBud = list.filter(e => tzInBudget(t.items[e[0]]));
-  const outBud = list.filter(e => !tzInBudget(t.items[e[0]]));
+  // Статьи СБ5 из обеих таблиц вынесены в свой блок внизу (просьба 31.08.2026):
+  // это вторая очередь, в отделке СБ3 она только мешает. Данные не теряются —
+  // блок раскрывается кликом, а доли и итог месяца считаются от ВСЕГО (включая
+  // СБ5), поэтому проценты трёх блоков складываются в 100%.
+  const sb5List = list.filter(e => tzIsSb5(t.items[e[0]]));
+  const noSb5 = list.filter(e => !tzIsSb5(t.items[e[0]]));
+  const inBud = noSb5.filter(e => tzInBudget(t.items[e[0]]));
+  const outBud = noSb5.filter(e => !tzInBudget(t.items[e[0]]));
   const sumOf = arr => arr.reduce((acc, r) => acc + r[1].s, 0);
 
   const modes = '<div class="tz-modes">' +
@@ -3412,15 +3418,27 @@ function renderTuzio() {
     '<button data-tzcum="0"' + (!cumMode ? ' class="on"' : '') + '>только этот месяц</button>' +
     '<span class="check-desc" style="margin:0">' + escapeHtml(period) + '</span></div>';
 
-  // Порядок блоков (31.08.2026, просьба пользователя): сразу под диаграммой —
-  // расшифровка выбранного месяца, и только потом сводная «статьи × месяцы»,
-  // а в самом низу справочный блок СБ5 (он внутри tzPivot).
+  // Порядок блоков (31.08.2026): под диаграммой — расшифровка выбранного
+  // месяца. Сводная «статьи × месяцы» с экрана УБРАНА в тот же день по просьбе
+  // пользователя — вместе с ней ушли справочный блок СБ5 и разбивка по дням
+  // (`tzPivot` и соседние функции оставлены в коде, вернуть = добавить вызов).
   el.innerHTML = head + filters + legend + chart + modes +
     tzBlock(t, 'Статьи бюджета отделки', inBud, sumAll, inRange,
       'Те же статьи, по которым считается вкладка «Аналитика».') +
     tzBlock(t, 'Справочно — нет в бюджете отделки', outBud, sumAll, inRange,
-      'Оплачено тем же почасовщикам, но к бюджету отделки не относится.') +
-    tzPivot(t, months, itemOk, mSel);
+      'Оплачено тем же почасовщикам, но к бюджету отделки не относится. ' +
+      (sb5List.length ? 'Статьи СБ5 — отдельным блоком ниже.' : '')) +
+    (sb5List.length
+      ? '<div class="tz-block tz-ref"><div class="tz-block-head clickable" data-tzsb5="1">' +
+        '<span class="chev">' + (state.tzSb5Open ? '&#9662;' : '&#9656;') + '</span> ' +
+        'Справочно: статьи СБ5 — ' + sb5List.length + ' статей, ' +
+        tzInt(sumOf(sb5List)) + ' руб.</div>' +
+        '<div class="tz-block-sub">Вторая очередь, в бюджет отделки СБ3 не входит. ' +
+        (state.tzSb5Open ? 'Клик по заголовку свернёт таблицу.'
+                         : 'Клик по заголовку покажет таблицу.') + '</div>' +
+        (state.tzSb5Open ? tzBlock(t, '', sb5List, sumAll, inRange, '', true) : '') +
+        '</div>'
+      : '');
 }
 
 /* Статья второй очереди: названия начинаются с «СБ5 - …». Такие статьи
@@ -3428,7 +3446,14 @@ function renderTuzio() {
    пользователя) — в остальном ведут себя так же. */
 const tzIsSb5 = name => anNorm(name).indexOf('сб5') === 0;
 
-/* Сводная «статьи × месяцы» (31.08.2026): в ячейках часы ЗА МЕСЯЦ, не
+/* ⚠️ НА ЭКРАН НЕ ВЫВОДИТСЯ с 31.08.2026 (просьба пользователя убрать сводную
+   с разбивкой по месяцам). Код оставлен целиком: вернуть — дописать
+   `+ tzPivot(t, months, itemOk, mSel)` в конец el.innerHTML в renderTuzio.
+   Вместе со сводной с экрана ушли справочный блок СБ5 и разбивка по дням
+   (клик по часам сотрудника в месяце). Часы СБ5 при этом не потерялись —
+   они видны в блоке «Справочно — нет в бюджете отделки».
+
+   Сводная «статьи × месяцы» (31.08.2026): в ячейках часы ЗА МЕСЯЦ, не
    накопительно — таблица показывает сразу весь год. Подчиняется тем же
    фильтрам, что диаграмма. Клик по месяцу в шапке выбирает его для
    расшифровки ниже, выбранный столбец подсвечен. Деление на «бюджет
@@ -3598,7 +3623,7 @@ function tzPivDaysRow(t, ii, pi, mi, months, cols) {
 
 /* Один блок таблицы статей (31.08.2026): заголовок с итогами + таблица.
    Доля считается от общего итога периода, чтобы блоки были сопоставимы. */
-function tzBlock(t, title, entries, sumAll, inRange, note) {
+function tzBlock(t, title, entries, sumAll, inRange, note, bare) {
   const s = entries.reduce((acc, r) => acc + r[1].s, 0);
   const h = entries.reduce((acc, r) => acc + r[1].h, 0);
   const sub = entries.length
@@ -3628,6 +3653,8 @@ function tzBlock(t, title, entries, sumAll, inRange, note) {
       '<td class="num"></td><td class="num"></td></tr>' +
       '</tbody></table>'
     : '';
+  // bare — вернуть только таблицу: у блока СБ5 своя шапка с раскрытием.
+  if (bare) return body;
   return '<div class="tz-block"><div class="tz-block-head">' + escapeHtml(title) + '</div>' +
     '<div class="tz-block-sub">' + sub + (note ? ' · ' + escapeHtml(note) : '') + '</div>' +
     body + '</div>';

@@ -148,8 +148,11 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   (`data-tzpitem` — статья, `data-tzpall` — все табели, `tzRenderPerson`
   перерисовывает модалку, клики ловит слушатель на `#modal-body`).
   **Шестая итерация 31.08**: блок СБ5 свёрнут в справочный внизу
-  (`data-tzsb5`/`state.tzSb5Open`, у `tzPivotTable` флаг `bare`), порядок
-  блоков — диаграмма → расшифровка месяца → сводная → СБ5 Бэк — `action=tuzioPerson`
+  (`data-tzsb5`/`state.tzSb5Open`), порядок блоков — диаграмма → расшифровка
+  месяца → сводная → СБ5.
+  **Седьмая итерация 31.08**: сводная `tzPivot` УБРАНА с экрана (код оставлен,
+  вызов снят), статьи СБ5 вынесены из блоков расшифровки в свой свёрнутый блок
+  внизу (`sb5List` в `renderTuzio`, у `tzBlock` флаг `bare`) Бэк — `action=tuzioPerson`
   + `buildTuzioPerson_` (перед `buildAnalytics_`), кэш `CACHE_TUZP` на каждое
   ФИО. CSS `.tzp-*`/`table.check.tzp-tab`
 
