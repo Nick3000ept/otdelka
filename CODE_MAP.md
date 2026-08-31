@@ -104,6 +104,18 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   q-маркер 'sel'. Блок фильтров бюджета (.bfilter/#bsearch/#bss-check) и
   `budgetContrOpen` УДАЛЕНЫ 26.08 — управление из шапки
 
+- `TZ_TOP`/`TZ_COLORS`/`TZ_REST`/`TZ_DOCS_LIMIT`/`tzMonthLabel`/`tzInt` +
+  `loadTuzio`/`renderTuzio`/`tzDetailRow` + делегированный клик на `#tuzio-screen`
+  (перед resize-обработчиком «Аналитики», 31.08) — вкладка **ТУЗИО**: оплата
+  почасовщикам. Накопительные столбики по месяцам, сегменты = статьи бюджета
+  (топ-12 цветом + серые «Прочие»); порядок слоёв в SVG важен — прозрачная
+  кнопка-колонка рисуется ПОД сегментами, иначе перехватывает наведение и
+  title-подсказки по статьям не показываются. `state.tzMonth` (выбранный месяц,
+  `data-tzm` на колонке/сегменте/подписи), `state.tzHl` (подсветка статьи из
+  легенды, `data-tzg`), `state.tzCum` (накопительно / только месяц, `data-tzcum`),
+  `state.tzOpen` (раскрытые статьи, `tr.tzrow` → `tzDetailRow`: сотрудники +
+  табели). Данные — `action=tuzio`, CSS `.tz-*`/`table.check.tztab`
+
 - `AN_ITEMS`/`anNorm`/`anMatch` (перед `loadAnalytics`) — зашитый список статей
   отделки (26.08): только они входят в линии; «паркинг»/«лобби» по префиксу
 - `loadAnalytics`/`renderAnalytics` (после `renderBudget`, перед `alignBudgetHead`) —

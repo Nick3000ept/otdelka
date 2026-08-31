@@ -83,6 +83,11 @@ var CONFIG = {
   MORS_QUEUE: 'Очередь',       // кол. H: в журнале смешаны СБ3 и СБ5 — берём только СБ3
   MORS_QUEUE_VALUE: 'СБ3',
   SHEET_TUZIO: 'ТУЗИО',        // третья линия «Аналитики» (26.08.2026)
+
+  // Вкладка «ТУЗИО» (31.08.2026): почасовые начисления рабочим — лист заливается
+  // скриптом из экселя «Часы 2026» (doPost importTuzio), витрина читает агрегат
+  // (action=tuzio). Строка листа = «человек в одном табеле за один день».
+  SHEET_TUZIO_HOURS: 'ТУЗИО_часы',
   TUZIO_MONTHS_START: 3,       // кол. C — первая месячная колонка (даты в строке 1)
   KP_MONTHS_START: 24,  // кол. X «Формы КП» — первая месячная колонка (даты в строке 1)
 
@@ -104,6 +109,7 @@ var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюдж�
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
+var CACHE_TUZ = 'tuzio_v1';       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
@@ -112,7 +118,7 @@ function clearCache() {
   cache.remove(CACHE_FLOORS);
   cache.remove(CACHE_WO);
   var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
-              CACHE_FACTREF + '_n', CACHE_AN + '_n'];
+              CACHE_FACTREF + '_n', CACHE_AN + '_n', CACHE_TUZ + '_n'];
   for (var i = 0; i < 10; i++) {
     keys.push(CACHE_VOLS + '_' + i);
     keys.push(CACHE_BUDGET + '_' + i);
@@ -120,6 +126,7 @@ function clearCache() {
     keys.push(CACHE_CHANGES + '_' + i);
     keys.push(CACHE_FACTREF + '_' + i);
     keys.push(CACHE_AN + '_' + i);
+    keys.push(CACHE_TUZ + '_' + i);
   }
   cache.removeAll(keys);
 }
@@ -428,6 +435,66 @@ function doPost(e) {
       }
       shImp.getRange(1, 1, impData.length, impWide).setValues(impData);
       return jsonOut_({ ok: true, rows: impRows.length });
+    }
+
+    // Заливка почасовых начислений (31.08.2026): пишет ТОЛЬКО в лист «ТУЗИО_часы»
+    // (создаёт при отсутствии, содержимое перезаписывает целиком). Источник —
+    // эксель «Часы 2026» из папки «Контроль_договоров/Приложения», отбор строк
+    // и раскладка по колонкам — в скрипте «Приложения/tuzio_import.py».
+    // Строк ~59 тыс., за один POST не влезают, поэтому кусками:
+    //   { t, action:'importTuzio', mode:'start',  header:[...], total: <всего строк> }
+    //   { t, action:'importTuzio', mode:'append', rows:[[...], ...] }  — по 5 тыс.
+    if (body.action === 'importTuzio') {
+      var tzMode = String(body.mode || 'append');
+      var ssTz = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var shTz = ssTz.getSheetByName(CONFIG.SHEET_TUZIO_HOURS);
+      if (tzMode === 'start') {
+        var tzHead = body.header;
+        if (!Array.isArray(tzHead) || !tzHead.length) {
+          return jsonOut_({ ok: false, error: 'empty_fields' });
+        }
+        if (!shTz) shTz = ssTz.insertSheet(CONFIG.SHEET_TUZIO_HOURS);
+        shTz.clear();
+        // Лист заранее растим до нужной высоты: getRange за пределами листа падает.
+        var tzNeed = parseInt(body.total, 10) || 0;
+        var tzMax = shTz.getMaxRows();
+        if (tzNeed + 1 > tzMax) shTz.insertRowsAfter(tzMax, tzNeed + 1 - tzMax);
+        // «Месяц» и «Табель» — текстовый формат на весь столбец, иначе Sheets
+        // превратит «2026-01» в дату, а номер табеля — в число.
+        for (var tci = 0; tci < tzHead.length; tci++) {
+          var tzName = String(tzHead[tci]);
+          if (tzName === 'Месяц' || tzName === 'Табель') {
+            shTz.getRange(1, tci + 1, shTz.getMaxRows(), 1).setNumberFormat('@');
+          }
+        }
+        shTz.getRange(1, 1, 1, tzHead.length).setValues([tzHead]);
+        shTz.setFrozenRows(1);
+        return jsonOut_({ ok: true, started: tzHead.length, rows: shTz.getMaxRows() });
+      }
+      if (!shTz) return jsonOut_({ ok: false, error: 'no_sheet' });
+      var tzRows = body.rows;
+      if (!Array.isArray(tzRows) || !tzRows.length) {
+        return jsonOut_({ ok: false, error: 'empty_fields' });
+      }
+      if (tzRows.length > 8000) return jsonOut_({ ok: false, error: 'too_many_rows' });
+      var tzWide = shTz.getLastColumn();
+      var tzData = [];
+      for (var tri = 0; tri < tzRows.length; tri++) {
+        var tzSrc = tzRows[tri] || [];
+        var tzDst = [];
+        for (var tcj = 0; tcj < tzWide; tcj++) {
+          var tv = tzSrc[tcj];
+          if (typeof tv === 'number') tzDst.push(tv);
+          else tzDst.push(safeCell_(String(tv == null ? '' : tv).slice(0, 300)));
+        }
+        tzData.push(tzDst);
+      }
+      var tzAt = shTz.getLastRow() + 1;
+      if (tzAt + tzData.length - 1 > shTz.getMaxRows()) {
+        shTz.insertRowsAfter(shTz.getMaxRows(), tzAt + tzData.length - 1 - shTz.getMaxRows());
+      }
+      shTz.getRange(tzAt, 1, tzData.length, tzWide).setValues(tzData);
+      return jsonOut_({ ok: true, rows: tzData.length, total: shTz.getLastRow() - 1 });
     }
 
     var list = readQuestions_();
@@ -808,6 +875,27 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return jsonOut_({ ok: false, error: 'writeoff_failed', message: String(err) });
+    }
+  }
+
+  // Вкладка «ТУЗИО» (31.08.2026): почасовые начисления рабочим по месяцам
+  // и статьям бюджета. Лист «ТУЗИО_часы» большой (~59 тыс. строк) — наружу идут
+  // только агрегаты, кэш кусками на 6 часов.
+  if (action === 'tuzio') {
+    try {
+      var cacheT = CacheService.getScriptCache();
+      var cachedT = cacheGetBig_(cacheT, CACHE_TUZ);
+      if (cachedT) {
+        return ContentService.createTextOutput(cachedT)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssT = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadT = JSON.stringify({ ok: true, tuzio: buildTuzio_(ssT) });
+      cachePutBig_(cacheT, CACHE_TUZ, payloadT, 21600);
+      return ContentService.createTextOutput(payloadT)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'tuzio_failed', message: String(err) });
     }
   }
 
@@ -1229,6 +1317,82 @@ function readKp_(ss) {
  * диагностика: суммы МОРС по значениям колонки «Статус» (фильтра по статусу
  * пока нет — появятся непроведённые платежи, решить с пользователем).
  */
+/**
+ * Свод почасовых начислений для вкладки «ТУЗИО» (31.08.2026).
+ * Источник — лист «ТУЗИО_часы»: строка = «человек в одном табеле за один день»
+ * (только ежедневный табель и только строки с заполненной ставкой — то есть те,
+ * кому зарплата начисляется за час работы; решение пользователя 31.08.2026).
+ * Сырые строки наружу НЕ отдаём, только агрегаты; месяцы отсортированы:
+ *   months — ['2026-01', …];  items — статьи бюджета;  people — ФИО (словари,
+ *   дальше везде индексы в этих массивах);
+ *   ma — [статья, месяц, часы, сумма]                        (~190 записей);
+ *   mp — [статья, месяц, человек, часы, сумма]               (~4,9 тыс.);
+ *   md — [статья, месяц, № табеля, день, часы, сумма, людей] (~6,3 тыс.).
+ * Накопление по месяцам считает фронт — так одна выборка обслуживает любой месяц.
+ */
+function buildTuzio_(ss) {
+  var empty = { months: [], items: [], people: [], ma: [], mp: [], md: [] };
+  var sh = ss.getSheetByName(CONFIG.SHEET_TUZIO_HOURS);
+  if (!sh || sh.getLastRow() < 2) return empty;
+  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var head = data[0].map(function (h) { return String(h).trim(); });
+  var iMon = head.indexOf('Месяц'), iItem = head.indexOf('Статья');
+  var iDoc = head.indexOf('Табель'), iDay = head.indexOf('День');
+  var iFio = head.indexOf('ФИО'), iH = head.indexOf('Часы'), iS = head.indexOf('Сумма');
+  if (iMon < 0 || iItem < 0 || iFio < 0 || iH < 0 || iS < 0) return empty;
+
+  var months = [], monIdx = {}, items = [], itemIdx = {}, people = [], fioIdx = {};
+  var ma = {}, mp = {}, md = {};
+  var num = function (v) {
+    if (typeof v === 'number') return v;
+    var n = parseFloat(String(v == null ? '' : v).replace(/\s/g, '').replace(',', '.'));
+    return isNaN(n) ? 0 : n;
+  };
+  for (var r = 1; r < data.length; r++) {
+    var row = data[r];
+    var mon = String(row[iMon] == null ? '' : row[iMon]).trim();
+    if (!mon) continue;
+    if (!(mon in monIdx)) { monIdx[mon] = months.length; months.push(mon); }
+    var it = String(row[iItem] == null ? '' : row[iItem]).trim() || '(без статьи)';
+    if (!(it in itemIdx)) { itemIdx[it] = items.length; items.push(it); }
+    var fio = String(row[iFio] == null ? '' : row[iFio]).trim() || '(без ФИО)';
+    if (!(fio in fioIdx)) { fioIdx[fio] = people.length; people.push(fio); }
+    var hrs = num(row[iH]), sum = num(row[iS]);
+    var mi = monIdx[mon], ii = itemIdx[it], pi = fioIdx[fio];
+    var kA = ii + '|' + mi;
+    if (!ma[kA]) ma[kA] = [ii, mi, 0, 0];
+    ma[kA][2] += hrs; ma[kA][3] += sum;
+    var kP = kA + '|' + pi;
+    if (!mp[kP]) mp[kP] = [ii, mi, pi, 0, 0];
+    mp[kP][3] += hrs; mp[kP][4] += sum;
+    var doc = String(row[iDoc] == null ? '' : row[iDoc]).trim();
+    var kD = kA + '|' + doc;
+    if (!md[kD]) md[kD] = [ii, mi, doc, iDay >= 0 ? Math.round(num(row[iDay])) : 0, 0, 0, 0];
+    md[kD][4] += hrs; md[kD][5] += sum; md[kD][6] += 1;
+  }
+
+  // Порядок строк на листе не гарантирован — месяцы сортируем и переиндексируем.
+  var order = months.slice().sort();
+  var remap = {};
+  for (var oi = 0; oi < order.length; oi++) remap[monIdx[order[oi]]] = oi;
+  var r2 = function (x) { return Math.round(x * 100) / 100; };
+  var out = { months: order, items: items, people: people, ma: [], mp: [], md: [] };
+  var k;
+  for (k in ma) if (ma.hasOwnProperty(k)) {
+    var a = ma[k];
+    out.ma.push([a[0], remap[a[1]], r2(a[2]), r2(a[3])]);
+  }
+  for (k in mp) if (mp.hasOwnProperty(k)) {
+    var b = mp[k];
+    out.mp.push([b[0], remap[b[1]], b[2], r2(b[3]), r2(b[4])]);
+  }
+  for (k in md) if (md.hasOwnProperty(k)) {
+    var c = md[k];
+    out.md.push([c[0], remap[c[1]], c[2], c[3], r2(c[4]), r2(c[5]), c[6]]);
+  }
+  return out;
+}
+
 function buildAnalytics_(ss) {
   var monthsSet = {};
   var ym = function (d) {
