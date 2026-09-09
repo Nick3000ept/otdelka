@@ -1872,6 +1872,8 @@ async function loadBudget() {
   if (state.screen === 'analytics') renderAnalytics();
   // И «МОЛ» — разделы «Бюджет» и объёмы работ по МОЛ (28.08.2026).
   if (state.screen === 'mol') renderMol();
+  // И «Материалам» — колонка «Выполнено натурально» (09.09.2026).
+  if (state.screen === 'materials') renderMaterials();
 }
 
 // СС-подрядчики для галочки «Собственные силы» на «Бюджете» (просьба 18.08.2026;
@@ -3244,6 +3246,10 @@ function renderMaterials() {
   const el = document.getElementById('materials-screen');
   if (state.writeoffStatus === 'idle') loadWriteoff();
   if (state.mat1cStatus === 'idle') loadMat1c();
+  // «Выполнено натурально» считается по своду бюджета (объёмы к закрытию).
+  // Без этого запроса колонка оставалась пустой, если пользователь заходил
+  // на вкладку, ни разу не открыв «Бюджет» или «МОЛ» (09.09.2026).
+  if (state.budgetStatus === 'idle') loadBudget();
   const head = '<div class="check-head">Материалы</div>';
   if (!(state.expenses || []).length) {
     el.innerHTML = head + '<div class="side-note">Данные листа «Расходы» загружаются…</div>';
