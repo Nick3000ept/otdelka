@@ -132,6 +132,7 @@ var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэт
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
 var CACHE_TUZ = 'tuzio_v1';
 var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотрудника вкладки «ТУЗИО» (31.08.2026); ответ маленький, обычный кэш, ключ = ФИО       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
+var CACHE_M1CD = 'mat1cd_v1';  // расшифровка поставки 1С по позициям/документам/объектам (модалка вкладок «МОЛ» и «Материалы», 09.09.2026); чанкованный
 var CACHE_M1CU = 'mat1cu_v1';  // позиции 1С по материалам с РАЗНЫМИ единицами (проверка «Единицы 1С», 09.09.2026)
 var CACHE_M1C = 'mat1c_v1';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026); агрегат маленький — обычный кэш
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
@@ -145,7 +146,9 @@ function clearCache() {
   cache.remove(CACHE_M1CU);
   var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
               CACHE_FACTREF + '_n', CACHE_AN + '_n', CACHE_TUZ + '_n'];
+  keys.push(CACHE_M1CD + '_n');
   for (var i = 0; i < 10; i++) {
+    keys.push(CACHE_M1CD + '_' + i);
     keys.push(CACHE_VOLS + '_' + i);
     keys.push(CACHE_BUDGET + '_' + i);
     keys.push(CACHE_BFL + '_' + i);
@@ -1136,6 +1139,28 @@ function doGet(e) {
     }
   }
 
+  // Расшифровка поставки 1С (09.09.2026) — что стоит за числом в колонке
+  // «Поставка + перемещение»: позиции 1С, документы (поступление/перемещение)
+  // и объекты (СБ3/СБ5). Считается один раз по всему листу и кэшируется кусками;
+  // фронт грузит при первом клике по ячейке.
+  if (action === 'mat1cDetail') {
+    try {
+      var cacheD = CacheService.getScriptCache();
+      var cachedD = cacheGetBig_(cacheD, CACHE_M1CD);
+      if (cachedD) {
+        return ContentService.createTextOutput(cachedD)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssD = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadD = JSON.stringify({ ok: true, detail: buildMat1cDetail_(ssD) });
+      cachePutBig_(cacheD, CACHE_M1CD, payloadD, 21600);
+      return ContentService.createTextOutput(payloadD)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'mat1cDetail_failed', message: String(err) });
+    }
+  }
+
   // Проверка «Единицы 1С» (09.09.2026): материалы витрины, в которые сопоставлены
   // позиции 1С в РАЗНЫХ единицах — их количество складывать нельзя. Считается
   // по листу «Сопоставление_1С» (маленький), отдаёт позиции с их единицами.
@@ -1702,6 +1727,76 @@ function buildMat1cUnits_(ss) {
     a[1].forEach(function (r) { sa += r[4]; });
     b[1].forEach(function (r) { sb += r[4]; });
     return sb - sa;
+  });
+  return out;
+}
+
+/**
+ * Расшифровка поставки 1С (09.09.2026): из чего сложилось число в колонке
+ * «Поставка + перемещение». Те же строки и те же правила, что в buildMat1c_
+ * (наши МОЛ, документы «Поступление»/«Перемещение», объекты СБ3 и СБ5,
+ * пересчёт количества коэффициентом в единицу витрины), но с разрезом
+ * по позиции 1С, типу документа и объекту.
+ * Возвращает [[материал, МОЛ, позиция 1С, группа 1С, документ, объект,
+ *              единица, количество, сумма], …].
+ */
+function buildMat1cDetail_(ss) {
+  var units = m1cOurUnits_(ss);
+  var shMap = ss.getSheetByName(CONFIG.SHEET_MAP1C);
+  var map = {};
+  if (shMap && shMap.getLastRow() > 1) {
+    var dm = shMap.getRange(2, 1, shMap.getLastRow() - 1, 9).getValues();
+    for (var i = 0; i < dm.length; i++) {
+      var mt = m1cText_(dm[i][6]);
+      if (!mt || mt === CONFIG.M1C_SKIP) continue;
+      map[m1cText_(dm[i][0]) + '|' + m1cText_(dm[i][1]) + '|' + m1cText_(dm[i][2])] =
+        { mat: mt, coef: m1cNum_(dm[i][7]) };
+    }
+  }
+  var sh = ss.getSheetByName(CONFIG.SHEET_M1C);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  var docOk = {}, objOk = {};
+  CONFIG.M1C_DOCS.forEach(function (d) { docOk[d] = true; });
+  CONFIG.M1C_OBJECTS.forEach(function (o) { objOk[o] = true; });
+
+  var agg = {};
+  for (var r = 1; r < data.length; r++) {
+    var row = data[r];
+    var mol = m1cMol_(String(row[idx[CONFIG.M1C_MOL]] || '').trim());
+    if (!mol) continue;
+    var doc = String(row[idx[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0];
+    if (!docOk[doc]) continue;
+    var obj = m1cText_(row[idx[CONFIG.M1C_OBJ]]);
+    if (!objOk[obj]) continue;
+    var nom = m1cText_(row[idx[CONFIG.M1C_NOM]]);
+    var buh = m1cText_(row[idx[CONFIG.M1C_BUH]]);
+    var unit = m1cText_(row[idx[CONFIG.M1C_UNIT]]);
+    var hit = map[nom + '|' + buh + '|' + unit];
+    if (!hit) continue;
+    var qty = m1cNum_(row[idx[CONFIG.M1C_QTY]]);
+    var sum = m1cNum_(row[idx[CONFIG.M1C_SUM]]);
+    var ourUnit = units[m1cNorm_(hit.mat)] || '';
+    var outUnit = unit, outQty = qty;
+    if (hit.coef) { outQty = qty * hit.coef; outUnit = ourUnit || unit; }
+    else if (ourUnit && m1cSameUnit_(unit, ourUnit)) { outUnit = ourUnit; }
+    var key = hit.mat + '|' + mol + '|' + buh + '|' + doc + '|' + obj + '|' +
+              m1cUnitClass_(outUnit);
+    if (!agg[key]) {
+      agg[key] = { mat: hit.mat, mol: mol, buh: buh, nom: nom, doc: doc, obj: obj,
+                   unit: outUnit, qty: 0, sum: 0 };
+    }
+    agg[key].qty += outQty;
+    agg[key].sum += sum;
+  }
+  var out = [];
+  Object.keys(agg).forEach(function (k) {
+    var a = agg[k];
+    if (!a.qty && !a.sum) return;
+    out.push([a.mat, a.mol, a.buh, a.nom, a.doc, a.obj, a.unit,
+              Math.round(a.qty * 100) / 100, Math.round(a.sum)]);
   });
   return out;
 }

@@ -208,6 +208,10 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   «Выполнено натурально» — `cell[16]` бюджета (объём D × процент готовности V,
   `buildBudget_`/`maxReady`/`pctScale`, кэш `budget_v30`), фронт —
   `molWorkVolumes(mol, 16)`/`allFactVolumes`;
+  расшифровка поставки по клику — `openSupplyModal`/`loadMat1cDetail`/`objQueue`,
+  `state.mat1cDet`, ячейки с `data-supmat`/`data-supmol`/`data-supname` и классом
+  `sup-click`, обработчики в начале кликов `#mol-screen` и `#materials-screen`;
+  бэкенд `buildMat1cDetail_` + `action=mat1cDetail` + `CACHE_M1CD` (чанкованный);
   проверка «Единицы 1С» — `renderCheckUnits`/`loadMat1cUnits`/`state.mat1cUnits`/
   `unitsOpen`, пункт `check-units` в `#sb-checks` и в `CHECK_SCREENS`, бейдж
   `badge-check-units`, обработка клика — в начале обработчика `#check-screen`;

@@ -429,6 +429,9 @@
   table.check.mbud td.num, table.check.mbud th.num { white-space: nowrap; }
   table.check.mbud thead tr.sub th { background: #edf2fb; font-weight: 600; }
   table.check.mbud th.bsep, table.check.mbud td.bsep { border-left: 2px solid var(--border); }
+  /* Число поставки 1С кликабельно — открывает расшифровку (09.09.2026). */
+  td.sup-click { cursor: pointer; color: var(--accent); text-decoration: underline dotted; }
+  td.sup-click:hover { background: #eef2f8; }
   /* Таблица материалов МОЛ (09.09.2026): шапка в два ряда — Модель · Личный
      кабинет · 1С. ⚠️ Ширины — на ячейках ПЕРВОГО ряда (см. предупреждение
      у таблицы бюджета выше), иначе при table-layout: fixed их не видно. */
@@ -1003,6 +1006,8 @@ const state = {
   mat1c: null,                 // поставка материалов по 1С (action=mat1c, 09.09.2026)
   mat1cStatus: 'idle',         // idle | loading | ready | error
   mat1cInfo: null,             // сколько позиций 1С не сопоставлено с материалами витрины
+  mat1cDet: null,              // расшифровка поставки 1С по позициям (09.09.2026)
+  mat1cDetStatus: 'idle',      // idle | loading | ready | error
   mat1cUnits: null,            // материалы, где позиции 1С в разных единицах (09.09.2026)
   mat1cUnitsStatus: 'idle',    // idle | loading | ready | error
   unitsOpen: new Set(),        // раскрытые материалы в проверке «Единицы 1С»
@@ -2925,6 +2930,117 @@ async function loadMat1c() {
  * нельзя. Экран показывает такие материалы и позиции, из-за которых так вышло,
  * — чтобы поправить связку в листе «Сопоставление_1С».
  */
+/**
+ * Расшифровка поставки 1С (09.09.2026): из чего сложилось число в колонке
+ * «Поставка + перемещение». Грузится один раз при первом клике по ячейке
+ * (`action=mat1cDetail`, кэш на сервере 6 часов), дальше окна открываются сразу.
+ */
+async function loadMat1cDetail() {
+  state.mat1cDetStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=mat1cDetail&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.mat1cDet = json.detail || [];
+    state.mat1cDetStatus = 'ready';
+  } catch (e) {
+    state.mat1cDetStatus = 'error';
+  }
+}
+
+/** Очередь объекта 1С: «Отделка СБ3»/«Сити Бэй 3»/«СБ3» → СБ3, пятая очередь → СБ5. */
+function objQueue(name) {
+  const s = norm(name);
+  if (s.indexOf('5') >= 0) return 'СБ5';
+  if (s.indexOf('3') >= 0) return 'СБ3';
+  return name || '— не указан —';
+}
+
+/**
+ * Окно «Поставка по 1С» для одного материала (и одного МОЛ, если открыли
+ * с вкладки «МОЛ»). Показывает три разреза: по типу документа (поступление
+ * и перемещение), по очереди стройки (СБ3/СБ5) и по позициям 1С.
+ */
+async function openSupplyModal(matKeyValue, mol, title) {
+  document.getElementById('modal-title').textContent = 'Поставка по 1С';
+  document.getElementById('modal-sub').textContent =
+    title + (mol ? ' · ' + mol : ' · все МОЛ');
+  document.getElementById('modal-body').innerHTML =
+    '<div class="side-note">Загружаю расшифровку…</div>';
+  document.getElementById('modal-overlay').style.display = 'flex';
+  if (state.mat1cDetStatus === 'idle' || state.mat1cDetStatus === 'error') {
+    await loadMat1cDetail();
+  }
+  if (state.mat1cDetStatus !== 'ready') {
+    document.getElementById('modal-body').innerHTML =
+      '<div class="side-note">Не удалось загрузить расшифровку. Попробуйте ещё раз.</div>';
+    return;
+  }
+  // [материал, МОЛ, позиция 1С, группа 1С, документ, объект, единица, кол-во, сумма]
+  const rows = (state.mat1cDet || []).filter(r =>
+    matKey(r[0]) === matKeyValue && (!mol || r[1] === mol));
+  if (!rows.length) {
+    document.getElementById('modal-body').innerHTML =
+      '<div class="side-note">По этому материалу строк 1С не нашлось.</div>';
+    return;
+  }
+  // Количество складываем только внутри одной единицы — как и в самой таблице.
+  const sumBy = keyFn => {
+    const m = new Map();
+    rows.forEach(r => {
+      const k = keyFn(r);
+      if (!m.has(k)) m.set(k, { units: new Map(), sum: 0, n: 0 });
+      const o = m.get(k);
+      o.units.set(r[6], (o.units.get(r[6]) || 0) + (r[7] || 0));
+      o.sum += r[8] || 0;
+      o.n++;
+    });
+    return m;
+  };
+  const qtyText = units => {
+    const parts = [];
+    units.forEach((q, u) => { if (q) parts.push(fmtQ(q) + ' ' + u); });
+    return parts.join(', ');
+  };
+  const block = (head, map, col) => {
+    const items = [...map.entries()].sort((a, b) => b[1].sum - a[1].sum);
+    return '<table class="check"><thead><tr><th>' + escapeHtml(col) + '</th>' +
+      '<th class="num">Позиций</th><th class="num">Количество</th>' +
+      '<th class="num">Сумма, руб</th></tr></thead><tbody>' +
+      items.map(([k, o]) => '<tr><td>' + escapeHtml(k) + '</td>' +
+        '<td class="num">' + o.n + '</td>' +
+        '<td class="num">' + escapeHtml(qtyText(o.units)) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtR(o.sum)) + '</td></tr>').join('') +
+      '</tbody></table>';
+  };
+  const total = sumBy(() => 'всего').get('всего');
+  const html =
+    '<div class="side-note">Всего по 1С: ' + escapeHtml(qtyText(total.units)) +
+      ' на ' + escapeHtml(fmtR(total.sum)) + ' руб</div>' +
+    '<div class="check-head" style="margin-top:14px">Документы</div>' +
+    block('Документы', sumBy(r => r[4]), 'Тип документа') +
+    '<div class="check-head" style="margin-top:18px">Очередь</div>' +
+    block('Очередь', sumBy(r => objQueue(r[5])), 'Очередь') +
+    '<div class="check-head" style="margin-top:18px">Объекты 1С</div>' +
+    block('Объекты', sumBy(r => r[5]), 'Объект строительства') +
+    (mol ? '' : '<div class="check-head" style="margin-top:18px">МОЛ</div>' +
+      block('МОЛ', sumBy(r => r[1]), 'МОЛ')) +
+    '<div class="check-head" style="margin-top:18px">Позиции 1С</div>' +
+    '<table class="check"><thead><tr><th>Позиция 1С</th>' +
+    '<th class="num">Группа 1С</th><th class="num">Документ</th>' +
+    '<th class="num">Объект</th><th class="num">Количество</th>' +
+    '<th class="num">Сумма, руб</th></tr></thead><tbody>' +
+    rows.slice().sort((a, b) => (b[8] || 0) - (a[8] || 0))
+      .map(r => '<tr><td>' + escapeHtml(r[2]) + '</td>' +
+        '<td class="num">' + escapeHtml(r[3]) + '</td>' +
+        '<td class="num">' + escapeHtml(r[4]) + '</td>' +
+        '<td class="num">' + escapeHtml(r[5]) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtQ(r[7]) + ' ' + r[6]) + '</td>' +
+        '<td class="num">' + escapeHtml(fmtR(r[8])) + '</td></tr>').join('') +
+    '</tbody></table>';
+  document.getElementById('modal-body').innerHTML = html;
+}
+
 /** Хвост предупреждения: сколько позиций 1С осознанно помечены как не материал. */
 function mat1cSkipNote() {
   const i = state.mat1cInfo;
@@ -3239,8 +3355,10 @@ function renderMol() {
             '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
             '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
-            '<td class="num bsep sup1c">' +
-              escapeHtml(supCell(r.sup && r.sup.units, r.unit)) + '</td>' +
+            '<td class="num bsep sup1c' + (r.sup ? ' sup-click' : '') + '"' +
+              (r.sup ? ' data-supmat="' + escapeHtml(r.k) + '" data-supmol="' +
+                escapeHtml(mol) + '" data-supname="' + escapeHtml(r.name) + '"' : '') +
+              '>' + escapeHtml(supCell(r.sup && r.sup.units, r.unit)) + '</td>' +
             '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.sup ? r.sup.sum : 0)) +
             '</td></tr>').join('') +
@@ -3342,7 +3460,9 @@ function renderMaterials() {
       '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
       '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
-      '<td class="num bsep sup1c">' +
+      '<td class="num bsep sup1c' + (supTotal.has(r.k) ? ' sup-click' : '') + '"' +
+        (supTotal.has(r.k) ? ' data-supmat="' + escapeHtml(r.k) +
+          '" data-supname="' + escapeHtml(r.name) + '"' : '') + '>' +
         escapeHtml(supCellM(sup1c(r.k).units, r.unit)) + '</td>' +
       '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(sup1c(r.k).sum)) + '</td></tr>';
@@ -5836,6 +5956,12 @@ document.querySelectorAll('.sb-item').forEach(el => {
 // Вкладка «Материалы» (28.08.2026): клик по строке материала раскрывает
 // расшифровку по работам, повторный клик — сворачивает.
 document.getElementById('materials-screen').addEventListener('click', e => {
+  // Клик по числу поставки — расшифровка по позициям 1С (09.09.2026).
+  const sup1cCell = e.target.closest('[data-supmat]');
+  if (sup1cCell) {
+    openSupplyModal(sup1cCell.dataset.supmat, '', sup1cCell.dataset.supname || '');
+    return;
+  }
   const tr = e.target.closest('tr.mrow');
   if (!tr) return;
   state.matOpen = state.matOpen === tr.dataset.mat ? null : tr.dataset.mat;
@@ -5844,6 +5970,12 @@ document.getElementById('materials-screen').addEventListener('click', e => {
 
 // Вкладка «МОЛ» (28.08.2026): сворачиваются и блоки МОЛ, и разделы внутри них.
 document.getElementById('mol-screen').addEventListener('click', e => {
+  // Клик по числу поставки — расшифровка по позициям 1С (09.09.2026).
+  const sup = e.target.closest('[data-supmat]');
+  if (sup) {
+    openSupplyModal(sup.dataset.supmat, sup.dataset.supmol || '', sup.dataset.supname || '');
+    return;
+  }
   const sec = e.target.closest('[data-sec]');
   if (sec) {
     const k = sec.dataset.sec;
