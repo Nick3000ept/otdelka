@@ -3113,6 +3113,7 @@ function renderMol() {
 function renderMaterials() {
   const el = document.getElementById('materials-screen');
   if (state.writeoffStatus === 'idle') loadWriteoff();
+  if (state.mat1cStatus === 'idle') loadMat1c();
   const head = '<div class="check-head">Материалы</div>';
   if (!(state.expenses || []).length) {
     el.innerHTML = head + '<div class="side-note">Данные листа «Расходы» загружаются…</div>';
@@ -3125,12 +3126,44 @@ function renderMaterials() {
     const k = matKey(r[1]);
     offTotal.set(k, (offTotal.get(k) || 0) + (r[4] || 0));
   });
+  // Поставка по 1С (09.09.2026) — здесь по ВСЕМ МОЛ сразу, ключ тот же matKey.
+  // Количество копим по единицам 1С (складывать штуки с м² нельзя), деньги — одним
+  // числом. Правила отбора строк 1С — на бэкенде (см. buildMat1c_).
+  const supTotal = new Map();
+  (state.mat1c || []).forEach(r => {
+    const k = matKey(r[0]);
+    if (!supTotal.has(k)) supTotal.set(k, { units: new Map(), sum: 0,
+      name: matTitle(k, r[0]),
+      unit: (state.unitByMaterial && state.unitByMaterial.get(norm(r[0]))) || '' });
+    const o = supTotal.get(k);
+    o.units.set(r[2], (o.units.get(r[2]) || 0) + (r[3] || 0));
+    o.sum += r[4] || 0;
+  });
+  const supCellM = (units, ourUnit) => {
+    if (!units || !units.size) return '';
+    const parts = [];
+    units.forEach((q, u) => {
+      if (!q) return;
+      parts.push(fmtQ(q) + (norm(u) === norm(ourUnit) ? '' : ' ' + u));
+    });
+    return parts.join(', ');
+  };
   const calc = buildMaterialCalc(null, allFactVolumes());
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
     .filter(r => r.cost || r.vol)
     .sort((a, b) => b.cost - a.cost);
+  // Материал есть в поставке 1С, но не в модели — строка с пустой «Моделью»
+  // (расшифровывать по работам нечего, works пустой).
+  supTotal.forEach((o, k) => {
+    if (calc.has(k)) return;
+    list.push({ k, name: o.name, unit: o.unit, vol: 0, done: 0, cost: 0, works: [] });
+  });
   const total = list.reduce((s, r) => s + r.cost, 0);
+  // Материал без поставки — пустой объект, чтобы не проверять null в каждой ячейке.
+  const sup1c = k => supTotal.get(k) || { units: null, sum: 0 };
+  // Деньги 1С складываются, количества — нет (единицы разные).
+  const total1c = list.reduce((s, r) => s + sup1c(r.k).sum, 0);
   const open = state.matOpen;
   let body = '';
   list.forEach(r => {
@@ -3138,15 +3171,18 @@ function renderMaterials() {
     body += '<tr class="mrow' + (isOpen ? ' open' : '') + '" data-mat="' + escapeHtml(r.k) + '">' +
       '<td><span class="chev">' + (isOpen ? '▾' : '▸') + '</span> ' + escapeHtml(r.name) + '</td>' +
       '<td>' + escapeHtml(r.unit) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+      '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>';
+      '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td>' +
+      '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
+      '<td class="num bsep sup1c">' +
+        escapeHtml(supCellM(sup1c(r.k).units, r.unit)) + '</td>' +
+      '<td class="num">' + escapeHtml(fmtR(sup1c(r.k).sum)) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="7">' +
+    body += '<tr class="mdetail"><td colspan="9">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
@@ -3164,17 +3200,37 @@ function renderMaterials() {
         '<td class="num">' + escapeHtml(fmtR(w.cost)) + '</td></tr>').join('') +
       '</tbody></table></td></tr>';
   });
-  const tbl = '<table class="check mtab"><thead><tr>' +
-    '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
-    '<th class="num">Объем итого по модели</th>' +
-    '<th class="num">Выполнено натурально</th>' +
-    '<th class="num">Остаток</th>' +
-    '<th class="num">К списанию ЛК</th>' +
-    '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
-    body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
-    '<td class="num"></td><td class="num"></td><td class="num"></td>' +
-    '<td class="num">' + escapeHtml(fmtR(total)) + '</td></tr></tfoot></table>';
-  el.innerHTML = head + '<div class="bdetail-wrap">' + tbl + '</div>';
+  // Колонки сгруппированы так же, как на вкладке «МОЛ» (просьба 09.09.2026).
+  const tbl = '<table class="check mtab mmat"><thead>' +
+    '<tr><th rowspan="2">Материал</th>' +
+    '<th rowspan="2" class="c-unit">Ед. изм</th>' +
+    '<th colspan="4" class="bsep grphead g-model">Модель</th>' +
+    '<th class="bsep grphead g-lk">Личный кабинет</th>' +
+    '<th colspan="2" class="bsep grphead g-1c">1С</th></tr>' +
+    '<tr class="sub"><th class="num bsep">Объем итого</th>' +
+    '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
+    '<th class="num">Стоимость итого, руб</th>' +
+    '<th class="num bsep">К списанию</th>' +
+    '<th class="num bsep">Поставка + перемещение</th>' +
+    '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
+    body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
+    '<td class="num"></td><td class="num"></td>' +
+    '<td class="num">' + escapeHtml(fmtR(total)) + '</td>' +
+    '<td class="num bsep"></td><td class="num bsep"></td>' +
+    '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td></tr></tfoot></table>';
+  // Та же оговорка, что и на «МОЛ»: часть позиций 1С ещё не связана с материалами.
+  let note1c = '';
+  if (state.mat1cStatus === 'loading') {
+    note1c = '<div class="side-note">Поставка по 1С загружается…</div>';
+  } else if (state.mat1cStatus === 'error') {
+    note1c = '<div class="side-note">Поставку по 1С загрузить не удалось.</div>';
+  } else if (state.mat1cStatus === 'ready' && state.mat1cInfo && state.mat1cInfo.unmappedRows) {
+    note1c = '<div class="side-note">Поставка по 1С: не сопоставлено ' +
+      escapeHtml(fmtInt(state.mat1cInfo.unmappedRows)) + ' строк 1С на ' +
+      escapeHtml(fmtR(state.mat1cInfo.unmappedSum)) + ' руб — эти позиции в колонки ' +
+      '«1С» не вошли. Связка названий задаётся в листе «Сопоставление_1С».</div>';
+  }
+  el.innerHTML = head + note1c + '<div class="bdetail-wrap">' + tbl + '</div>';
 }
 
 /**
