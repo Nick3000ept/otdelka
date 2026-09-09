@@ -212,6 +212,11 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   `unitsOpen`, пункт `check-units` в `#sb-checks` и в `CHECK_SCREENS`, бейдж
   `badge-check-units`, обработка клика — в начале обработчика `#check-screen`;
   бэкенд `buildMat1cUnits_` + `action=mat1cUnits` + `CACHE_M1CU`;
+  пересчёт в единицы витрины — `m1cOurUnits_`/`m1cNorm_`/`m1cSameUnit_` и колонка
+  «Коэф. в ед. витрины» (9-я) листа сопоставления; `action=map1cRows` — прочитать
+  лист целиком; флаги `overwrite`/`reset` у doPost `syncMap1c`;
+  счётчики ответа mat1c: `unmappedRows/Sum` и отдельно `skipRows/Sum`
+  (услуги и инструмент), на фронте — `mat1cSkipNote`;
   та же шапка и те же колонки 1С в `renderMaterials` (`supTotal`/`supCellM`/
   `sup1c`/`total1c`, colspan расшифровки 9, материалы «только из 1С» дописываются
   в `list`),

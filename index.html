@@ -2894,6 +2894,7 @@ async function loadMat1c() {
     state.mat1c = json.mat1c || [];
     state.mat1cInfo = { unmappedSum: json.unmappedSum || 0,
                         unmappedRows: json.unmappedRows || 0,
+                        skipRows: json.skipRows || 0, skipSum: json.skipSum || 0,
                         mapped: json.mapped || 0 };
     state.mat1cStatus = 'ready';
   } catch (e) {
@@ -2910,6 +2911,14 @@ async function loadMat1c() {
  * нельзя. Экран показывает такие материалы и позиции, из-за которых так вышло,
  * — чтобы поправить связку в листе «Сопоставление_1С».
  */
+/** Хвост предупреждения: сколько позиций 1С осознанно помечены как не материал. */
+function mat1cSkipNote() {
+  const i = state.mat1cInfo;
+  if (!i || !i.skipRows) return '';
+  return ' (ещё ' + fmtInt(i.skipRows) + ' строк на ' + fmtR(i.skipSum) +
+    ' руб помечены как услуги и инструмент — они не материалы модели)';
+}
+
 async function loadMat1cUnits() {
   state.mat1cUnitsStatus = 'loading';
   try {
@@ -2933,10 +2942,12 @@ function renderCheckUnits() {
   const head = '<div class="check-head">Единицы 1С: материалов с разными единицами — ' +
     mixed.length + '</div>' +
     '<div class="check-desc">Материалы витрины, в которые сопоставлены позиции 1С ' +
-    'в РАЗНЫХ единицах измерения: их количество нельзя сложить в одно число, ' +
-    'поэтому в колонке «Поставка + перемещение» оно показано через запятую. ' +
-    'Клик по материалу — позиции 1С, из-за которых так вышло. Связка правится ' +
-    'в листе «Сопоставление_1С» таблицы.</div>';
+    'в РАЗНЫХ единицах измерения — уже после пересчёта коэффициентами. Их ' +
+    'количество нельзя сложить в одно число, поэтому в колонке «Поставка + ' +
+    'перемещение» оно показано через запятую. Лечится колонкой «Коэф. в ед. ' +
+    'витрины» в листе «Сопоставление_1С»: например лист 3000×1200 = 3,6 м², ' +
+    'профиль 3000 мм = 3 м.п. Клик по материалу — позиции 1С с их единицами ' +
+    'и коэффициентами.</div>';
   if (state.mat1cUnitsStatus === 'loading' || state.mat1cUnitsStatus === 'idle') {
     el.innerHTML = head + '<div class="side-note">Проверка считается…</div>';
     return;
@@ -2950,7 +2961,8 @@ function renderCheckUnits() {
   const blocks = mixed.map(([mat, rows]) => {
     const byUnit = new Map();
     rows.forEach(r => {
-      const u = r[2] || '(единица не указана)';
+      // r[6] — единица ПОСЛЕ пересчёта коэффициентом (09.09.2026).
+      const u = r[6] || r[2] || '(единица не указана)';
       if (!byUnit.has(u)) byUnit.set(u, { n: 0, qty: 0, sum: 0 });
       const o = byUnit.get(u);
       o.n++; o.qty += r[3] || 0; o.sum += r[4] || 0;
@@ -2998,12 +3010,15 @@ function renderCheckUnits() {
           '<td class="num">' + escapeHtml(fmtR(b.sum)) + '</td></tr>' +
           (open ? '<tr class="mdetail"><td colspan="5">' +
             '<table class="check inner"><thead><tr><th>Позиция 1С</th>' +
-            '<th class="num">Группа 1С</th><th class="num">Ед. изм</th>' +
+            '<th class="num">Группа 1С</th><th class="num">Ед. изм 1С</th>' +
+            '<th class="num">Коэф.</th><th class="num">Ед. после пересчёта</th>' +
             '<th class="num">Количество</th><th class="num">Сумма, руб</th>' +
             '</tr></thead><tbody>' +
             b.rows.map(r => '<tr><td>' + escapeHtml(r[1]) + '</td>' +
               '<td class="num">' + escapeHtml(r[0]) + '</td>' +
               '<td class="num">' + escapeHtml(r[2]) + '</td>' +
+              '<td class="num">' + escapeHtml(r[5] === '' ? '' : String(r[5])) + '</td>' +
+              '<td class="num">' + escapeHtml(r[6] || '') + '</td>' +
               num(r[3]) +
               '<td class="num">' + escapeHtml(fmtR(r[4])) + '</td></tr>').join('') +
             '</tbody></table></td></tr>' : '');
@@ -3012,9 +3027,9 @@ function renderCheckUnits() {
   const tail = !single.length ? '' :
     '<div class="check-head" style="margin-top:22px">Единица одна, но не как в модели — ' +
     single.length + '</div>' +
-    '<div class="check-desc">Здесь количество сложить можно, но сравнивать с моделью ' +
-    'напрямую нельзя: например профиль в модели в метрах погонных, а в 1С — в штуках ' +
-    'по 3 метра.</div>' +
+    '<div class="check-desc">Здесь количество сложить можно, но с моделью оно не ' +
+    'сравнивается: единица 1С другая, а коэффициент пересчёта не задан. ' +
+    'Заполните «Коэф. в ед. витрины» в листе «Сопоставление_1С».</div>' +
     '<table class="check"><thead><tr><th class="cw-name">Материал</th>' +
     '<th class="num">Ед. изм модели</th><th class="num">Ед. изм 1С</th>' +
     '<th class="num">Поставка, кол-во</th></tr></thead><tbody>' +
@@ -3100,7 +3115,8 @@ function renderMol() {
     html += '<div class="side-note">Поставка по 1С: не сопоставлено ' +
       escapeHtml(fmtInt(state.mat1cInfo.unmappedRows)) + ' строк 1С на ' +
       escapeHtml(fmtR(state.mat1cInfo.unmappedSum)) + ' руб — эти позиции в колонку ' +
-      '«Поставка (1С)» не вошли. Связка названий задаётся в листе «Сопоставление_1С».</div>';
+      '«Поставка (1С)» не вошли' + mat1cSkipNote() +
+      '. Связка названий задаётся в листе «Сопоставление_1С».</div>';
   }
   MOL_LIST.forEach(mol => {
     const molOpen = state.molOpen.has(mol);
@@ -3366,7 +3382,8 @@ function renderMaterials() {
     note1c = '<div class="side-note">Поставка по 1С: не сопоставлено ' +
       escapeHtml(fmtInt(state.mat1cInfo.unmappedRows)) + ' строк 1С на ' +
       escapeHtml(fmtR(state.mat1cInfo.unmappedSum)) + ' руб — эти позиции в колонки ' +
-      '«1С» не вошли. Связка названий задаётся в листе «Сопоставление_1С».</div>';
+      '«1С» не вошли' + mat1cSkipNote() +
+      '. Связка названий задаётся в листе «Сопоставление_1С».</div>';
   }
   el.innerHTML = head + note1c + '<div class="bdetail-wrap">' + tbl + '</div>';
 }

@@ -539,13 +539,17 @@ function doPost(e) {
       // 1. Что уже вписано человеком — запоминаем по ключу «группа|позиция|единица».
       var shMapS = ssM.getSheetByName(CONFIG.SHEET_MAP1C);
       var keep = {};
-      if (shMapS && shMapS.getLastRow() > 1) {
-        var oldRows = shMapS.getRange(2, 1, shMapS.getLastRow() - 1, 8).getValues();
+      // reset: true — забыть прежнее содержимое ручных колонок и залить черновик
+      // начисто. Нужен при смене состава колонок листа; в обычной работе НЕ
+      // использовать: сотрёт то, что человек вписал руками (09.09.2026).
+      if (!body.reset && shMapS && shMapS.getLastRow() > 1) {
+        var oldRows = shMapS.getRange(2, 1, shMapS.getLastRow() - 1, 9).getValues();
         for (var oi = 0; oi < oldRows.length; oi++) {
-          var oMat = m1cText_(oldRows[oi][6]), oNote = m1cText_(oldRows[oi][7]);
-          if (!oMat && !oNote) continue;
+          var oMat = m1cText_(oldRows[oi][6]);
+          var oCoef = m1cText_(oldRows[oi][7]), oNote = m1cText_(oldRows[oi][8]);
+          if (!oMat && !oCoef && !oNote) continue;
           keep[m1cText_(oldRows[oi][0]) + '|' + m1cText_(oldRows[oi][1]) + '|' +
-               m1cText_(oldRows[oi][2])] = [oMat, oNote];
+               m1cText_(oldRows[oi][2])] = [oMat, oCoef, oNote];
         }
       }
       // 2. Черновик автосопоставления из тела запроса (для пустых строк).
@@ -554,7 +558,7 @@ function doPost(e) {
         for (var di = 0; di < body.draft.length; di++) {
           var dRow = body.draft[di] || [];
           draft[m1cText_(dRow[0]) + '|' + m1cText_(dRow[1]) + '|' + m1cText_(dRow[2])] =
-            [m1cText_(dRow[3]), m1cText_(dRow[4])];
+            [m1cText_(dRow[3]), m1cText_(dRow[4]), m1cText_(dRow[5])];
         }
       }
       // 3. Позиции 1С по нашим МОЛ (те же фильтры, что в buildMat1c_).
@@ -583,20 +587,29 @@ function doPost(e) {
       keys.sort(function (a, b) { return pos[b].sum - pos[a].sum; });
       var kept = 0, drafted = 0;
       var outRows = [['Группа 1С', 'Позиция 1С', 'Ед. изм 1С', 'Строк',
-                      'Количество всего', 'Сумма, руб', 'Материал витрины', 'Комментарий']];
+                      'Количество всего', 'Сумма, руб', 'Материал витрины',
+                      'Коэф. в ед. витрины', 'Комментарий']];
       for (var ki = 0; ki < keys.length; ki++) {
         var p = pos[keys[ki]];
-        var fill = keep[keys[ki]];
-        if (fill) kept++;
-        else if (draft[keys[ki]]) { fill = draft[keys[ki]]; drafted++; }
-        else fill = ['', ''];
+        // Слияние по полям: что человек уже вписал — сохраняем, пустые поля
+        // добираем из черновика (09.09.2026: иначе новый коэффициент никогда
+        // не попал бы в строки, где материал уже проставлен).
+        var was = keep[keys[ki]] || ['', '', ''];
+        var dr = draft[keys[ki]] || ['', '', ''];
+        // overwrite: true — черновик заменяет прежние значения (пересборка
+        // автосопоставления). По умолчанию ручные правки сильнее черновика.
+        var fill = body.overwrite
+          ? [dr[0] || was[0], dr[1] || was[1], dr[2] || was[2]]
+          : [was[0] || dr[0], was[1] || dr[1], was[2] || dr[2]];
+        if (was[0] || was[1] || was[2]) kept++;
+        if (!was[0] && dr[0]) drafted++;
         outRows.push([safeCell_(p.nom), safeCell_(p.buh), safeCell_(p.unit), p.n,
                       Math.round(p.qty * 100) / 100, Math.round(p.sum),
-                      safeCell_(fill[0]), safeCell_(fill[1])]);
+                      safeCell_(fill[0]), safeCell_(fill[1]), safeCell_(fill[2])]);
       }
       if (!shMapS) shMapS = ssM.insertSheet(CONFIG.SHEET_MAP1C);
       shMapS.clearContents();
-      shMapS.getRange(1, 1, outRows.length, 8).setValues(outRows);
+      shMapS.getRange(1, 1, outRows.length, 9).setValues(outRows);
       shMapS.setFrozenRows(1);
       CacheService.getScriptCache().remove(CACHE_M1C);
       return jsonOut_({ ok: true, positions: keys.length, kept: kept, drafted: drafted });
@@ -1095,12 +1108,31 @@ function doGet(e) {
       var m1 = buildMat1c_(ssM1);
       var payloadM = JSON.stringify({ ok: true, mat1c: m1.rows, mapped: m1.mapped,
                                       unmappedSum: m1.unmappedSum,
-                                      unmappedRows: m1.unmappedRows });
+                                      unmappedRows: m1.unmappedRows,
+                                      skipRows: m1.skipRows, skipSum: m1.skipSum });
       if (payloadM.length < 95000) cacheM.put(CACHE_M1C, payloadM, 21600);
       return ContentService.createTextOutput(payloadM)
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return jsonOut_({ ok: false, error: 'mat1c_failed', message: String(err) });
+    }
+  }
+
+  // Лист сопоставления как есть (09.09.2026) — для сверки и разбора руками.
+  // Наружу идут только названия позиций и связка, без данных 1С построчно.
+  if (action === 'map1cRows') {
+    try {
+      var ssMR = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var shMR = ssMR.getSheetByName(CONFIG.SHEET_MAP1C);
+      if (!shMR || shMR.getLastRow() < 2) return jsonOut_({ ok: true, rows: [] });
+      var dMR = shMR.getRange(2, 1, shMR.getLastRow() - 1, 9).getValues();
+      var outMR = dMR.map(function (r) {
+        return [m1cText_(r[0]), m1cText_(r[1]), m1cText_(r[2]),
+                m1cText_(r[6]), m1cText_(r[7]), m1cText_(r[8])];
+      });
+      return jsonOut_({ ok: true, rows: outMR });
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'map1cRows_failed', message: String(err) });
     }
   }
 
@@ -1544,15 +1576,25 @@ function readWriteoff_(ss) {
  * Наружу идёт агрегат: материал × МОЛ × единица → количество и сумма.
  */
 function buildMat1c_(ss) {
+  var units = m1cOurUnits_(ss);
   var shMap = ss.getSheetByName(CONFIG.SHEET_MAP1C);
-  var map = {};
+  var map = {}, skip = {};
   var mappedNames = {};
   if (shMap && shMap.getLastRow() > 1) {
-    var dm = shMap.getRange(2, 1, shMap.getLastRow() - 1, 7).getValues();
+    var dm = shMap.getRange(2, 1, shMap.getLastRow() - 1, 9).getValues();
     for (var i = 0; i < dm.length; i++) {
-      var mat = m1cText_(dm[i][6]);
-      if (!mat || mat === CONFIG.M1C_SKIP) continue;
-      map[m1cText_(dm[i][0]) + '|' + m1cText_(dm[i][1]) + '|' + m1cText_(dm[i][2])] = mat;
+        var mat = m1cText_(dm[i][6]);
+      if (mat === CONFIG.M1C_SKIP) {
+        // Помечено человеком как услуга/инструмент — в «не сопоставлено» не идёт.
+        skip[m1cText_(dm[i][0]) + '|' + m1cText_(dm[i][1]) + '|' + m1cText_(dm[i][2])] = true;
+        continue;
+      }
+      if (!mat) continue;
+      // Коэффициент переводит количество 1С в единицу витрины (лист 3000×1200
+      // = 3,6 м², профиль 3000 мм = 3 м.п.). Пусто — пересчёта нет; если при
+      // этом единицы совпадают, считаем коэффициент единицей (09.09.2026).
+      map[m1cText_(dm[i][0]) + '|' + m1cText_(dm[i][1]) + '|' + m1cText_(dm[i][2])] =
+        { mat: mat, coef: m1cNum_(dm[i][7]) };
       mappedNames[mat] = true;
     }
   }
@@ -1567,7 +1609,7 @@ function buildMat1c_(ss) {
   CONFIG.M1C_DOCS.forEach(function (d) { docOk[d] = true; });
   CONFIG.M1C_OBJECTS.forEach(function (o) { objOk[o] = true; });
 
-  var agg = {}, unmappedSum = 0, unmappedRows = 0;
+  var agg = {}, unmappedSum = 0, unmappedRows = 0, skipRows = 0, skipSum = 0;
   for (var r = 1; r < data.length; r++) {
     var row = data[r];
     var mol = m1cMol_(String(row[idx[CONFIG.M1C_MOL]] || '').trim());
@@ -1579,14 +1621,26 @@ function buildMat1c_(ss) {
     var unit = m1cText_(row[idx[CONFIG.M1C_UNIT]]);
     var qty = m1cNum_(row[idx[CONFIG.M1C_QTY]]);
     var sum = m1cNum_(row[idx[CONFIG.M1C_SUM]]);
-    var mat = map[nom + '|' + buh + '|' + unit];
-    if (!mat) {
-      if (qty || sum) { unmappedSum += sum; unmappedRows++; }
+    var posKey = nom + '|' + buh + '|' + unit;
+    var hit = map[posKey];
+    if (!hit) {
+      if (qty || sum) {
+        if (skip[posKey]) { skipSum += sum; skipRows++; }
+        else { unmappedSum += sum; unmappedRows++; }
+      }
       continue;
     }
-    var key = mat + '|' + mol + '|' + unit;
-    if (!agg[key]) agg[key] = { mat: mat, mol: mol, unit: unit, qty: 0, sum: 0 };
-    agg[key].qty += qty;
+    var mat = hit.mat;
+    // Приводим количество к единице витрины: явный коэффициент из листа либо
+    // единица уже наша. Иначе оставляем как есть — такие позиции видны
+    // в проверке «Единицы 1С» и в ячейке подписаны единицей 1С.
+    var ourUnit = units[m1cNorm_(mat)] || '';
+    var outUnit = unit, outQty = qty;
+    if (hit.coef) { outQty = qty * hit.coef; outUnit = ourUnit || unit; }
+    else if (ourUnit && m1cSameUnit_(unit, ourUnit)) { outUnit = ourUnit; }
+    var key = mat + '|' + mol + '|' + outUnit;
+    if (!agg[key]) agg[key] = { mat: mat, mol: mol, unit: outUnit, qty: 0, sum: 0 };
+    agg[key].qty += outQty;
     agg[key].sum += sum;
   }
   var out = Object.keys(agg).map(function (k) {
@@ -1594,6 +1648,7 @@ function buildMat1c_(ss) {
     return [a.mat, a.mol, a.unit, Math.round(a.qty * 100) / 100, Math.round(a.sum)];
   });
   return { rows: out, unmappedSum: Math.round(unmappedSum), unmappedRows: unmappedRows,
+           skipRows: skipRows, skipSum: Math.round(skipSum),
            mapped: Object.keys(mappedNames).length };
 }
 
@@ -1608,18 +1663,25 @@ function buildMat1c_(ss) {
 function buildMat1cUnits_(ss) {
   var sh = ss.getSheetByName(CONFIG.SHEET_MAP1C);
   if (!sh || sh.getLastRow() < 2) return [];
-  var d = sh.getRange(2, 1, sh.getLastRow() - 1, 7).getValues();
+  var units = m1cOurUnits_(ss);
+  var d = sh.getRange(2, 1, sh.getLastRow() - 1, 9).getValues();
   var byMat = {};
   for (var i = 0; i < d.length; i++) {
     var mat = m1cText_(d[i][6]);
     if (!mat || mat === CONFIG.M1C_SKIP) continue;
     var unit = m1cText_(d[i][2]);
     var qty = m1cNum_(d[i][4]), sum = m1cNum_(d[i][5]);
+    var coef = m1cNum_(d[i][7]);
+    var ourUnit = units[m1cNorm_(mat)] || '';
+    // Единица считается ПОСЛЕ пересчёта: позиция с коэффициентом приведена
+    // к единице витрины и проблемой уже не является (09.09.2026).
+    var effUnit = coef ? (ourUnit || unit) : unit;
     if (!byMat[mat]) byMat[mat] = { units: {}, rows: [] };
     // Пустые позиции (ни количества, ни денег) единицей не считаются — иначе
     // строка без единицы измерения одна помечала бы материал как проблемный.
-    if (qty || sum) byMat[mat].units[unit] = true;
-    byMat[mat].rows.push([m1cText_(d[i][0]), m1cText_(d[i][1]), unit, qty, sum]);
+    if (qty || sum) byMat[mat].units[m1cNorm_(effUnit).replace(/[\s.]/g, '')] = true;
+    byMat[mat].rows.push([m1cText_(d[i][0]), m1cText_(d[i][1]), unit, qty, sum,
+                          coef || '', effUnit]);
   }
   var out = [];
   Object.keys(byMat).forEach(function (mat) {
@@ -1635,6 +1697,37 @@ function buildMat1cUnits_(ss) {
     return sb - sa;
   });
   return out;
+}
+
+/** Единицы измерения материалов витрины: справочник «Материалы» (название → ед. изм). */
+function m1cOurUnits_(ss) {
+  var out = {};
+  var sh = ss.getSheetByName(CONFIG.SHEET_MATERIALS);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var d = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var idx = {};
+  d[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+  var cM = idx['Материал'], cU = idx['Ед. изм'];
+  if (cM === undefined || cU === undefined) return out;
+  for (var i = 1; i < d.length; i++) {
+    var name = m1cText_(d[i][cM]);
+    if (name) out[m1cNorm_(name)] = m1cText_(d[i][cU]);
+  }
+  return out;
+}
+
+/** Название для сравнения: без регистра, «ё» = «е», лишние пробелы убраны. */
+function m1cNorm_(v) {
+  return String(v == null ? '' : v).trim().toLowerCase()
+    .replace(/ё/g, 'е').replace(/\s+/g, ' ');
+}
+
+/** Одинаковые ли единицы: «м.п.» и «м п», «м2» и «м²» считаем одним и тем же. */
+function m1cSameUnit_(a, b) {
+  var f = function (v) {
+    return m1cNorm_(v).replace(/[\s.]/g, '').replace('²', '2').replace('³', '3');
+  };
+  return f(a) === f(b);
 }
 
 /** Значение ячейки 1С как текст: строка без пробелов по краям и без ведущего апострофа. */
