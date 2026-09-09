@@ -132,6 +132,7 @@ var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэт
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
 var CACHE_TUZ = 'tuzio_v1';
 var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотрудника вкладки «ТУЗИО» (31.08.2026); ответ маленький, обычный кэш, ключ = ФИО       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
+var CACHE_M1CU = 'mat1cu_v1';  // позиции 1С по материалам с РАЗНЫМИ единицами (проверка «Единицы 1С», 09.09.2026)
 var CACHE_M1C = 'mat1c_v1';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026); агрегат маленький — обычный кэш
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
@@ -141,6 +142,7 @@ function clearCache() {
   cache.remove(CACHE_FLOORS);
   cache.remove(CACHE_WO);
   cache.remove(CACHE_M1C);
+  cache.remove(CACHE_M1CU);
   var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
               CACHE_FACTREF + '_n', CACHE_AN + '_n', CACHE_TUZ + '_n'];
   for (var i = 0; i < 10; i++) {
@@ -1102,6 +1104,27 @@ function doGet(e) {
     }
   }
 
+  // Проверка «Единицы 1С» (09.09.2026): материалы витрины, в которые сопоставлены
+  // позиции 1С в РАЗНЫХ единицах — их количество складывать нельзя. Считается
+  // по листу «Сопоставление_1С» (маленький), отдаёт позиции с их единицами.
+  if (action === 'mat1cUnits') {
+    try {
+      var cacheU = CacheService.getScriptCache();
+      var cachedU = cacheU.get(CACHE_M1CU);
+      if (cachedU) {
+        return ContentService.createTextOutput(cachedU)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssU = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var payloadU = JSON.stringify({ ok: true, mixed: buildMat1cUnits_(ssU) });
+      if (payloadU.length < 95000) cacheU.put(CACHE_M1CU, payloadU, 21600);
+      return ContentService.createTextOutput(payloadU)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'mat1cUnits_failed', message: String(err) });
+    }
+  }
+
   // Вкладка «ТУЗИО» (31.08.2026): почасовые начисления рабочим по месяцам
   // и статьям бюджета. Лист «ТУЗИО_часы» большой (~59 тыс. строк) — наружу идут
   // только агрегаты, кэш кусками на 6 часов.
@@ -1572,6 +1595,46 @@ function buildMat1c_(ss) {
   });
   return { rows: out, unmappedSum: Math.round(unmappedSum), unmappedRows: unmappedRows,
            mapped: Object.keys(mappedNames).length };
+}
+
+/**
+ * Проверка «Единицы 1С» (09.09.2026). По листу «Сопоставление_1С» собирает
+ * материалы витрины, в которые сопоставлены позиции 1С в РАЗНЫХ единицах
+ * (например ГКЛ: часть позиций в м², часть в штуках) — складывать такие
+ * количества нельзя, и в колонке «Поставка + перемещение» они выводятся
+ * через запятую. Возвращает только проблемные материалы со списком их позиций:
+ * [[материал, [[группа, позиция, единица, количество, сумма], …]], …].
+ */
+function buildMat1cUnits_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_MAP1C);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var d = sh.getRange(2, 1, sh.getLastRow() - 1, 7).getValues();
+  var byMat = {};
+  for (var i = 0; i < d.length; i++) {
+    var mat = m1cText_(d[i][6]);
+    if (!mat || mat === CONFIG.M1C_SKIP) continue;
+    var unit = m1cText_(d[i][2]);
+    var qty = m1cNum_(d[i][4]), sum = m1cNum_(d[i][5]);
+    if (!byMat[mat]) byMat[mat] = { units: {}, rows: [] };
+    // Пустые позиции (ни количества, ни денег) единицей не считаются — иначе
+    // строка без единицы измерения одна помечала бы материал как проблемный.
+    if (qty || sum) byMat[mat].units[unit] = true;
+    byMat[mat].rows.push([m1cText_(d[i][0]), m1cText_(d[i][1]), unit, qty, sum]);
+  }
+  var out = [];
+  Object.keys(byMat).forEach(function (mat) {
+    if (Object.keys(byMat[mat].units).length < 2) return;
+    var rows = byMat[mat].rows.sort(function (a, b) { return b[4] - a[4]; });
+    out.push([mat, rows]);
+  });
+  // Сначала материалы, где на кону больше денег.
+  out.sort(function (a, b) {
+    var sa = 0, sb = 0;
+    a[1].forEach(function (r) { sa += r[4]; });
+    b[1].forEach(function (r) { sb += r[4]; });
+    return sb - sa;
+  });
+  return out;
 }
 
 /** Значение ячейки 1С как текст: строка без пробелов по краям и без ведущего апострофа. */

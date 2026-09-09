@@ -432,10 +432,11 @@
   /* Таблица материалов МОЛ (09.09.2026): шапка в два ряда — Модель · Личный
      кабинет · 1С. ⚠️ Ширины — на ячейках ПЕРВОГО ряда (см. предупреждение
      у таблицы бюджета выше), иначе при table-layout: fixed их не видно. */
-  table.check.mmat thead tr:first-child th:first-child { width: 26%; }
-  table.check.mmat th.grphead.g-model { width: 38%; }
+  table.check.mmat thead tr:first-child th:first-child { width: 28%; }
+  table.check.mmat th.grphead.g-model { width: 24%; }
   table.check.mmat th.grphead.g-lk { width: 11%; }
-  table.check.mmat th.grphead.g-1c { width: 19%; }
+  table.check.mmat th.grphead.g-1c { width: 13%; }
+  table.check.mmat th.grphead.g-cost { width: 18%; }
   table.check.mmat th.grphead {
     text-align: center; background: #edf2fb; border-bottom: 1px solid var(--border);
   }
@@ -837,6 +838,8 @@
         <span class="sb-badge" id="badge-check-formulas"></span></div>
       <div class="sb-item sb-sub" data-screen="check-changes">Изменения
         <span class="sb-badge" id="badge-check-changes"></span></div>
+      <div class="sb-item sb-sub" data-screen="check-units">Единицы 1С
+        <span class="sb-badge" id="badge-check-units"></span></div>
       <div class="sb-item sb-sub" data-screen="check-questions">Вопросы
         <span class="sb-badge" id="badge-check-questions"></span></div>
     </div>
@@ -1000,6 +1003,9 @@ const state = {
   mat1c: null,                 // поставка материалов по 1С (action=mat1c, 09.09.2026)
   mat1cStatus: 'idle',         // idle | loading | ready | error
   mat1cInfo: null,             // сколько позиций 1С не сопоставлено с материалами витрины
+  mat1cUnits: null,            // материалы, где позиции 1С в разных единицах (09.09.2026)
+  mat1cUnitsStatus: 'idle',    // idle | loading | ready | error
+  unitsOpen: new Set(),        // раскрытые материалы в проверке «Единицы 1С»
   tuzio: null,                 // почасовые начисления (action=tuzio, 31.08.2026)
   tuzioStatus: 'idle',         // idle | loading | ready | error
   tzMonth: null,               // выбранный месяц на «ТУЗИО» ('ГГГГ-ММ'); null = последний
@@ -2892,6 +2898,130 @@ async function loadMat1c() {
   if (state.screen === 'mol') renderMol();
 }
 
+/**
+ * Проверка «Единицы 1С» (09.09.2026). Количество поставки складывается только
+ * внутри одной единицы измерения: если в один материал витрины сопоставлены
+ * позиции 1С в разных единицах (ГКЛ в м² и в листах-штуках), в колонке
+ * «Поставка + перемещение» значения показываются через запятую, а сложить их
+ * нельзя. Экран показывает такие материалы и позиции, из-за которых так вышло,
+ * — чтобы поправить связку в листе «Сопоставление_1С».
+ */
+async function loadMat1cUnits() {
+  state.mat1cUnitsStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=mat1cUnits&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.mat1cUnits = json.mixed || [];
+    state.mat1cUnitsStatus = 'ready';
+  } catch (e) {
+    state.mat1cUnitsStatus = 'error';
+  }
+  updateCheckBadges();
+  if (state.screen === 'check-units') renderCheckUnits();
+}
+
+function renderCheckUnits() {
+  const el = document.getElementById('check-screen');
+  if (state.mat1cUnitsStatus === 'idle') loadMat1cUnits();
+  if (state.mat1cStatus === 'idle') loadMat1c();
+  const mixed = state.mat1cUnits || [];
+  const head = '<div class="check-head">Единицы 1С: материалов с разными единицами — ' +
+    mixed.length + '</div>' +
+    '<div class="check-desc">Материалы витрины, в которые сопоставлены позиции 1С ' +
+    'в РАЗНЫХ единицах измерения: их количество нельзя сложить в одно число, ' +
+    'поэтому в колонке «Поставка + перемещение» оно показано через запятую. ' +
+    'Клик по материалу — позиции 1С, из-за которых так вышло. Связка правится ' +
+    'в листе «Сопоставление_1С» таблицы.</div>';
+  if (state.mat1cUnitsStatus === 'loading' || state.mat1cUnitsStatus === 'idle') {
+    el.innerHTML = head + '<div class="side-note">Проверка считается…</div>';
+    return;
+  }
+  if (state.mat1cUnitsStatus === 'error') {
+    el.innerHTML = head + '<div class="side-note">Не удалось посчитать проверку. ' +
+      'Обновите страницу.</div>';
+    return;
+  }
+  // Итоги по каждому материалу: сколько позиций и денег в каждой единице.
+  const blocks = mixed.map(([mat, rows]) => {
+    const byUnit = new Map();
+    rows.forEach(r => {
+      const u = r[2] || '(единица не указана)';
+      if (!byUnit.has(u)) byUnit.set(u, { n: 0, qty: 0, sum: 0 });
+      const o = byUnit.get(u);
+      o.n++; o.qty += r[3] || 0; o.sum += r[4] || 0;
+    });
+    return { mat, rows, byUnit,
+             ourUnit: (state.unitByMaterial && state.unitByMaterial.get(norm(mat))) || '',
+             sum: rows.reduce((s, r) => s + (r[4] || 0), 0) };
+  });
+  // Вторая половина проверки: единица одна, но не та, что в модели.
+  const single = [];
+  const byMat = new Map();
+  (state.mat1c || []).forEach(r => {
+    if (!byMat.has(r[0])) byMat.set(r[0], new Map());
+    const m = byMat.get(r[0]);
+    m.set(r[2], (m.get(r[2]) || 0) + (r[3] || 0));
+  });
+  const mixedNames = new Set(mixed.map(([m]) => m));
+  byMat.forEach((units, mat) => {
+    if (mixedNames.has(mat) || units.size !== 1) return;
+    const u = [...units.keys()][0];
+    const our = (state.unitByMaterial && state.unitByMaterial.get(norm(mat))) || '';
+    if (norm(u).replace(/\s|\./g, '') === norm(our).replace(/\s|\./g, '')) return;
+    single.push({ mat, our, unit: u, qty: units.get(u) });
+  });
+  single.sort((a, b) => b.qty - a.qty);
+
+  const num = v => '<td class="num">' + escapeHtml(fmtQ(v)) + '</td>';
+  const table = !blocks.length
+    ? '<div class="side-note">Разных единиц внутри одного материала нет</div>'
+    : '<table class="check"><thead><tr><th class="cw-name">Материал</th>' +
+      '<th class="num">Ед. изм модели</th><th>Единицы 1С</th>' +
+      '<th class="num">Позиций 1С</th><th class="num">Сумма, руб</th>' +
+      '</tr></thead><tbody>' +
+      blocks.map(b => {
+        const open = state.unitsOpen.has(b.mat);
+        const units = [...b.byUnit.entries()]
+          .map(([u, o]) => escapeHtml(u) + ': ' + escapeHtml(fmtQ(o.qty)) +
+               ' (' + o.n + ')').join(' · ');
+        return '<tr class="sect" data-unitmat="' + escapeHtml(b.mat) + '">' +
+          '<td><span class="chev">' + (open ? '&#9662;' : '&#9656;') + '</span> ' +
+          escapeHtml(b.mat) + '</td>' +
+          '<td class="num">' + escapeHtml(b.ourUnit) + '</td>' +
+          '<td>' + units + '</td>' +
+          '<td class="num">' + b.rows.length + '</td>' +
+          '<td class="num">' + escapeHtml(fmtR(b.sum)) + '</td></tr>' +
+          (open ? '<tr class="mdetail"><td colspan="5">' +
+            '<table class="check inner"><thead><tr><th>Позиция 1С</th>' +
+            '<th class="num">Группа 1С</th><th class="num">Ед. изм</th>' +
+            '<th class="num">Количество</th><th class="num">Сумма, руб</th>' +
+            '</tr></thead><tbody>' +
+            b.rows.map(r => '<tr><td>' + escapeHtml(r[1]) + '</td>' +
+              '<td class="num">' + escapeHtml(r[0]) + '</td>' +
+              '<td class="num">' + escapeHtml(r[2]) + '</td>' +
+              num(r[3]) +
+              '<td class="num">' + escapeHtml(fmtR(r[4])) + '</td></tr>').join('') +
+            '</tbody></table></td></tr>' : '');
+      }).join('') + '</tbody></table>';
+
+  const tail = !single.length ? '' :
+    '<div class="check-head" style="margin-top:22px">Единица одна, но не как в модели — ' +
+    single.length + '</div>' +
+    '<div class="check-desc">Здесь количество сложить можно, но сравнивать с моделью ' +
+    'напрямую нельзя: например профиль в модели в метрах погонных, а в 1С — в штуках ' +
+    'по 3 метра.</div>' +
+    '<table class="check"><thead><tr><th class="cw-name">Материал</th>' +
+    '<th class="num">Ед. изм модели</th><th class="num">Ед. изм 1С</th>' +
+    '<th class="num">Поставка, кол-во</th></tr></thead><tbody>' +
+    single.map(r => '<tr><td>' + escapeHtml(r.mat) + '</td>' +
+      '<td class="num">' + escapeHtml(r.our) + '</td>' +
+      '<td class="num">' + escapeHtml(r.unit) + '</td>' +
+      num(r.qty) + '</tr>').join('') + '</tbody></table>';
+
+  el.innerHTML = head + table + tail;
+}
+
 // Объёмы дробные — два знака, ноль показываем пустой ячейкой.
 const fmtQ = v => v ? new Intl.NumberFormat('ru-RU',
   { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) : '';
@@ -3060,31 +3190,31 @@ function renderMol() {
         html += '<div class="bdetail-wrap"><table class="check mtab mmat"><thead>' +
           '<tr><th rowspan="2">Материал</th>' +
           '<th rowspan="2" class="c-unit">Ед. изм</th>' +
-          '<th colspan="4" class="bsep grphead g-model">Модель</th>' +
+          '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
           '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-          '<th colspan="2" class="bsep grphead g-1c">1С</th></tr>' +
+          '<th class="bsep grphead g-1c">1С</th>' +
+          '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
           '<tr class="sub"><th class="num bsep">Объем итого</th>' +
-          '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
-          '<th class="num">Стоимость итого, руб</th>' +
+          '<th class="num">Выполнено натурально</th>' +
           '<th class="num bsep">К списанию</th>' +
           '<th class="num bsep">Поставка + перемещение</th>' +
-          '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
+          '<th class="num bsep">Модель, руб</th>' +
+          '<th class="num">1С, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + escapeHtml(r.unit) + '</td>' +
             '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td>' +
             '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
             '<td class="num bsep sup1c">' +
               escapeHtml(supCell(r.sup && r.sup.units, r.unit)) + '</td>' +
+            '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.sup ? r.sup.sum : 0)) +
             '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
-          '<td class="num"></td><td class="num"></td>' +
-          '<td class="num">' + escapeHtml(fmtR(tCost)) + '</td>' +
+          '<td class="num"></td>' +
           '<td class="num bsep"></td>' +
           '<td class="num bsep"></td>' +
+          '<td class="num bsep">' + escapeHtml(fmtR(tCost)) + '</td>' +
           '<td class="num">' + escapeHtml(fmtR(t1c)) +
           '</td></tr></tfoot></table></div>';
         // Поставку по единицам складывать нельзя — в «Итого» её не показываем.
@@ -3173,16 +3303,15 @@ function renderMaterials() {
       '<td>' + escapeHtml(r.unit) + '</td>' +
       '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td>' +
       '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       '<td class="num bsep sup1c">' +
         escapeHtml(supCellM(sup1c(r.k).units, r.unit)) + '</td>' +
+      '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(sup1c(r.k).sum)) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="9">' +
+    body += '<tr class="mdetail"><td colspan="8">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
@@ -3204,19 +3333,20 @@ function renderMaterials() {
   const tbl = '<table class="check mtab mmat"><thead>' +
     '<tr><th rowspan="2">Материал</th>' +
     '<th rowspan="2" class="c-unit">Ед. изм</th>' +
-    '<th colspan="4" class="bsep grphead g-model">Модель</th>' +
+    '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
     '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-    '<th colspan="2" class="bsep grphead g-1c">1С</th></tr>' +
+    '<th class="bsep grphead g-1c">1С</th>' +
+    '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
     '<tr class="sub"><th class="num bsep">Объем итого</th>' +
-    '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
-    '<th class="num">Стоимость итого, руб</th>' +
+    '<th class="num">Выполнено натурально</th>' +
     '<th class="num bsep">К списанию</th>' +
     '<th class="num bsep">Поставка + перемещение</th>' +
-    '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
+    '<th class="num bsep">Модель, руб</th>' +
+    '<th class="num">1С, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
-    '<td class="num"></td><td class="num"></td>' +
-    '<td class="num">' + escapeHtml(fmtR(total)) + '</td>' +
+    '<td class="num"></td>' +
     '<td class="num bsep"></td><td class="num bsep"></td>' +
+    '<td class="num bsep">' + escapeHtml(fmtR(total)) + '</td>' +
     '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td></tr></tfoot></table>';
   // Та же оговорка, что и на «МОЛ»: часть позиций 1С ещё не связана с материалами.
   let note1c = '';
@@ -5580,6 +5710,8 @@ function updateCheckBadges() {
   document.getElementById('badge-check-formulas').textContent = frm ? String(frm) : '';
   const chg = state.changes && state.changes.changes ? state.changes.changes.length : 0;
   document.getElementById('badge-check-changes').textContent = chg ? String(chg) : '';
+  const un = state.mat1cUnits ? state.mat1cUnits.length : 0;
+  document.getElementById('badge-check-units').textContent = un ? String(un) : '';
 }
 
 // Переключение вкладок боковой панели. Экраны проверок — в одном справочнике:
@@ -5590,6 +5722,7 @@ const CHECK_SCREENS = {
   'check-no-cost': renderCheckNoCost,
   'check-formulas': renderCheckFormulas,
   'check-changes': renderCheckChanges,
+  'check-units': renderCheckUnits,
   'check-questions': renderCheckQuestions
 };
 
@@ -5691,6 +5824,15 @@ document.getElementById('mol-screen').addEventListener('click', e => {
 // Проверка «Расценки работ»: клик по заголовку группы сворачивает/разворачивает её,
 // клик по строке работы раскрывает/сворачивает список подрядчиков.
 document.getElementById('check-screen').addEventListener('click', e => {
+  // Проверка «Единицы 1С»: раскрытие материала в список позиций 1С.
+  const um = e.target.closest('[data-unitmat]');
+  if (um) {
+    const key = um.dataset.unitmat;
+    if (state.unitsOpen.has(key)) state.unitsOpen.delete(key);
+    else state.unitsOpen.add(key);
+    renderCheckUnits();
+    return;
+  }
   const qs = e.target.closest('button.qstatus');
   if (qs) { toggleQuestionStatus(qs.dataset.id); return; }
   const bl = e.target.closest('#baseline-save');
