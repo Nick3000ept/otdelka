@@ -99,7 +99,28 @@ var CONFIG = {
   WO_UNIT: 'Ед. изм',
   WO_VOL: 'Объем материала итого',
   WO_OFF: 'Материал к списанию итого',
-  WO_MOL: 'МОЛ'
+  WO_MOL: 'МОЛ',
+
+  // Колонка «Поставка (1С)» на вкладке «МОЛ» (09.09.2026): движения материалов
+  // из 1С. Что считаем поставкой — решения пользователя 09.09.2026: документы
+  // «Поступление» и «Перемещение», объекты СБ3 и СБ5, только наши четыре МОЛ.
+  // ⚠️ В 1С МОЛ записаны полными ФИО; «Смирнов Владимир Андреевич» — другой
+  // человек, в список не входит. Связка названий — лист «Сопоставление_1С».
+  SHEET_M1C: 'Материалы_1С',
+  SHEET_MAP1C: 'Сопоставление_1С',
+  M1C_MOL: 'МОЛ',
+  M1C_REG: 'Регистратор',
+  M1C_OBJ: 'Объект строительства',
+  M1C_NOM: 'Номенклатура',
+  M1C_BUH: 'Бухгалтерская номенклатура',
+  M1C_UNIT: 'Единица',
+  M1C_QTY: 'Количество',
+  M1C_SUM: 'Сумма',
+  M1C_DOCS: ['Поступление', 'Перемещение'],
+  M1C_OBJECTS: ['Отделка СБ3', 'Сити Бэй 3', 'СБ3', 'Сити Бэй 5', 'СБ5'],
+  M1C_MOLS: [['Овчинников', 'Овчинников'], ['Смирнов Александр', 'Смирнов'],
+             ['Генч', 'Джамал'], ['Амирхонов', 'Элшод']],
+  M1C_SKIP: 'не материал (услуга/доставка)'
 };
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
@@ -111,6 +132,7 @@ var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэт
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
 var CACHE_TUZ = 'tuzio_v1';
 var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотрудника вкладки «ТУЗИО» (31.08.2026); ответ маленький, обычный кэш, ключ = ФИО       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
+var CACHE_M1C = 'mat1c_v1';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026); агрегат маленький — обычный кэш
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
@@ -118,6 +140,7 @@ function clearCache() {
   var cache = CacheService.getScriptCache();
   cache.remove(CACHE_FLOORS);
   cache.remove(CACHE_WO);
+  cache.remove(CACHE_M1C);
   var keys = [CACHE_VOLS + '_n', CACHE_BUDGET + '_n', CACHE_BFL + '_n', CACHE_CHANGES + '_n',
               CACHE_FACTREF + '_n', CACHE_AN + '_n', CACHE_TUZ + '_n'];
   for (var i = 0; i < 10; i++) {
@@ -500,6 +523,83 @@ function doPost(e) {
 
     var list = readQuestions_();
 
+    // Обновление листа «Сопоставление_1С» (09.09.2026): пересобирает список
+    // позиций 1С по нашим МОЛ (группа · позиция · единица · строк · количество ·
+    // сумма) и дописывает новые, ПОЛНОСТЬЮ СОХРАНЯЯ то, что человек уже вписал
+    // в колонки «Материал витрины» и «Комментарий». Необязательный `draft` —
+    // черновик автосопоставления, применяется только к пустым строкам.
+    // Тело: { t, action: 'syncMap1c', draft: [[группа, позиция, ед, материал, коммент], …] }
+    if (body.action === 'syncMap1c') {
+      var ssM = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var shSrc = ssM.getSheetByName(CONFIG.SHEET_M1C);
+      if (!shSrc || shSrc.getLastRow() < 2) return jsonOut_({ ok: false, error: 'no_source' });
+
+      // 1. Что уже вписано человеком — запоминаем по ключу «группа|позиция|единица».
+      var shMapS = ssM.getSheetByName(CONFIG.SHEET_MAP1C);
+      var keep = {};
+      if (shMapS && shMapS.getLastRow() > 1) {
+        var oldRows = shMapS.getRange(2, 1, shMapS.getLastRow() - 1, 8).getValues();
+        for (var oi = 0; oi < oldRows.length; oi++) {
+          var oMat = m1cText_(oldRows[oi][6]), oNote = m1cText_(oldRows[oi][7]);
+          if (!oMat && !oNote) continue;
+          keep[m1cText_(oldRows[oi][0]) + '|' + m1cText_(oldRows[oi][1]) + '|' +
+               m1cText_(oldRows[oi][2])] = [oMat, oNote];
+        }
+      }
+      // 2. Черновик автосопоставления из тела запроса (для пустых строк).
+      var draft = {};
+      if (Array.isArray(body.draft)) {
+        for (var di = 0; di < body.draft.length; di++) {
+          var dRow = body.draft[di] || [];
+          draft[m1cText_(dRow[0]) + '|' + m1cText_(dRow[1]) + '|' + m1cText_(dRow[2])] =
+            [m1cText_(dRow[3]), m1cText_(dRow[4])];
+        }
+      }
+      // 3. Позиции 1С по нашим МОЛ (те же фильтры, что в buildMat1c_).
+      var dSrc = shSrc.getRange(1, 1, shSrc.getLastRow(), shSrc.getLastColumn()).getValues();
+      var iS = {};
+      dSrc[0].forEach(function (h, i) { iS[String(h).trim()] = i; });
+      var docS = {}, objS = {};
+      CONFIG.M1C_DOCS.forEach(function (d) { docS[d] = true; });
+      CONFIG.M1C_OBJECTS.forEach(function (o) { objS[o] = true; });
+      var pos = {};
+      for (var si = 1; si < dSrc.length; si++) {
+        var rS = dSrc[si];
+        if (!m1cMol_(String(rS[iS[CONFIG.M1C_MOL]] || '').trim())) continue;
+        if (!docS[String(rS[iS[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0]]) continue;
+        if (!objS[String(rS[iS[CONFIG.M1C_OBJ]] || '').trim()]) continue;
+        var kNom = m1cText_(rS[iS[CONFIG.M1C_NOM]]);
+        var kBuh = m1cText_(rS[iS[CONFIG.M1C_BUH]]);
+        var kUn = m1cText_(rS[iS[CONFIG.M1C_UNIT]]);
+        var kk = kNom + '|' + kBuh + '|' + kUn;
+        if (!pos[kk]) pos[kk] = { nom: kNom, buh: kBuh, unit: kUn, n: 0, qty: 0, sum: 0 };
+        pos[kk].n++;
+        pos[kk].qty += m1cNum_(rS[iS[CONFIG.M1C_QTY]]);
+        pos[kk].sum += m1cNum_(rS[iS[CONFIG.M1C_SUM]]);
+      }
+      var keys = Object.keys(pos);
+      keys.sort(function (a, b) { return pos[b].sum - pos[a].sum; });
+      var kept = 0, drafted = 0;
+      var outRows = [['Группа 1С', 'Позиция 1С', 'Ед. изм 1С', 'Строк',
+                      'Количество всего', 'Сумма, руб', 'Материал витрины', 'Комментарий']];
+      for (var ki = 0; ki < keys.length; ki++) {
+        var p = pos[keys[ki]];
+        var fill = keep[keys[ki]];
+        if (fill) kept++;
+        else if (draft[keys[ki]]) { fill = draft[keys[ki]]; drafted++; }
+        else fill = ['', ''];
+        outRows.push([safeCell_(p.nom), safeCell_(p.buh), safeCell_(p.unit), p.n,
+                      Math.round(p.qty * 100) / 100, Math.round(p.sum),
+                      safeCell_(fill[0]), safeCell_(fill[1])]);
+      }
+      if (!shMapS) shMapS = ssM.insertSheet(CONFIG.SHEET_MAP1C);
+      shMapS.clearContents();
+      shMapS.getRange(1, 1, outRows.length, 8).setValues(outRows);
+      shMapS.setFrozenRows(1);
+      CacheService.getScriptCache().remove(CACHE_M1C);
+      return jsonOut_({ ok: true, positions: keys.length, kept: kept, drafted: drafted });
+    }
+
     if (body.action === 'addQuestion') {
       var work = String(body.work || '').trim();
       var text = String(body.text || '').trim();
@@ -761,6 +861,105 @@ function doGet(e) {
     }
   }
 
+  // Разведка листа «Материалы_1С» (09.09.2026) — выгрузка движений материалов
+  // из 1С, ~27,5 тыс. строк. Наружу идут ТОЛЬКО агрегаты: сколько строк, какие
+  // МОЛ / объекты / типы документов, и насколько названия номенклатуры
+  // совпадают с нашими материалами (лист «Списание материалов»).
+  if (action === 'probe1c') {
+    try {
+      var ss1 = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var sh1 = ss1.getSheetByName('Материалы_1С');
+      if (!sh1) return jsonOut_({ ok: false, error: 'no_sheet' });
+      var lr1 = sh1.getLastRow(), lc1 = sh1.getLastColumn();
+      if (lr1 < 2) return jsonOut_({ ok: false, error: 'empty_sheet' });
+      var d1 = sh1.getRange(1, 1, lr1, lc1).getValues();
+      var h1 = {};
+      d1[0].forEach(function (h, i) { h1[String(h).trim()] = i; });
+      var num1 = function (v) {
+        if (typeof v === 'number') return v;
+        var s = String(v).trim().replace(/\s/g, '').replace(',', '.');
+        var n = parseFloat(s);
+        return isNaN(n) ? 0 : n;
+      };
+      var normN = function (v) {
+        return String(v || '').trim().toLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ');
+      };
+      var cnt1 = function (map, key, q, s) {
+        if (!map[key]) map[key] = { n: 0, qty: 0, sum: 0 };
+        map[key].n++; map[key].qty += q; map[key].sum += s;
+      };
+      var top1 = function (map, limit) {
+        return Object.keys(map).map(function (k) {
+          return { v: k, n: map[k].n,
+                   qty: Math.round(map[k].qty * 100) / 100,
+                   sum: Math.round(map[k].sum) };
+        }).sort(function (a, b) { return b.n - a.n; }).slice(0, limit || 15);
+      };
+      var byMol = {}, byOrg = {}, byObj = {}, bySkl = {}, byReg = {}, byMonth = {}, byUnit = {};
+      var nomen = {}, buh = {};
+      var totQty = 0, totSum = 0, negQty = 0;
+      var iMol = h1['МОЛ'], iOrg = h1['Организация'], iObj = h1['Объект строительства'];
+      var iSkl = h1['Склад'], iReg = h1['Регистратор'], iPer = h1['Период'];
+      var iNom = h1['Номенклатура'], iBuh = h1['Бухгалтерская номенклатура'];
+      var iQty = h1['Количество'], iSum = h1['Сумма'], iUnit = h1['Единица'];
+      for (var r1 = 1; r1 < d1.length; r1++) {
+        var row1 = d1[r1];
+        var q1 = num1(row1[iQty]), s1 = num1(row1[iSum]);
+        if (!String(row1[iNom] || '').trim() && !q1 && !s1) continue;
+        totQty += q1; totSum += s1;
+        if (q1 < 0) negQty++;
+        cnt1(byMol, String(row1[iMol] || '').trim(), q1, s1);
+        cnt1(byOrg, String(row1[iOrg] || '').trim(), q1, s1);
+        cnt1(byObj, String(row1[iObj] || '').trim(), q1, s1);
+        cnt1(bySkl, String(row1[iSkl] || '').trim(), q1, s1);
+        cnt1(byUnit, String(row1[iUnit] || '').trim(), q1, s1);
+        // Тип документа — первое слово регистратора («Поступление …», «Требование …»).
+        cnt1(byReg, String(row1[iReg] || '').trim().split(/[ №]/)[0], q1, s1);
+        var per1 = row1[iPer];
+        var m1 = (per1 instanceof Date)
+          ? (per1.getFullYear() + '-' + ('0' + (per1.getMonth() + 1)).slice(-2))
+          : String(per1 || '').slice(0, 7);
+        cnt1(byMonth, m1, q1, s1);
+        cnt1(nomen, String(row1[iNom] || '').trim(), q1, s1);
+        cnt1(buh, String(row1[iBuh] || '').trim(), q1, s1);
+      }
+      // Сверка названий с нашими материалами (лист «Списание материалов»).
+      var wo1 = readWriteoff_(ss1);
+      var mats1 = {};
+      wo1.forEach(function (w) { if (w[1]) mats1[normN(w[1])] = w[1]; });
+      var nomKeys = {}, buhKeys = {};
+      Object.keys(nomen).forEach(function (k) { if (k) nomKeys[normN(k)] = true; });
+      Object.keys(buh).forEach(function (k) { if (k) buhKeys[normN(k)] = true; });
+      var nomArr = Object.keys(nomKeys);
+      var exactNom = 0, exactBuh = 0, partNom = 0, noMatch = [];
+      Object.keys(mats1).forEach(function (mk) {
+        var eN = !!nomKeys[mk], eB = !!buhKeys[mk], p = false;
+        if (eN) exactNom++;
+        if (eB) exactBuh++;
+        for (var z1 = 0; z1 < nomArr.length; z1++) {
+          if (nomArr[z1].indexOf(mk) >= 0 || mk.indexOf(nomArr[z1]) >= 0) { p = true; break; }
+        }
+        if (p) partNom++;
+        if (!eN && !eB && !p) noMatch.push(mats1[mk]);
+      });
+      return jsonOut_({ ok: true, probe1c: {
+        rows: d1.length - 1, cols: lc1,
+        totals: { qty: Math.round(totQty * 100) / 100, sum: Math.round(totSum),
+                  negativeQtyRows: negQty },
+        mol: top1(byMol, 20), org: top1(byOrg, 10), obj: top1(byObj, 15),
+        sklad: top1(bySkl, 15), docType: top1(byReg, 15),
+        month: top1(byMonth, 40), unit: top1(byUnit, 15),
+        nomenclature: { distinct: Object.keys(nomen).length, top: top1(nomen, 15) },
+        buhNomenclature: { distinct: Object.keys(buh).length, top: top1(buh, 15) },
+        match: { ourMaterials: Object.keys(mats1).length,
+                 exactInNomenclature: exactNom, exactInBuh: exactBuh,
+                 partialInNomenclature: partNom, noMatch: noMatch.slice(0, 60) }
+      } });
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'probe1c_failed', message: String(err) });
+    }
+  }
+
   // Сводка «подрядчик × корпус» по работам. Считается по листу «Поэтажка_работы»
   // (~20 сек), поэтому кэшируется на 6 часов: агрегат ~21 КБ, в лимит CacheService
   // (100 КБ на ключ) укладывается с запасом.
@@ -876,6 +1075,30 @@ function doGet(e) {
         .setMimeType(ContentService.MimeType.JSON);
     } catch (err) {
       return jsonOut_({ ok: false, error: 'writeoff_failed', message: String(err) });
+    }
+  }
+
+  // Колонка «Поставка (1С)» на вкладке «МОЛ» (09.09.2026). Лист «Материалы_1С»
+  // большой (~27,5 тыс. строк), считаем ~15 сек — наружу только агрегат
+  // «материал × МОЛ × единица», кэш на 6 часов.
+  if (action === 'mat1c') {
+    try {
+      var cacheM = CacheService.getScriptCache();
+      var cachedM = cacheM.get(CACHE_M1C);
+      if (cachedM) {
+        return ContentService.createTextOutput(cachedM)
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      var ssM1 = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var m1 = buildMat1c_(ssM1);
+      var payloadM = JSON.stringify({ ok: true, mat1c: m1.rows, mapped: m1.mapped,
+                                      unmappedSum: m1.unmappedSum,
+                                      unmappedRows: m1.unmappedRows });
+      if (payloadM.length < 95000) cacheM.put(CACHE_M1C, payloadM, 21600);
+      return ContentService.createTextOutput(payloadM)
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'mat1c_failed', message: String(err) });
     }
   }
 
@@ -1279,6 +1502,98 @@ function readWriteoff_(ss) {
     ]);
   }
   return out;
+}
+
+/**
+ * Поставка материалов по данным 1С (09.09.2026) — колонка «Поставка (1С)»
+ * в разделе «Материалы» вкладки «МОЛ».
+ *
+ * Источник — лист «Материалы_1С» (~27,5 тыс. строк, выгрузка движений из 1С).
+ * Берём только:
+ *   · наших четырёх МОЛ (в 1С они записаны полными ФИО — см. CONFIG.M1C_MOLS;
+ *     ⚠️ «Смирнов Владимир Андреевич» — ДРУГОЙ человек, не берём);
+ *   · документы «Поступление» и «Перемещение» (решение пользователя 09.09.2026);
+ *   · объекты СБ3 и СБ5 (тоже решение пользователя — материал ездит между очередями).
+ * Названия 1С с нашими не совпадают: в 1С «Номенклатура» — грубая группа
+ * («Профиль», «Керамогранит»), «Бухгалтерская номенклатура» — позиция поставщика.
+ * Поэтому связка задаётся вручную в листе «Сопоставление_1С» (кол. G —
+ * материал витрины); пустая колонка G = позицию не учитываем.
+ * Наружу идёт агрегат: материал × МОЛ × единица → количество и сумма.
+ */
+function buildMat1c_(ss) {
+  var shMap = ss.getSheetByName(CONFIG.SHEET_MAP1C);
+  var map = {};
+  var mappedNames = {};
+  if (shMap && shMap.getLastRow() > 1) {
+    var dm = shMap.getRange(2, 1, shMap.getLastRow() - 1, 7).getValues();
+    for (var i = 0; i < dm.length; i++) {
+      var mat = m1cText_(dm[i][6]);
+      if (!mat || mat === CONFIG.M1C_SKIP) continue;
+      map[m1cText_(dm[i][0]) + '|' + m1cText_(dm[i][1]) + '|' + m1cText_(dm[i][2])] = mat;
+      mappedNames[mat] = true;
+    }
+  }
+
+  var sh = ss.getSheetByName(CONFIG.SHEET_M1C);
+  if (!sh || sh.getLastRow() < 2) return { rows: [], unmappedSum: 0, unmappedRows: 0, mapped: 0 };
+  var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
+  var idx = {};
+  data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
+
+  var docOk = {}, objOk = {};
+  CONFIG.M1C_DOCS.forEach(function (d) { docOk[d] = true; });
+  CONFIG.M1C_OBJECTS.forEach(function (o) { objOk[o] = true; });
+
+  var agg = {}, unmappedSum = 0, unmappedRows = 0;
+  for (var r = 1; r < data.length; r++) {
+    var row = data[r];
+    var mol = m1cMol_(String(row[idx[CONFIG.M1C_MOL]] || '').trim());
+    if (!mol) continue;
+    if (!docOk[String(row[idx[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0]]) continue;
+    if (!objOk[String(row[idx[CONFIG.M1C_OBJ]] || '').trim()]) continue;
+    var nom = m1cText_(row[idx[CONFIG.M1C_NOM]]);
+    var buh = m1cText_(row[idx[CONFIG.M1C_BUH]]);
+    var unit = m1cText_(row[idx[CONFIG.M1C_UNIT]]);
+    var qty = m1cNum_(row[idx[CONFIG.M1C_QTY]]);
+    var sum = m1cNum_(row[idx[CONFIG.M1C_SUM]]);
+    var mat = map[nom + '|' + buh + '|' + unit];
+    if (!mat) {
+      if (qty || sum) { unmappedSum += sum; unmappedRows++; }
+      continue;
+    }
+    var key = mat + '|' + mol + '|' + unit;
+    if (!agg[key]) agg[key] = { mat: mat, mol: mol, unit: unit, qty: 0, sum: 0 };
+    agg[key].qty += qty;
+    agg[key].sum += sum;
+  }
+  var out = Object.keys(agg).map(function (k) {
+    var a = agg[k];
+    return [a.mat, a.mol, a.unit, Math.round(a.qty * 100) / 100, Math.round(a.sum)];
+  });
+  return { rows: out, unmappedSum: Math.round(unmappedSum), unmappedRows: unmappedRows,
+           mapped: Object.keys(mappedNames).length };
+}
+
+/** Значение ячейки 1С как текст: строка без пробелов по краям и без ведущего апострофа. */
+function m1cText_(v) {
+  var s = String(v == null ? '' : v).trim();
+  return s.charAt(0) === "'" ? s.slice(1) : s;
+}
+
+/** Число из ячейки: в выгрузке 1С попадаются текстовые числа с запятой. */
+function m1cNum_(v) {
+  if (typeof v === 'number') return v;
+  var s = String(v == null ? '' : v).trim().replace(/\s/g, '').replace(',', '.');
+  var n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+/** ФИО материально ответственного из 1С → короткое имя МОЛ витрины ('' — чужой). */
+function m1cMol_(fio) {
+  for (var i = 0; i < CONFIG.M1C_MOLS.length; i++) {
+    if (fio.indexOf(CONFIG.M1C_MOLS[i][0]) === 0) return CONFIG.M1C_MOLS[i][1];
+  }
+  return '';
 }
 
 function readLk_(ss) {

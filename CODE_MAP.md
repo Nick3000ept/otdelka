@@ -198,6 +198,17 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
 - script.gs: `readWriteoff_` (перед `readLk_`), обработчик `action=writeoff`
   в doGet перед `morsRows`, `CACHE_WO = 'writeoff_v1'` (+ в `clearCache`),
   блок CONFIG `SHEET_WRITEOFF`/`WO_*`
+- Поставка из 1С (09.09.2026): фронт — `loadMat1c` (рядом с `loadWriteoff`),
+  `state.mat1c`/`mat1cStatus`/`mat1cInfo`, внутри `renderMol` карта `supByMat`
+  и `supCell` (ячейка с подписью единицы 1С), колонка «Поставка (1С)» между
+  «К списанию ЛК» и «Стоимость материала итого»; предупреждение о
+  несопоставленных позициях — сразу под шапкой вкладки.
+  script.gs — `buildMat1c_`/`m1cText_`/`m1cNum_`/`m1cMol_` (перед `readLk_`),
+  `action=mat1c` в doGet (перед `tuzio`), doPost `syncMap1c` (перед
+  `addQuestion`) — пересборка листа `Сопоставление_1С` с сохранением ручных
+  колонок, `CACHE_M1C = 'mat1c_v1'` (+ в `clearCache`), блок CONFIG `M1C_*`.
+  Разведка листа без данных наружу — `action=probe1c` (агрегаты: МОЛ, объекты,
+  типы документов, месяцы, совпадения названий).
 
 ## index.html — Бюджет
 

@@ -984,6 +984,9 @@ const state = {
   anHl: null,                  // выделенный кликом по легенде ряд графика (28.08.2026)
   writeoff: null,              // лист «Списание материалов» (action=writeoff, 28.08.2026)
   writeoffStatus: 'idle',      // idle | loading | ready | error
+  mat1c: null,                 // поставка материалов по 1С (action=mat1c, 09.09.2026)
+  mat1cStatus: 'idle',         // idle | loading | ready | error
+  mat1cInfo: null,             // сколько позиций 1С не сопоставлено с материалами витрины
   tuzio: null,                 // почасовые начисления (action=tuzio, 31.08.2026)
   tuzioStatus: 'idle',         // idle | loading | ready | error
   tzMonth: null,               // выбранный месяц на «ТУЗИО» ('ГГГГ-ММ'); null = последний
@@ -2853,6 +2856,29 @@ async function loadWriteoff() {
   if (state.screen === 'materials') renderMaterials();
 }
 
+/**
+ * Поставка материалов по 1С (09.09.2026) — лист «Материалы_1С» в разрезе
+ * наших МОЛ. Бэкенд отдаёт агрегат [материал витрины, МОЛ, единица 1С,
+ * количество, сумма]; связка названий 1С с нашими живёт в листе
+ * «Сопоставление_1С» и заполняется руками.
+ */
+async function loadMat1c() {
+  state.mat1cStatus = 'loading';
+  try {
+    const url = GAS_URL + '?action=mat1c&t=' + encodeURIComponent(state.token);
+    const json = await fetchWithRetry(url, 2);
+    if (!json.ok) throw new Error(json.message || json.error);
+    state.mat1c = json.mat1c || [];
+    state.mat1cInfo = { unmappedSum: json.unmappedSum || 0,
+                        unmappedRows: json.unmappedRows || 0,
+                        mapped: json.mapped || 0 };
+    state.mat1cStatus = 'ready';
+  } catch (e) {
+    state.mat1cStatus = 'error';
+  }
+  if (state.screen === 'mol') renderMol();
+}
+
 // Объёмы дробные — два знака, ноль показываем пустой ячейкой.
 const fmtQ = v => v ? new Intl.NumberFormat('ru-RU',
   { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) : '';
@@ -2873,6 +2899,7 @@ function renderMol() {
   const el = document.getElementById('mol-screen');
   if (state.writeoffStatus === 'idle') loadWriteoff();
   if (state.budgetStatus === 'idle') loadBudget();
+  if (state.mat1cStatus === 'idle') loadMat1c();
   const head = '<div class="check-head">МОЛ</div>';
   if (state.writeoffStatus !== 'ready') {
     el.innerHTML = head + '<div class="side-note">' +
@@ -2892,10 +2919,41 @@ function renderMol() {
     o.mols.set(r[5], (o.mols.get(r[5]) || 0) + (r[4] || 0));
     if (r[2] && !unitByMat.has(k)) unitByMat.set(k, r[2]);
   });
+  // Поставка по 1С (09.09.2026): ключ материала -> МОЛ -> единица -> кол-во.
+  // Единицы 1С не всегда совпадают с нашими (профиль в штуках против м.п.),
+  // поэтому количество храним по единицам и показываем с подписью единицы.
+  const supByMat = new Map();
+  (state.mat1c || []).forEach(r => {
+    const k = matKey(r[0]);
+    if (!supByMat.has(k)) supByMat.set(k, new Map());
+    const byMol = supByMat.get(k);
+    if (!byMol.has(r[1])) byMol.set(r[1], new Map());
+    const byUnit = byMol.get(r[1]);
+    byUnit.set(r[2], (byUnit.get(r[2]) || 0) + (r[3] || 0));
+  });
+  // Текст ячейки поставки: «12 345,00» если единица та же, что у нас,
+  // иначе с подписью единицы 1С; несколько единиц — через запятую.
+  const supCell = (units, ourUnit) => {
+    if (!units || !units.size) return '';
+    const parts = [];
+    units.forEach((q, u) => {
+      if (!q) return;
+      parts.push(fmtQ(q) + (norm(u) === norm(ourUnit) ? '' : ' ' + u));
+    });
+    return parts.join(', ');
+  };
   // Все группы сворачиваемые (просьба 28.08.2026): на старте блоки МОЛ свёрнуты,
   // внутри раскрытого МОЛ разделы открыты, пока их не свернули отдельно.
   const chev = o => '<span class="chev">' + (o ? '▾' : '▸') + '</span> ';
   let html = head;
+  // Честно предупреждаем: часть позиций 1С ещё не связана с материалами витрины,
+  // их поставка ни в одну строку не попала (связка — лист «Сопоставление_1С»).
+  if (state.mat1cStatus === 'ready' && state.mat1cInfo && state.mat1cInfo.unmappedRows) {
+    html += '<div class="side-note">Поставка по 1С: не сопоставлено ' +
+      escapeHtml(fmtInt(state.mat1cInfo.unmappedRows)) + ' строк 1С на ' +
+      escapeHtml(fmtR(state.mat1cInfo.unmappedSum)) + ' руб — эти позиции в колонку ' +
+      '«Поставка (1С)» не вошли. Связка названий задаётся в листе «Сопоставление_1С».</div>';
+  }
   MOL_LIST.forEach(mol => {
     const molOpen = state.molOpen.has(mol);
     html += '<div class="mol-block"><div class="mol-name" data-mol="' + escapeHtml(mol) + '">' +
@@ -2960,6 +3018,7 @@ function renderMol() {
       // Материалы этого МОЛ: расчётные по его работам + те, что ему списаны.
       const keys = new Set([...calc.keys()]);
       offByMat.forEach((o, k) => { if (o.mols.get(mol)) keys.add(k); });
+      supByMat.forEach((byMol, k) => { if (byMol.get(mol)) keys.add(k); });
       const list = Array.from(keys).map(k => {
         const c = calc.get(k);
         const off = offByMat.get(k);
@@ -2970,9 +3029,10 @@ function renderMol() {
           vol: c ? c.vol : 0,
           done: c ? c.done : 0,
           cost: c ? c.cost : 0,
-          off: off ? (off.mols.get(mol) || 0) : 0
+          off: off ? (off.mols.get(mol) || 0) : 0,
+          sup: (supByMat.get(k) || new Map()).get(mol) || null
         };
-      }).filter(r => r.vol || r.off)
+      }).filter(r => r.vol || r.off || (r.sup && r.sup.size))
         .sort((a, b) => b.cost - a.cost || b.vol - a.vol);
       if (!list.length) {
         html += '<div class="side-note">Материалов по этому МОЛ не нашлось.</div>';
@@ -2983,6 +3043,7 @@ function renderMol() {
           '<th class="num">Объем итого по модели</th>' +
           '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
           '<th class="num">К списанию ЛК</th>' +
+          '<th class="num">Поставка (1С)</th>' +
           '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + escapeHtml(r.unit) + '</td>' +
@@ -2990,11 +3051,19 @@ function renderMol() {
             '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.off)) + '</td>' +
+            '<td class="num sup1c">' + escapeHtml(supCell(r.sup, r.unit)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
           '<td class="num"></td><td class="num"></td><td class="num"></td>' +
+          '<td class="num"></td>' +
           '<td class="num">' + escapeHtml(fmtR(tCost)) +
           '</td></tr></tfoot></table></div>';
+        // Поставку по единицам складывать нельзя — в «Итого» её не показываем.
+        if (state.mat1cStatus === 'loading') {
+          html += '<div class="side-note">Поставка по 1С загружается…</div>';
+        } else if (state.mat1cStatus === 'error') {
+          html += '<div class="side-note">Поставку по 1С загрузить не удалось.</div>';
+        }
       }
     }
     html += '</div>';
