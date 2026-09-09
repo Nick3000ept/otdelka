@@ -429,6 +429,19 @@
   table.check.mbud td.num, table.check.mbud th.num { white-space: nowrap; }
   table.check.mbud thead tr.sub th { background: #edf2fb; font-weight: 600; }
   table.check.mbud th.bsep, table.check.mbud td.bsep { border-left: 2px solid var(--border); }
+  /* Таблица материалов МОЛ (09.09.2026): шапка в два ряда — Модель · Личный
+     кабинет · 1С. ⚠️ Ширины — на ячейках ПЕРВОГО ряда (см. предупреждение
+     у таблицы бюджета выше), иначе при table-layout: fixed их не видно. */
+  table.check.mmat thead tr:first-child th:first-child { width: 26%; }
+  table.check.mmat th.grphead.g-model { width: 38%; }
+  table.check.mmat th.grphead.g-lk { width: 11%; }
+  table.check.mmat th.grphead.g-1c { width: 19%; }
+  table.check.mmat th.grphead {
+    text-align: center; background: #edf2fb; border-bottom: 1px solid var(--border);
+  }
+  table.check.mmat thead tr.sub th { background: #edf2fb; font-weight: 600; }
+  table.check.mmat th.bsep, table.check.mmat td.bsep { border-left: 2px solid var(--border); }
+  table.check.mmat td.num, table.check.mmat th.num { white-space: nowrap; }
   /* Блок одного МОЛ и заголовки его разделов «Бюджет» / «Материалы». */
   .mol-block { margin-bottom: 26px; }
   .mol-name {
@@ -2927,9 +2940,10 @@ function renderMol() {
     const k = matKey(r[0]);
     if (!supByMat.has(k)) supByMat.set(k, new Map());
     const byMol = supByMat.get(k);
-    if (!byMol.has(r[1])) byMol.set(r[1], new Map());
-    const byUnit = byMol.get(r[1]);
-    byUnit.set(r[2], (byUnit.get(r[2]) || 0) + (r[3] || 0));
+    if (!byMol.has(r[1])) byMol.set(r[1], { units: new Map(), sum: 0 });
+    const o = byMol.get(r[1]);
+    o.units.set(r[2], (o.units.get(r[2]) || 0) + (r[3] || 0));
+    o.sum += r[4] || 0;
   });
   // Текст ячейки поставки: «12 345,00» если единица та же, что у нас,
   // иначе с подписью единицы 1С; несколько единиц — через запятую.
@@ -3032,31 +3046,46 @@ function renderMol() {
           off: off ? (off.mols.get(mol) || 0) : 0,
           sup: (supByMat.get(k) || new Map()).get(mol) || null
         };
-      }).filter(r => r.vol || r.off || (r.sup && r.sup.size))
+      }).filter(r => r.vol || r.off || (r.sup && (r.sup.units.size || r.sup.sum)))
         .sort((a, b) => b.cost - a.cost || b.vol - a.vol);
       if (!list.length) {
         html += '<div class="side-note">Материалов по этому МОЛ не нашлось.</div>';
       } else {
         const tCost = list.reduce((s, r) => s + r.cost, 0);
-        html += '<div class="bdetail-wrap"><table class="check mtab"><thead><tr>' +
-          '<th>Материал</th><th class="c-unit">Ед. изм</th>' +
-          '<th class="num">Объем итого по модели</th>' +
+        // Деньги 1С сложить можно, количества — нет (штуки, м², кг вперемешку).
+        const t1c = list.reduce((s, r) => s + (r.sup ? r.sup.sum : 0), 0);
+        // Колонки сгруппированы (просьба 09.09.2026): «Модель» — расчёт по
+        // «Расходам», «Личный кабинет» — лист «Списание материалов», «1С» —
+        // фактическая поставка. Шапка в два ряда, ширины на первом ряду.
+        html += '<div class="bdetail-wrap"><table class="check mtab mmat"><thead>' +
+          '<tr><th rowspan="2">Материал</th>' +
+          '<th rowspan="2" class="c-unit">Ед. изм</th>' +
+          '<th colspan="4" class="bsep grphead g-model">Модель</th>' +
+          '<th class="bsep grphead g-lk">Личный кабинет</th>' +
+          '<th colspan="2" class="bsep grphead g-1c">1С</th></tr>' +
+          '<tr class="sub"><th class="num bsep">Объем итого</th>' +
           '<th class="num">Выполнено натурально</th><th class="num">Остаток</th>' +
-          '<th class="num">К списанию ЛК</th>' +
-          '<th class="num">Поставка (1С)</th>' +
-          '<th class="num">Стоимость материала итого, руб</th></tr></thead><tbody>' +
+          '<th class="num">Стоимость итого, руб</th>' +
+          '<th class="num bsep">К списанию</th>' +
+          '<th class="num bsep">Поставка + перемещение</th>' +
+          '<th class="num">Стоимость, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
             '<td>' + escapeHtml(r.unit) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+            '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.vol - r.done)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtQ(r.off)) + '</td>' +
-            '<td class="num sup1c">' + escapeHtml(supCell(r.sup, r.unit)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td></tr>').join('') +
-          '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num"></td>' +
-          '<td class="num"></td><td class="num"></td><td class="num"></td>' +
-          '<td class="num"></td>' +
-          '<td class="num">' + escapeHtml(fmtR(tCost)) +
+            '<td class="num">' + escapeHtml(fmtR(r.cost)) + '</td>' +
+            '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
+            '<td class="num bsep sup1c">' +
+              escapeHtml(supCell(r.sup && r.sup.units, r.unit)) + '</td>' +
+            '<td class="num">' + escapeHtml(fmtR(r.sup ? r.sup.sum : 0)) +
+            '</td></tr>').join('') +
+          '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
+          '<td class="num"></td><td class="num"></td>' +
+          '<td class="num">' + escapeHtml(fmtR(tCost)) + '</td>' +
+          '<td class="num bsep"></td>' +
+          '<td class="num bsep"></td>' +
+          '<td class="num">' + escapeHtml(fmtR(t1c)) +
           '</td></tr></tfoot></table></div>';
         // Поставку по единицам складывать нельзя — в «Итого» её не показываем.
         if (state.mat1cStatus === 'loading') {
