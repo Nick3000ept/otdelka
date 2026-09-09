@@ -1638,14 +1638,20 @@ function buildMat1c_(ss) {
     var outUnit = unit, outQty = qty;
     if (hit.coef) { outQty = qty * hit.coef; outUnit = ourUnit || unit; }
     else if (ourUnit && m1cSameUnit_(unit, ourUnit)) { outUnit = ourUnit; }
-    var key = mat + '|' + mol + '|' + outUnit;
+    // Ключ — по КЛАССУ единицы, чтобы «пог. м» и «м.п.» не расходились
+    // на две строки; подписью остаётся первая встреченная единица.
+    var key = mat + '|' + mol + '|' + m1cUnitClass_(outUnit);
     if (!agg[key]) agg[key] = { mat: mat, mol: mol, unit: outUnit, qty: 0, sum: 0 };
     agg[key].qty += outQty;
     agg[key].sum += sum;
   }
-  var out = Object.keys(agg).map(function (k) {
+  var out = [];
+  Object.keys(agg).forEach(function (k) {
     var a = agg[k];
-    return [a.mat, a.mol, a.unit, Math.round(a.qty * 100) / 100, Math.round(a.sum)];
+    // Пустышки (ни количества, ни денег) наружу не отдаём — иначе у материала
+    // появляется лишняя «единица» без значения.
+    if (!a.qty && !a.sum) return;
+    out.push([a.mat, a.mol, a.unit, Math.round(a.qty * 100) / 100, Math.round(a.sum)]);
   });
   return { rows: out, unmappedSum: Math.round(unmappedSum), unmappedRows: unmappedRows,
            skipRows: skipRows, skipSum: Math.round(skipSum),
@@ -1675,11 +1681,12 @@ function buildMat1cUnits_(ss) {
     var ourUnit = units[m1cNorm_(mat)] || '';
     // Единица считается ПОСЛЕ пересчёта: позиция с коэффициентом приведена
     // к единице витрины и проблемой уже не является (09.09.2026).
-    var effUnit = coef ? (ourUnit || unit) : unit;
+    var effUnit = coef ? (ourUnit || unit)
+                       : (ourUnit && m1cSameUnit_(unit, ourUnit) ? ourUnit : unit);
     if (!byMat[mat]) byMat[mat] = { units: {}, rows: [] };
     // Пустые позиции (ни количества, ни денег) единицей не считаются — иначе
     // строка без единицы измерения одна помечала бы материал как проблемный.
-    if (qty || sum) byMat[mat].units[m1cNorm_(effUnit).replace(/[\s.]/g, '')] = true;
+    if (qty || sum) byMat[mat].units[m1cUnitClass_(effUnit)] = true;
     byMat[mat].rows.push([m1cText_(d[i][0]), m1cText_(d[i][1]), unit, qty, sum,
                           coef || '', effUnit]);
   }
@@ -1722,12 +1729,24 @@ function m1cNorm_(v) {
     .replace(/ё/g, 'е').replace(/\s+/g, ' ');
 }
 
-/** Одинаковые ли единицы: «м.п.» и «м п», «м2» и «м²» считаем одним и тем же. */
+/**
+ * Единица измерения к общему виду. Метры погонные пишут по-разному —
+ * «м.п.», «мп», «пог. м», «п.м.», просто «м» — это ОДНА единица
+ * (уточнение пользователя 09.09.2026). Так же сведены м² и м³.
+ */
+function m1cUnitClass_(v) {
+  var u = m1cNorm_(v).replace(/[\s.]/g, '').replace('²', '2').replace('³', '3');
+  if (u === 'м' || u === 'мп' || u === 'погм' || u === 'пм' || u === 'мпог' ||
+      u === 'метр' || u === 'метрпогонный' || u === 'погонныйметр') return 'м';
+  if (u === 'м2' || u === 'кв' || u === 'квм' || u === 'кв2') return 'м2';
+  if (u === 'м3' || u === 'куб' || u === 'кубм') return 'м3';
+  if (u === 'шт' || u === 'штук' || u === 'штука') return 'шт';
+  return u;
+}
+
+/** Одинаковые ли единицы (с учётом синонимов метров погонных). */
 function m1cSameUnit_(a, b) {
-  var f = function (v) {
-    return m1cNorm_(v).replace(/[\s.]/g, '').replace('²', '2').replace('³', '3');
-  };
-  return f(a) === f(b);
+  return m1cUnitClass_(a) === m1cUnitClass_(b);
 }
 
 /** Значение ячейки 1С как текст: строка без пробелов по краям и без ведущего апострофа. */

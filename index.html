@@ -2740,6 +2740,20 @@ const isGkl = name => norm((state.typeByMaterial || new Map()).get(norm(name)) |
 const matKey = name => isGkl(name) ? 'гкл-листы' : norm(name);
 const matTitle = (key, name) => key === 'гкл-листы' ? GKL_TITLE : name;
 
+/**
+ * Единица измерения к общему виду (09.09.2026): «м.п.», «мп», «пог. м» и «м» —
+ * одно и то же, м² и м³ тоже сводятся. Нужна, чтобы рядом с числом не появлялась
+ * лишняя подпись единицы, когда она по сути наша.
+ */
+function unitClass(v) {
+  const u = norm(v).replace(/[\s.]/g, '').replace('²', '2').replace('³', '3');
+  if (['м', 'мп', 'погм', 'пм', 'мпог', 'метр'].includes(u)) return 'м';
+  if (['м2', 'кв', 'квм'].includes(u)) return 'м2';
+  if (['м3', 'куб', 'кубм'].includes(u)) return 'м3';
+  if (['шт', 'штук', 'штука'].includes(u)) return 'шт';
+  return u;
+}
+
 // Материально ответственные — они же подрядчики собственных сил в поэтажке
 // (те же имена, что в BUDGET_SS_CONTRS). Порядок — как просил пользователь.
 const MOL_LIST = ['Овчинников', 'Смирнов', 'Джамал', 'Элшод'];
@@ -2984,7 +2998,7 @@ function renderCheckUnits() {
     if (mixedNames.has(mat) || units.size !== 1) return;
     const u = [...units.keys()][0];
     const our = (state.unitByMaterial && state.unitByMaterial.get(norm(mat))) || '';
-    if (norm(u).replace(/\s|\./g, '') === norm(our).replace(/\s|\./g, '')) return;
+    if (unitClass(u) === unitClass(our)) return;
     single.push({ mat, our, unit: u, qty: units.get(u) });
   });
   single.sort((a, b) => b.qty - a.qty);
@@ -3101,7 +3115,7 @@ function renderMol() {
     const parts = [];
     units.forEach((q, u) => {
       if (!q) return;
-      parts.push(fmtQ(q) + (norm(u) === norm(ourUnit) ? '' : ' ' + u));
+      parts.push(fmtQ(q) + (unitClass(u) === unitClass(ourUnit) ? '' : ' ' + u));
     });
     return parts.join(', ');
   };
@@ -3298,7 +3312,7 @@ function renderMaterials() {
     const parts = [];
     units.forEach((q, u) => {
       if (!q) return;
-      parts.push(fmtQ(q) + (norm(u) === norm(ourUnit) ? '' : ' ' + u));
+      parts.push(fmtQ(q) + (unitClass(u) === unitClass(ourUnit) ? '' : ' ' + u));
     });
     return parts.join(', ');
   };
