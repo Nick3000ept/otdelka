@@ -205,6 +205,9 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   сгруппированы в три блока (Модель · Личный кабинет · 1С) — шапка в два ряда;
   с 09.09 (вторая итерация) блоков четыре — Модель · Личный кабинет · 1С ·
   Стоимость, «Остаток» убран, обе стоимости справа;
+  «Выполнено натурально» — `cell[16]` бюджета (объём D × процент готовности V,
+  `buildBudget_`/`maxReady`/`pctScale`, кэш `budget_v30`), фронт —
+  `molWorkVolumes(mol, 16)`/`allFactVolumes`;
   проверка «Единицы 1С» — `renderCheckUnits`/`loadMat1cUnits`/`state.mat1cUnits`/
   `unitsOpen`, пункт `check-units` в `#sb-checks` и в `CHECK_SCREENS`, бейдж
   `badge-check-units`, обработка клика — в начале обработчика `#check-screen`;

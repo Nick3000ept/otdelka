@@ -125,7 +125,7 @@ var CONFIG = {
 
 var CACHE_FLOORS = 'floors_v3';   // сводка подрядчик × корпус + ssNames (см. action=floors)
 var CACHE_VOLS = 'vols_v1';       // объёмы по этажам (см. action=volumes), чанкованный
-var CACHE_BUDGET = 'budget_v29';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг с переделками 10%, лобби, Подсоба Шамов, СС факт, НР, переделки, натуральный факт Z в cell[15]); чанкованный
+var CACHE_BUDGET = 'budget_v30';  // свод бюджета: статья -> работы -> подрядчик×корпус (+lk, kp, base с extras доп-статей, паркинг с переделками 10%, лобби, Подсоба Шамов, СС факт, НР, переделки, натуральный факт Z в cell[15], объём × процент готовности в cell[16]); чанкованный
 var CACHE_BFL = 'bfloors_v1';     // расшифровка ячеек бюджета по этажам; чанкованный
 var CACHE_CHANGES = 'changes_v1'; // дифф поэтажки против базового расчёта; чанкованный
 var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэтажки (V, Z) по этажам; чанкованный
@@ -2426,6 +2426,10 @@ function buildBudget_(ss) {
   // Разбивка факта на работы и материалы (21.08.2026): «Объем к закрытию» (кол. Z)
   // × расценка за работу (кол. AB) и × расценка материалов (кол. AC).
   var zc = idx[CONFIG.FLOOR_CLOSE] ? sh.getRange(2, idx[CONFIG.FLOOR_CLOSE], n, 1).getValues() : null;
+  // «Процент готовности» (кол. V, 09.09.2026) — для натурального выполнения:
+  // объём работ × процент готовности (уточнение пользователя 09.09; раньше
+  // брали «Объем к закрытию», это другое число).
+  var rdy = idx[CONFIG.FLOOR_READY] ? sh.getRange(2, idx[CONFIG.FLOOR_READY], n, 1).getValues() : null;
   var rb = idx[CONFIG.FLOOR_RATE] ? sh.getRange(2, idx[CONFIG.FLOOR_RATE], n, 1).getValues() : null;
   var rm = idx[CONFIG.FLOOR_RATE_MAT] ? sh.getRange(2, idx[CONFIG.FLOOR_RATE_MAT], n, 1).getValues() : null;
   // Сумма переделок (25.08.2026): стоимость с коэффициентом (AG) минус
@@ -2433,6 +2437,7 @@ function buildBudget_(ss) {
   var nc = idx[CONFIG.FLOOR_COST_NOCOEF] ? sh.getRange(2, idx[CONFIG.FLOOR_COST_NOCOEF], n, 1).getValues() : null;
 
   var map = {};
+  var maxReady = 0;
   for (var k = 0; k < n; k++) {
     var v = typeof cost[k][0] === 'number' ? cost[k][0] : 0;
     if (!v) continue;
@@ -2452,7 +2457,7 @@ function buildBudget_(ss) {
       if (gName) w[work].grp = gName;
     }
     var cellKey = p + '' + c;
-    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0, f: 0, fw: 0, fm: 0, rd: 0, z: 0 };
+    if (!w[work].cells[cellKey]) w[work].cells[cellKey] = { c: 0, v: 0, r: 0, w: 0, f: 0, fw: 0, fm: 0, rd: 0, z: 0, dv: 0 };
     var cellObj = w[work].cells[cellKey];
     cellObj.c += v;                       // стоимость (кол. AG)
     cellObj.v += vv;                      // объём (кол. D)
@@ -2460,6 +2465,10 @@ function buildBudget_(ss) {
     if (cw && typeof cw[k][0] === 'number') cellObj.w += cw[k][0]; // работы (кол. AE)
     if (nc && typeof nc[k][0] === 'number') cellObj.rd += v - nc[k][0]; // переделки = AG − AI
     if (fp && typeof fp[k][0] === 'number') cellObj.f += fp[k][0]; // факт «К оплате» (кол. AA)
+    // Натуральное выполнение работ: объём (кол. D) × процент готовности (кол. V).
+    var pv = (rdy && typeof rdy[k][0] === 'number') ? rdy[k][0] : 0;
+    if (pv > maxReady) maxReady = pv;
+    cellObj.dv += vv * pv;
     var z = (zc && typeof zc[k][0] === 'number') ? zc[k][0] : 0;   // объём к закрытию (кол. Z)
     if (z) {
       cellObj.z += z;                       // натуральный факт работ — для вкладок «МОЛ»/«Материалы» (28.08.2026)
@@ -2467,6 +2476,9 @@ function buildBudget_(ss) {
       if (rm && typeof rm[k][0] === 'number') cellObj.fm += z * rm[k][0]; // факт материалы (Z × AC)
     }
   }
+  // Процент готовности в поэтажке бывает и долями (0,45), и процентами (45) —
+  // определяем по максимуму, как в buildFactRef_.
+  var pctScale = maxReady > 1.01 ? 0.01 : 1;
   return Object.keys(map)
     .map(function (item) {
       var works = Object.keys(map[item].works)
@@ -2476,13 +2488,17 @@ function buildBudget_(ss) {
             var parts = key.split('');
             var cell = w.cells[key];
             // Индексы 9..13 заняты спец-сводной СС Шамова (readShamov_) —
-            // сумма переделок идёт в cell[14], натуральный факт (Z) в cell[15].
+            // сумма переделок идёт в cell[14], «Объем к закрытию» (Z) в cell[15],
+            // натуральное выполнение (объём D × процент готовности V) в cell[16]
+            // (09.09.2026 — им считается «Выполнено натурально» на вкладках
+            // «МОЛ» и «Материалы», раньше там был Z).
             return [parts[0], parts[1], Math.round(cell.c),
                     Math.round(cell.v * 100) / 100, cell.r, Math.round(cell.w),
                     Math.round(cell.f || 0), Math.round(cell.fw || 0),
                     Math.round(cell.fm || 0), 0, 0, 0, 0, 0,
                     Math.round(cell.rd || 0),
-                    Math.round((cell.z || 0) * 100) / 100];
+                    Math.round((cell.z || 0) * 100) / 100,
+                    Math.round((cell.dv || 0) * pctScale * 100) / 100];
           });
           return [wName, Math.round(w.total), cells, w.grp || '— без группы —'];
         })

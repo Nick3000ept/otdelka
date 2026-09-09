@@ -2764,8 +2764,10 @@ function buildMaterialCalc(volByWork, factVolByWork) {
     // Объём работ: из бюджета по МОЛ (если передан) либо из самого листа.
     const vol = volByWork ? (volByWork.get(norm(work)) || 0) : Number(row['Объем работ']);
     if (!rate || !vol || !isFinite(rate) || !isFinite(vol)) return;
-    // Натурально выполнено (28.08.2026): та же норма расхода, но на ФАКТИЧЕСКИЙ
-    // объём работ — «Объем к закрытию» (кол. Z поэтажки), cell[15] бюджета.
+    // Натурально выполнено: та же норма расхода, но на ФАКТИЧЕСКИ выполненный
+    // объём работ = объём (кол. D) × процент готовности (кол. V), cell[16]
+    // бюджета (уточнение пользователя 09.09.2026; до этого брали «Объем
+    // к закрытию» — кол. Z, cell[15], это другая величина).
     const factVol = factVolByWork ? (factVolByWork.get(norm(work)) || 0) : 0;
     const priceUnit = Number(row['Стоимость материала в ед работы']) || 0;
     const price = Number(row['Расценка']) || 0;
@@ -2796,7 +2798,7 @@ function buildMaterialCalc(volByWork, factVolByWork) {
 function molWorkVolumes(mol, idx) {
   const out = new Map();
   const key = norm(mol);
-  const at = idx === undefined ? 3 : idx;   // 3 — плановый объём, 15 — факт (Z)
+  const at = idx === undefined ? 3 : idx;   // 3 — плановый объём, 16 — выполнено (D × V)
   (state.budget || []).forEach(item => {
     (item[2] || []).forEach(w => {
       const wk = norm(String(w[0] || ''));
@@ -2810,8 +2812,8 @@ function molWorkVolumes(mol, idx) {
   return out;
 }
 
-/** Фактически выполненный объём по всем работам (без разреза по МОЛ). */
-function allFactVolumes() { return molWorkVolumes(null, 15); }
+/** Фактически выполненный объём по всем работам (объём × процент готовности). */
+function allFactVolumes() { return molWorkVolumes(null, 16); }
 
 /**
  * Свод бюджета по статьям для одного МОЛ — по ячейкам с его именем.
@@ -3160,7 +3162,7 @@ function renderMol() {
     } else if (!budgetReady) {
       html += '<div class="side-note">Расчёт появится после загрузки бюджета…</div>';
     } else {
-      const calc = buildMaterialCalc(molWorkVolumes(mol), molWorkVolumes(mol, 15));
+      const calc = buildMaterialCalc(molWorkVolumes(mol), molWorkVolumes(mol, 16));
       // Материалы этого МОЛ: расчётные по его работам + те, что ему списаны.
       const keys = new Set([...calc.keys()]);
       offByMat.forEach((o, k) => { if (o.mols.get(mol)) keys.add(k); });
