@@ -134,7 +134,7 @@ var CACHE_TUZ = 'tuzio_v1';
 var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотрудника вкладки «ТУЗИО» (31.08.2026); ответ маленький, обычный кэш, ключ = ФИО       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
 var CACHE_M1CD = 'mat1cd_v1';  // расшифровка поставки 1С по позициям/документам/объектам (модалка вкладок «МОЛ» и «Материалы», 09.09.2026); чанкованный
 var CACHE_M1CU = 'mat1cu_v1';  // позиции 1С по материалам с РАЗНЫМИ единицами (проверка «Единицы 1С», 09.09.2026)
-var CACHE_M1C = 'mat1c_v1';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026); агрегат маленький — обычный кэш
+var CACHE_M1C = 'mat1c_v2';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026; v2 — поставка и перемещение раздельно, 10.09.2026); агрегат маленький — обычный кэш
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
@@ -1598,7 +1598,9 @@ function readWriteoff_(ss) {
  * («Профиль», «Керамогранит»), «Бухгалтерская номенклатура» — позиция поставщика.
  * Поэтому связка задаётся вручную в листе «Сопоставление_1С» (кол. G —
  * материал витрины); пустая колонка G = позицию не учитываем.
- * Наружу идёт агрегат: материал × МОЛ × единица → количество и сумма.
+ * Наружу идёт агрегат: материал × МОЛ × единица → количество и сумма,
+ * а с 10.09.2026 ещё и раздельно по типу документа: поставка («Поступление»)
+ * и перемещение — на витрине это три колонки (поставка · перемещение · итого).
  */
 function buildMat1c_(ss) {
   var units = m1cOurUnits_(ss);
@@ -1639,7 +1641,10 @@ function buildMat1c_(ss) {
     var row = data[r];
     var mol = m1cMol_(String(row[idx[CONFIG.M1C_MOL]] || '').trim());
     if (!mol) continue;
-    if (!docOk[String(row[idx[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0]]) continue;
+    // Тип документа нужен и дальше: поставка и перемещение идут отдельными
+    // колонками витрины (просьба пользователя 10.09.2026).
+    var docType = String(row[idx[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0];
+    if (!docOk[docType]) continue;
     if (!objOk[String(row[idx[CONFIG.M1C_OBJ]] || '').trim()]) continue;
     var nom = m1cText_(row[idx[CONFIG.M1C_NOM]]);
     var buh = m1cText_(row[idx[CONFIG.M1C_BUH]]);
@@ -1666,9 +1671,15 @@ function buildMat1c_(ss) {
     // Ключ — по КЛАССУ единицы, чтобы «пог. м» и «м.п.» не расходились
     // на две строки; подписью остаётся первая встреченная единица.
     var key = mat + '|' + mol + '|' + m1cUnitClass_(outUnit);
-    if (!agg[key]) agg[key] = { mat: mat, mol: mol, unit: outUnit, qty: 0, sum: 0 };
+    if (!agg[key]) agg[key] = { mat: mat, mol: mol, unit: outUnit, qty: 0, sum: 0,
+                                qtyIn: 0, sumIn: 0, qtyMv: 0, sumMv: 0 };
     agg[key].qty += outQty;
     agg[key].sum += sum;
+    // Поставка = «Поступление», перемещение = «Перемещение» (других типов
+    // документов в M1C_DOCS нет, но на всякий случай считаем перемещением
+    // только то, что им и названо).
+    if (docType === 'Перемещение') { agg[key].qtyMv += outQty; agg[key].sumMv += sum; }
+    else { agg[key].qtyIn += outQty; agg[key].sumIn += sum; }
   }
   var out = [];
   Object.keys(agg).forEach(function (k) {
@@ -1676,7 +1687,12 @@ function buildMat1c_(ss) {
     // Пустышки (ни количества, ни денег) наружу не отдаём — иначе у материала
     // появляется лишняя «единица» без значения.
     if (!a.qty && !a.sum) return;
-    out.push([a.mat, a.mol, a.unit, Math.round(a.qty * 100) / 100, Math.round(a.sum)]);
+    // Первые пять полей — ИТОГО (как было), дальше поставка и перемещение
+    // по отдельности: [материал, МОЛ, единица, кол-во, сумма,
+    //                  кол-во поставки, сумма поставки, кол-во перемещения, сумма перемещения]
+    out.push([a.mat, a.mol, a.unit, Math.round(a.qty * 100) / 100, Math.round(a.sum),
+              Math.round(a.qtyIn * 100) / 100, Math.round(a.sumIn),
+              Math.round(a.qtyMv * 100) / 100, Math.round(a.sumMv)]);
   });
   return { rows: out, unmappedSum: Math.round(unmappedSum), unmappedRows: unmappedRows,
            skipRows: skipRows, skipSum: Math.round(skipSum),

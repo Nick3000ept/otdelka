@@ -221,15 +221,25 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   лист целиком; флаги `overwrite`/`reset` у doPost `syncMap1c`;
   счётчики ответа mat1c: `unmappedRows/Sum` и отдельно `skipRows/Sum`
   (услуги и инструмент), на фронте — `mat1cSkipNote`;
-  та же шапка и те же колонки 1С в `renderMaterials` (`supTotal`/`supCellM`/
-  `sup1c`/`total1c`, colspan расшифровки 9, материалы «только из 1С» дописываются
-  в `list`),
+  та же шапка и те же колонки 1С в `renderMaterials` (`supTotal`/`sup1c`/
+  `sup1cCells`/`total1c`, материалы «только из 1С» дописываются в `list`),
   класс `mmat`, стоимость 1С берётся из того же ответа (r[4]); предупреждение о
   несопоставленных позициях — сразу под шапкой вкладки.
-  script.gs — `buildMat1c_`/`m1cText_`/`m1cNum_`/`m1cMol_` (перед `readLk_`),
-  `action=mat1c` в doGet (перед `tuzio`), doPost `syncMap1c` (перед
+- Поставка и перемещение РАЗНЫМИ колонками (10.09.2026): блок «1С» — три
+  колонки «Поставка · Перемещение · Итого». Общие помощники сразу после
+  `fmtQ`/`fmtR`: `newSupBucket`, `addSup` (раскладывает девятипольную строку
+  агрегата), `supCellText` (бывшие локальные `supCell`/`supCellM`),
+  `supHasSplit` (старый пятипольный кэш → одна колонка, как было).
+  В `renderMol` и `renderMaterials` — по своей `sup1cCells` (ячейки блока «1С»,
+  все три кликабельны, `data-supmat`), `const supSplit` рядом с картами
+  поставки; colspan шапки `1С` и расшифровки `mdetail` (8 или 10) считаются от
+  `supSplit`. Ширины при трёх колонках — CSS `table.check.mmat.m1c3` (рядом
+  с `.mmat th.grphead.g-*`), класс вешается на таблицу при `supSplit`.
+  script.gs — `buildMat1c_`/`m1cText_`/`m1cNum_`/`m1cMol_` (перед `readLk_`;
+  внутри `buildMat1c_` переменная `docType` и счётчики `qtyIn/sumIn/qtyMv/sumMv`
+  в `agg`), `action=mat1c` в doGet (перед `tuzio`), doPost `syncMap1c` (перед
   `addQuestion`) — пересборка листа `Сопоставление_1С` с сохранением ручных
-  колонок, `CACHE_M1C = 'mat1c_v1'` (+ в `clearCache`), блок CONFIG `M1C_*`.
+  колонок, `CACHE_M1C = 'mat1c_v2'` (+ в `clearCache`), блок CONFIG `M1C_*`.
   Разведка листа без данных наружу — `action=probe1c` (агрегаты: МОЛ, объекты,
   типы документов, месяцы, совпадения названий).
 

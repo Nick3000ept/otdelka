@@ -440,6 +440,13 @@
   table.check.mmat th.grphead.g-lk { width: 11%; }
   table.check.mmat th.grphead.g-1c { width: 13%; }
   table.check.mmat th.grphead.g-cost { width: 18%; }
+  /* Блок «1С» из ТРЁХ колонок (поставка · перемещение · итого, 10.09.2026) —
+     ему нужно больше места, поэтому у таблицы класс m1c3 со своей раскладкой. */
+  table.check.mmat.m1c3 thead tr:first-child th:first-child { width: 21%; }
+  table.check.mmat.m1c3 th.grphead.g-model { width: 22%; }
+  table.check.mmat.m1c3 th.grphead.g-lk { width: 9%; }
+  table.check.mmat.m1c3 th.grphead.g-1c { width: 26%; }
+  table.check.mmat.m1c3 th.grphead.g-cost { width: 16%; }
   table.check.mmat th.grphead {
     text-align: center; background: #edf2fb; border-bottom: 1px solid var(--border);
   }
@@ -3176,6 +3183,44 @@ const fmtQ = v => v ? new Intl.NumberFormat('ru-RU',
   { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v) : '';
 const fmtR = v => v ? fmtInt(Math.round(v)) : '';
 
+// --- Поставка по 1С: копилка количеств и денег (10.09.2026) ---------------
+// Количество нельзя сложить между разными единицами (штуки против м²), поэтому
+// каждый набор — это Map «единица → количество». Наборов три: поставка
+// («Поступление»), перемещение и итог; деньги складываются числом.
+function newSupBucket() {
+  return { units: new Map(), sum: 0,
+           inUnits: new Map(), inSum: 0,
+           mvUnits: new Map(), mvSum: 0 };
+}
+// Строка агрегата: [материал, МОЛ, единица, кол-во, сумма,
+//                   кол-во поставки, сумма поставки, кол-во перемещения, сумма перемещения]
+function addSup(o, r) {
+  const u = r[2];
+  o.units.set(u, (o.units.get(u) || 0) + (r[3] || 0));
+  o.sum += r[4] || 0;
+  o.inUnits.set(u, (o.inUnits.get(u) || 0) + (r[5] || 0));
+  o.inSum += r[6] || 0;
+  o.mvUnits.set(u, (o.mvUnits.get(u) || 0) + (r[7] || 0));
+  o.mvSum += r[8] || 0;
+}
+// Текст ячейки: «12 345,00» если единица та же, что у нас, иначе с подписью
+// единицы 1С; несколько единиц — через запятую.
+function supCellText(units, ourUnit) {
+  if (!units || !units.size) return '';
+  const parts = [];
+  units.forEach((q, u) => {
+    if (!q) return;
+    parts.push(fmtQ(q) + (unitClass(u) === unitClass(ourUnit) ? '' : ' ' + u));
+  });
+  return parts.join(', ');
+}
+// Старый серверный кэш (mat1c_v1) отдавал строки из пяти полей — разделения на
+// поставку и перемещение в них нет. Тогда показываем только колонку «Итого».
+function supHasSplit() {
+  const rows = state.mat1c || [];
+  return rows.length > 0 && rows[0].length > 5;
+}
+
 /**
  * Вкладка «МОЛ» (28.08.2026, бывшая «Материалы») — четыре материально
  * ответственных, у каждого два раздела:
@@ -3214,27 +3259,18 @@ function renderMol() {
   // Поставка по 1С (09.09.2026): ключ материала -> МОЛ -> единица -> кол-во.
   // Единицы 1С не всегда совпадают с нашими (профиль в штуках против м.п.),
   // поэтому количество храним по единицам и показываем с подписью единицы.
+  // С 10.09.2026 поставка и перемещение — отдельные колонки, поэтому количество
+  // копится в трёх наборах: только поставка (r[5]), только перемещение (r[7])
+  // и итог (r[3]). Старый кэш без этих полей — см. supHasSplit ниже.
   const supByMat = new Map();
   (state.mat1c || []).forEach(r => {
     const k = matKey(r[0]);
     if (!supByMat.has(k)) supByMat.set(k, new Map());
     const byMol = supByMat.get(k);
-    if (!byMol.has(r[1])) byMol.set(r[1], { units: new Map(), sum: 0 });
-    const o = byMol.get(r[1]);
-    o.units.set(r[2], (o.units.get(r[2]) || 0) + (r[3] || 0));
-    o.sum += r[4] || 0;
+    if (!byMol.has(r[1])) byMol.set(r[1], newSupBucket());
+    addSup(byMol.get(r[1]), r);
   });
-  // Текст ячейки поставки: «12 345,00» если единица та же, что у нас,
-  // иначе с подписью единицы 1С; несколько единиц — через запятую.
-  const supCell = (units, ourUnit) => {
-    if (!units || !units.size) return '';
-    const parts = [];
-    units.forEach((q, u) => {
-      if (!q) return;
-      parts.push(fmtQ(q) + (unitClass(u) === unitClass(ourUnit) ? '' : ' ' + u));
-    });
-    return parts.join(', ');
-  };
+  const supSplit = supHasSplit();
   // Все группы сворачиваемые (просьба 28.08.2026): на старте блоки МОЛ свёрнуты,
   // внутри раскрытого МОЛ разделы открыты, пока их не свернули отдельно.
   const chev = o => '<span class="chev">' + (o ? '▾' : '▸') + '</span> ';
@@ -3337,17 +3373,35 @@ function renderMol() {
         // Колонки сгруппированы (просьба 09.09.2026): «Модель» — расчёт по
         // «Расходам», «Личный кабинет» — лист «Списание материалов», «1С» —
         // фактическая поставка. Шапка в два ряда, ширины на первом ряду.
-        html += '<div class="bdetail-wrap"><table class="check mtab mmat"><thead>' +
+        // Блок «1С»: с 10.09.2026 поставка («Поступление») и перемещение —
+        // отдельные колонки, третья — их итог (просьба пользователя).
+        // Все три кликабельны: окно расшифровки одно и показывает оба разреза.
+        const sup1cCells = r => {
+          const attrs = r.sup ? ' data-supmat="' + escapeHtml(r.k) + '" data-supmol="' +
+            escapeHtml(mol) + '" data-supname="' + escapeHtml(r.name) + '"' : '';
+          const cell = (units, sep) => '<td class="num' + (sep ? ' bsep' : '') +
+            ' sup1c' + (r.sup ? ' sup-click' : '') + '"' + attrs + '>' +
+            escapeHtml(supCellText(units, r.unit)) + '</td>';
+          if (!supSplit) return cell(r.sup && r.sup.units, true);
+          return cell(r.sup && r.sup.inUnits, true) +
+                 cell(r.sup && r.sup.mvUnits, false) +
+                 cell(r.sup && r.sup.units, false);
+        };
+        html += '<div class="bdetail-wrap"><table class="check mtab mmat' +
+          (supSplit ? ' m1c3' : '') + '"><thead>' +
           '<tr><th rowspan="2">Материал</th>' +
           '<th rowspan="2" class="c-unit">Ед. изм</th>' +
           '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
           '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-          '<th class="bsep grphead g-1c">1С</th>' +
+          '<th colspan="' + (supSplit ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
           '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
           '<tr class="sub"><th class="num bsep">Объем итого</th>' +
           '<th class="num">Выполнено натурально</th>' +
           '<th class="num bsep">К списанию</th>' +
-          '<th class="num bsep">Поставка + перемещение</th>' +
+          (supSplit
+            ? '<th class="num bsep">Поставка</th><th class="num">Перемещение</th>' +
+              '<th class="num">Итого</th>'
+            : '<th class="num bsep">Поставка + перемещение</th>') +
           '<th class="num bsep">Модель, руб</th>' +
           '<th class="num">1С, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
@@ -3355,10 +3409,7 @@ function renderMol() {
             '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
             '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
-            '<td class="num bsep sup1c' + (r.sup ? ' sup-click' : '') + '"' +
-              (r.sup ? ' data-supmat="' + escapeHtml(r.k) + '" data-supmol="' +
-                escapeHtml(mol) + '" data-supname="' + escapeHtml(r.name) + '"' : '') +
-              '>' + escapeHtml(supCell(r.sup && r.sup.units, r.unit)) + '</td>' +
+            sup1cCells(r) +
             '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
             '<td class="num">' + escapeHtml(fmtR(r.sup ? r.sup.sum : 0)) +
             '</td></tr>').join('') +
@@ -3366,6 +3417,7 @@ function renderMol() {
           '<td class="num"></td>' +
           '<td class="num bsep"></td>' +
           '<td class="num bsep"></td>' +
+          (supSplit ? '<td class="num"></td><td class="num"></td>' : '') +
           '<td class="num bsep">' + escapeHtml(fmtR(tCost)) + '</td>' +
           '<td class="num">' + escapeHtml(fmtR(t1c)) +
           '</td></tr></tfoot></table></div>';
@@ -3418,22 +3470,12 @@ function renderMaterials() {
   const supTotal = new Map();
   (state.mat1c || []).forEach(r => {
     const k = matKey(r[0]);
-    if (!supTotal.has(k)) supTotal.set(k, { units: new Map(), sum: 0,
+    if (!supTotal.has(k)) supTotal.set(k, Object.assign(newSupBucket(), {
       name: matTitle(k, r[0]),
-      unit: (state.unitByMaterial && state.unitByMaterial.get(norm(r[0]))) || '' });
-    const o = supTotal.get(k);
-    o.units.set(r[2], (o.units.get(r[2]) || 0) + (r[3] || 0));
-    o.sum += r[4] || 0;
+      unit: (state.unitByMaterial && state.unitByMaterial.get(norm(r[0]))) || '' }));
+    addSup(supTotal.get(k), r);
   });
-  const supCellM = (units, ourUnit) => {
-    if (!units || !units.size) return '';
-    const parts = [];
-    units.forEach((q, u) => {
-      if (!q) return;
-      parts.push(fmtQ(q) + (unitClass(u) === unitClass(ourUnit) ? '' : ' ' + u));
-    });
-    return parts.join(', ');
-  };
+  const supSplit = supHasSplit();
   const calc = buildMaterialCalc(null, allFactVolumes());
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
@@ -3447,9 +3489,21 @@ function renderMaterials() {
   });
   const total = list.reduce((s, r) => s + r.cost, 0);
   // Материал без поставки — пустой объект, чтобы не проверять null в каждой ячейке.
-  const sup1c = k => supTotal.get(k) || { units: null, sum: 0 };
+  const sup1c = k => supTotal.get(k) || newSupBucket();
   // Деньги 1С складываются, количества — нет (единицы разные).
   const total1c = list.reduce((s, r) => s + sup1c(r.k).sum, 0);
+  // Блок «1С» из трёх колонок: поставка · перемещение · итого (10.09.2026).
+  const sup1cCells = r => {
+    const has = supTotal.has(r.k);
+    const attrs = has ? ' data-supmat="' + escapeHtml(r.k) +
+      '" data-supname="' + escapeHtml(r.name) + '"' : '';
+    const cell = (units, sep) => '<td class="num' + (sep ? ' bsep' : '') +
+      ' sup1c' + (has ? ' sup-click' : '') + '"' + attrs + '>' +
+      escapeHtml(supCellText(units, r.unit)) + '</td>';
+    const o = sup1c(r.k);
+    if (!supSplit) return cell(o.units, true);
+    return cell(o.inUnits, true) + cell(o.mvUnits, false) + cell(o.units, false);
+  };
   const open = state.matOpen;
   let body = '';
   list.forEach(r => {
@@ -3460,16 +3514,13 @@ function renderMaterials() {
       '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
       '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
-      '<td class="num bsep sup1c' + (supTotal.has(r.k) ? ' sup-click' : '') + '"' +
-        (supTotal.has(r.k) ? ' data-supmat="' + escapeHtml(r.k) +
-          '" data-supname="' + escapeHtml(r.name) + '"' : '') + '>' +
-        escapeHtml(supCellM(sup1c(r.k).units, r.unit)) + '</td>' +
+      sup1cCells(r) +
       '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(sup1c(r.k).sum)) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="8">' +
+    body += '<tr class="mdetail"><td colspan="' + (supSplit ? 10 : 8) + '">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
@@ -3488,22 +3539,26 @@ function renderMaterials() {
       '</tbody></table></td></tr>';
   });
   // Колонки сгруппированы так же, как на вкладке «МОЛ» (просьба 09.09.2026).
-  const tbl = '<table class="check mtab mmat"><thead>' +
+  const tbl = '<table class="check mtab mmat' + (supSplit ? ' m1c3' : '') + '"><thead>' +
     '<tr><th rowspan="2">Материал</th>' +
     '<th rowspan="2" class="c-unit">Ед. изм</th>' +
     '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
     '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-    '<th class="bsep grphead g-1c">1С</th>' +
+    '<th colspan="' + (supSplit ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
     '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
     '<tr class="sub"><th class="num bsep">Объем итого</th>' +
     '<th class="num">Выполнено натурально</th>' +
     '<th class="num bsep">К списанию</th>' +
-    '<th class="num bsep">Поставка + перемещение</th>' +
+    (supSplit
+      ? '<th class="num bsep">Поставка</th><th class="num">Перемещение</th>' +
+        '<th class="num">Итого</th>'
+      : '<th class="num bsep">Поставка + перемещение</th>') +
     '<th class="num bsep">Модель, руб</th>' +
     '<th class="num">1С, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
     '<td class="num"></td>' +
     '<td class="num bsep"></td><td class="num bsep"></td>' +
+    (supSplit ? '<td class="num"></td><td class="num"></td>' : '') +
     '<td class="num bsep">' + escapeHtml(fmtR(total)) + '</td>' +
     '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td></tr></tfoot></table>';
   // Та же оговорка, что и на «МОЛ»: часть позиций 1С ещё не связана с материалами.
