@@ -243,6 +243,23 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   Разведка листа без данных наружу — `action=probe1c` (агрегаты: МОЛ, объекты,
   типы документов, месяцы, совпадения названий).
 
+## index.html — выгрузка таблиц (10.09.2026)
+
+- Весь блок — в САМОМ КОНЦЕ скрипта, перед `if (state.token)`. Порядок функций:
+  `SCREEN_TITLES`/`PANE_TITLES` → `prevHeading` → `exportTitleFor` → `dlFileName` →
+  `exportTableClone` → `downloadTableExcel` → `printTablePdf` → `exportBar` →
+  `DL_ROOTS`/`dlHidden`/`mountExportBars` → `scheduleExportBars` + два
+  `MutationObserver` (на `main` и на `#modal-body`) → делегированный обработчик
+  кликов на `document` (`.dl-opt` — выгрузить, клик мимо — закрыть меню).
+- CSS `.dl-bar`/`.dl-menu`/`.dl-options`/`.dl-opt` — сразу после `.check-desc`.
+- Ещё одна строка: вызов `scheduleExportBars()` в конце `setStatus` (показ панелей
+  меняет только стиль, наблюдатель за разметкой такое не ловит).
+- Кнопка вставляется перед таблицей (или перед её `.bdetail-wrap`), таблицу находит
+  в момент клика через `bar.nextElementSibling`. Вложенные `table.inner` пропускаются
+  по `tbl.parentElement.closest('table')`.
+- Автотесты на jsdom (19 проверок) писались в scratchpad сессии 10.09, в проект
+  не сохранялись; при правках блока проще написать заново — образец в CLAUDE.md.
+
 ## index.html — Бюджет
 
 - ~1505 `loadBudget`; ~1519 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
