@@ -2,10 +2,13 @@
 
 Карта кода `index.html` и `script.gs` — **читать перед правкой вместо чтения всего файла**;
 после правки актуализировать сдвинувшиеся номера строк затронутых секций.
-Номера строк — исторические ориентиры (на 2026-08-24 index.html ~3556 строк,
-script.gs ~1443): правки бюджета 18–24.08 сдвинули секции ниже «Бюджета» ещё на
-сотни строк, точечно обновлялись только затронутые секции. Надёжнее искать по
-именам функций (Grep), номера воспринимать как порядок следования.
+Номера строк **сверены с кодом 2026-09-10** (index.html 6883 строки, script.gs 2963):
+82 ссылки на функции и константы пересчитаны по фактическим объявлениям в файлах,
+плюс вручную поправлены указатели на обработчики событий и блоки стилей — номерам
+можно верить. До этого они оставались от состояния на 2026-08-24 (index.html был
+~3556 строк) и разъехались примерно на 500 строк. Правило прежнее: правишь код —
+поправь номера затронутых секций, иначе карта снова начнёт врать. При сомнении
+искать по именам функций (Grep) — это надёжнее любых номеров.
 
 > Вопрос «не показывает объёмы» (05.08) закрыт: пусто было у работ, которых нет
 > в поэтажке (46 из 137; объём в справочнике был у 2 — «Дверные откосы» и «Лифтовые
@@ -26,60 +29,60 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
 
 ## index.html — константы и state
 
-- ~568 `GAS_URL`; ~600 `filled`; 649 **`state`** (все данные и UI-состояние; см. комменты;
+- ~952 `GAS_URL`; ~986 `filled`; 1006 **`state`** (все данные и UI-состояние; см. комменты;
   12.08 добавлены `budgetContr`/`budgetContrOpen`)
-- 649 `hasVolume` (признак лидерного объёма); 657 `workVolD` — ЧИСТЫЙ объём работы
+- 1123 `hasVolume` (признак лидерного объёма); 1131 `workVolD` — ЧИСТЫЙ объём работы
   из поэтажки D (сумма volsTotals; «Объем работ» справочника — с коэффициентом);
   если работы в поэтажке нет и volsStatus='ready' — запасной объём из справочника (05.08)
-- 681 `norm`; 685 `fmtCell`; 696 `fmtVol`; 707 `escapeHtml`; 721 `COL_ORDER`
+- 1155 `norm`; 1159 `fmtCell`; 1170 `fmtVol`; 1181 `escapeHtml`; 1195 `COL_ORDER`
   (⚠️ новые колонки Sheets сами на витрине не появятся — добавлять сюда)
-- 1059 `ALL_CORPS`, `BASE_RATE_COL`, `BASE_MAT_COL`, `fmtInt`
+- 1624 `ALL_CORPS`, `BASE_RATE_COL`, `BASE_MAT_COL`, `fmtInt`
 
 ## index.html — дерево работ (Расценки/Объемы)
 
-- 730 `workColumns`; 757 `cellHtml` (VOL_COL: «…» пока volsStatus loading, потом workVolD;
+- 1204 `workColumns`; 1254 `cellHtml` (VOL_COL: «…» пока volsStatus loading, потом workVolD;
   запасной объём из справочника — приглушённый, с title-подсказкой;
   кнопка «Вопрос» в wname на rates)
-- 832 `groupWorks` (Место→Поверхность→Группа; сумматоры групп по workVolD, лидерные сверху)
-- 903 `renderTable` — главный рендер; чанки по 300; поиск раскрывает всё (showAll);
+- 1338 `groupWorks` (Место→Поверхность→Группа; сумматоры групп по workVolD, лидерные сверху)
+- 1409 `renderTable` — главный рендер; чанки по 300; поиск раскрывает всё (showAll);
   класс `vols` = мелкий шрифт чисел
-- 2443 `selectWork`; 2452 `toggleGroup`; 2458 клик `#tbody`; 2483/2490 развернуть/сбросить;
-  2620 поиск (debounce)
+- 6255 `selectWork`; 6264 `toggleGroup`; 6270 клик `#tbody`; 6373 сброс фильтров;
+  6530 поиск (debounce)
 
 ## index.html — нижняя панель (Расценки)
 
-- ~1207 `contractorsHtml` — сводная подрядчик×корпус; режимы `ctrMode` work|mat|both;
+- ~1629 `contractorsHtml` — сводная подрядчик×корпус; режимы `ctrMode` work|mat|both;
   блоки Подрядчики/СС; «Базовая расценка» в незанятых корпусах; с 14.08 сверка
   ячеек с contrRates (`vedom`/`misTxt`, класс `rate-bad` красным, СС не сверяется)
-- 1152 `renderBottomPane`; 1179 `contractorDetailHtml` (СС — через ssNames поэтажки +
-  Справочник СС); 1237 `miniTable`; 2362 клик `#ctr-body`; 2394 `materialsHtml`
+- 1753 `renderBottomPane`; 1780 `contractorDetailHtml` (СС — через ssNames поэтажки +
+  Справочник СС); 1838 `miniTable`; 6169 клик `#ctr-body`; 6206 `materialsHtml`
 
 ## index.html — Объемы
 
-- 1252 `loadVols` — action=volumes; totals → `state.volsTotals`; с 05.08 грузится ФОНОМ
+- 1853 `loadVols` — action=volumes; totals → `state.volsTotals`; с 05.08 грузится ФОНОМ
   при старте (нужен для колонки «Объем работ» на Расценках); по готовности перерисовка
-- 1624 `openVolModal` — поэтажная ведомость (модалка)
+- 4879 `openVolModal` — поэтажная ведомость (модалка)
 
 ## index.html — Факт (отметки выполнения, 10.08.2026)
 
-- 497 сайдбар `data-screen="fact"`; 454 CSS `.factgrid/.fcell/.fpct/.fdone/.fcorp-done`
-- 628 state: `factMarks/factStatus/factRef/factRefStatus/factPending/factSaving/factModalKey`
-- 798 `factPct` — средневзвешенный % готовности (веса — объёмы этажей vols);
-  816 `cellHtml` (ветки corp/total для fact); 1079 `factSums` в renderTable (группы —
+- 860 сайдбар `data-screen="fact"`; 817 CSS `.factgrid/.fcell/.fpct/.fdone/.fcorp-done`
+- 1006 state: `factMarks/factStatus/factRef/factRefStatus/factPending/factSaving/factModalKey`
+- 1236 `factPct` — средневзвешенный % готовности (веса — объёмы этажей vols);
+  1254 `cellHtml` (ветки corp/total для fact); 1536 `factSums` в renderTable (группы —
   только лидерные работы)
-- 1784 `loadFact` (action=fact); 1798 `loadFactRef` (action=factRef, по готовности
-  перерисовывает открытую сетку, если пользователь не печатает); 1820 `refreshFactScreen`
-- 1841 `openFactModal` — сетка этажи×корпуса (план-объём, input, ✓, «✓ все» на корпус,
-  строка «Готовность», подсказки из factRef); 1913 `ensureUserName`
-- 1923 `applyFactInput` (валидация 0..100, optimistic, очередь); 1972 `scheduleFactFlush`
-  (пауза 1,2 с); 1977 `flushFactMarks` (POST saveFact пакетом, 3 ретрая, откат + alert);
-  2020 beforeunload; 2779 `closeModal` — немедленный flush несохранённого
-- 2697 setScreen ветка fact; клик tbody: fact -> openFactModal
+- 4928 `loadFact` (action=fact); 4942 `loadFactRef` (action=factRef, по готовности
+  перерисовывает открытую сетку, если пользователь не печатает); 4964 `refreshFactScreen`
+- 4985 `openFactModal` — сетка этажи×корпуса (план-объём, input, ✓, «✓ все» на корпус,
+  строка «Готовность», подсказки из factRef); 5057 `ensureUserName`
+- 5067 `applyFactInput` (валидация 0..100, optimistic, очередь); 5116 `scheduleFactFlush`
+  (пауза 1,2 с); 5121 `flushFactMarks` (POST saveFact пакетом, 3 ретрая, откат + alert);
+  5164 beforeunload; 6189 `closeModal` — немедленный flush несохранённого
+- 5970 setScreen ветка fact; клик tbody: fact -> openFactModal
 
 ## index.html — Аналитика (26.08.2026)
 
 - Пункт сайдбара `data-screen="analytics"` (под «Бюджетом»), контейнер
-  `#analytics-screen`, CSS `.an-legend`/`.an-dot`/`.an-chart` (~367);
+  `#analytics-screen`, CSS `.an-legend`/`.an-dot`/`.an-chart` (~611);
   `state.analytics`/`analyticsStatus`; ветка isAnalytics в `setScreen`
 ## index.html — шапка (26.08.2026)
 
@@ -262,7 +265,7 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
 
 ## index.html — Бюджет
 
-- ~1505 `loadBudget`; ~1519 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
+- ~1892 `loadBudget`; ~1928 `renderBudget` — статьи ПО АЛФАВИТУ (order с исходными
   индексами — на них ключи раскрытий), «Накладные расходы» пришпилена вниз
   (`isBottomItem`, 25.08); колонки Статья·Объем·
   Работы·Материалы (18.08, `hasSplit`/`splitTd`/`wSumW`, значения на всех уровнях)·
@@ -314,51 +317,51 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   поля cell[9..13]); работы паркинга (corp='Паркинг') и подрядчики статьи
   «Накладные расходы» (corp='НР', 25.08) не раскрываются
   (класс `bflat`, проверка в workRowHtml и клике #budget-screen)
-- ~1660 `budgetWorkHtml` — сводная работы: строки подрядчик×расценка (разные расценки =
+- ~4603 `budgetWorkHtml` — сводная работы: строки подрядчик×расценка (разные расценки =
   отдельные строки), «Не определен» сверху (базовые расценки справочника), блоки
   Подрядчики/СС (плашки), колонка «Итого» справа, tfoot «Итого»; ячейки кликабельны (bcell);
   фильтр подрядчиков действует и здесь (fSel/fActive); с 18.08 в ячейках две суммы —
   работы (cell[5], AE) и материалы (AG−AE, класс `.bmat`), fallback `hasSplit` для
   старого кэша; в renderBudget — фильтр по работе `#bsearch`/`budgetQuery` (wMatch,
   автораскрытие при поиске, input-обработчик на #budget-screen с debounce)
-- 1722 `loadBudgetFloors`; 1735 `openBudgetCellModal` — расшифровка ячейки по этажам
+- 4761 `loadBudgetFloors`; 4774 `openBudgetCellModal` — расшифровка ячейки по этажам
   (модалка: Этаж·Объем·Раб/ед·Мат/ед·Стоимость; action=budgetFloors, грузится при 1-м клике)
 - 1783 клик `#budget-screen` (сначала bfilter-item/reset/btn и закрытие списка,
   потом bcell/bgrp/bwork/brow)
 
 ## index.html — Проверки
 
-- 1669 `renderCheckRates` — «Недостающие расценки» (лист «Проверки расценки» как есть)
-- 1701 `DEV_LIMIT`; 1703 `workRateChecks`; 1734 `renderCheckWorkRates` — «Отклонения
-  расценок» (базовая vs средние из floors; группы sect сворачиваются); 1799 `checkDetailHtml`
-- 1835 `noCostChecks` (только объём>0); 1857 `renderCheckNoCost` — «Без стоимости»
+- 5200 `renderCheckRates` — «Недостающие расценки» (лист «Проверки расценки» как есть)
+- 5232 `DEV_LIMIT`; 5234 `workRateChecks`; 5265 `renderCheckWorkRates` — «Отклонения
+  расценок» (базовая vs средние из floors; группы sect сворачиваются); 5330 `checkDetailHtml`
+- 5366 `noCostChecks` (только объём>0); 5388 `renderCheckNoCost` — «Без стоимости»
   (группы, всё свернуто по умолчанию)
-- 1909 `FORMULA_ERR_RE`; 1911 `formulaChecks`; 1956 `renderCheckFormulas` — «Формулы»
+- 5440 `FORMULA_ERR_RE`; 5442 `formulaChecks`; 5487 `renderCheckFormulas` — «Формулы»
   (ошибки #N/A и т.п. в листе «Работы» И в «Расходах»; ошибки приходят текстом)
-- ~2489 `CHANGE_FIELDS`; ~2496 `loadChanges`; ~2512 `renderCheckChanges` — «Изменения»:
+- ~5518 `CHANGE_FIELDS`; ~5525 `loadChanges`; ~5541 `renderCheckChanges` — «Изменения»:
   с 14.08 иерархия как в «Бюджете» (статья → группа → работа, соответствие из
   state.budget w[3]; state `chgOpen/chgGrpCollapsed/chgWorkOpen`; классы строк
   brow/bgrp/bwork с data-chgart/chggrp/chgwork — стили бюджета переиспользованы,
   клики в обработчике #check-screen; работы «— вне бюджета —» отдельной статьёй;
   budget error → плоский список; детали строк — столбцами CH_COLS/fieldCell:
   Подрядчик · Стоимость мат./работ за ед. · Объём · Стоимость, mod красным);
-  кнопка `#baseline-save`; ~2720 `saveBaseline` (с 18.08 требует админ-пароль:
+  кнопка `#baseline-save`; ~5744 `saveBaseline` (с 18.08 требует админ-пароль:
   prompt -> localStorage `otdelka_admin` -> POST `at`, бэк сверяет с ADMIN_PASSWORD)
-- 2183 `renderCheckQuestions` — «Вопросы» (кнопка статуса qstatus)
-- 2261 `updateCheckBadges`; 2279 `CHECK_SCREENS` (экран → рендер; новые проверки сюда);
+- 5862 `renderCheckQuestions` — «Вопросы» (кнопка статуса qstatus)
+- 5940 `updateCheckBadges`; 5960 `CHECK_SCREENS` (экран → рендер; новые проверки сюда);
   2325 клик `#check-screen` (qstatus/baseline-save/ncgrp/grp/wrow)
 
 ## index.html — Вопросы (запись)
 
-- 2105 `postJson` (POST text/plain — обход CORS-preflight); 2120 `loadQuestions` (фоном);
-  2135 `openQuestionModal`; 2152 `submitQuestion`; 2230 `toggleQuestionStatus`
+- 5784 `postJson` (POST text/plain — обход CORS-preflight); 5799 `loadQuestions` (фоном);
+  5814 `openQuestionModal`; 5831 `submitQuestion`; 5909 `toggleQuestionStatus`
   (optimistic + откат); имя — localStorage `otdelka_user`
 
 ## index.html — каркас
 
-- 2288 `setScreen`; 2498 `setStatus`; 2509 `fetchWithRetry` (3 попытки)
-- 2531 `loadData` — action=load; затем фоном: `loadFloors` + `loadQuestions` + `loadVols`
-- 2575 `loadFloors`; 2593/2600 gate/app; 2610 `submitPassword`
+- 5970 `setScreen`; 6390 `setStatus`; 6404 `fetchWithRetry` (3 попытки)
+- 6426 `loadData` — action=load; затем фоном: `loadFloors` + `loadQuestions` + `loadVols`
+- 6484 `loadFloors`; 2593/2600 gate/app; 6520 `submitPassword`
 
 ## script.gs (деплой ТОЛЬКО clasp update-deployment, сейчас v24+)
 
@@ -377,22 +380,22 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   BASELINE_FILE_ID; первая база зафиксирована 2026-08-05; с 26.08 в файле также
   `extras` — слепок доп-статей бюджета, `buildBaselineExtras_` рядом с
   `readBaseSums_`, пишется в saveBaseline)
-- ~177 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
-  расц.раб, расц.мат]; ~246 `diffBaseline_` (add/del/mod)
-- ~315 `doPost` — saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
+- ~271 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
+  расц.раб, расц.мат]; ~340 `diffBaseline_` (add/del/mod)
+- ~382 `doPost` — saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
   ветка ДО чтения вопросов) / importShamov (перезапись листа «расчет_Шамов»
   целиком, «Месяц» текстовым форматом; 24.08) / addQuestion / saveBaseline /
   setQuestionStatus (LockService, пароль)
 - `buildAnalytics_` (26.08, перед `readSsFact_`) — затраты МОРС × месяц и закрытия
   «Формы КП» по месячным колонкам (даты в строке 1, без даты — пропуск), для
   action=analytics (вкладка «Аналитика»; ответ статья → {месяц: сумма} + morsStatus)
-- ~393 `doGet`: ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
+- ~694 `doGet`: ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
   `#sb-refresh` «Обновить данные» внизу сайдбара) · meta (безопасно из чата) ·
   probe (агрегаты) · floors · volumes · questions · budget · analytics (26.08) · changes ·
   budgetFloors · fact (отметки, без кэша) · factRef (справка V/Z) · load
-- ~737 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
+- ~1406 `buildFloorSummary_` — работа → [[подрядчик, корпус, расц.раб, СС, расц.мат], …]
   ⚠️ ключ склеен через НЕВИДИМЫЙ символ (код 1) — Edit его не находит, править вокруг
-- ~818 `buildVolumes_`; ~935 `readLk_` («Личные_кабинеты» → [[МОЛ, статья,
+- ~1487 `buildVolumes_`; ~1885 `readLk_` («Личные_кабинеты» → [[МОЛ, статья,
   выполнено], …], в ответе budget — `lk`); дальше `readKp_` («Форма КП» →
   [[статья N, закрытие F], …], в ответе budget — `kp`); `readBaseSums_`
   (слепок базы → {date, works: [[работа, подрядчик, сумма], …]}, в ответе
@@ -420,9 +423,9 @@ script.gs ~1443): правки бюджета 18–24.08 сдвинули сек
   [подрядчик, корпус, стоимость AG, объём, коэф, работы AE, факт AA,
   факт работы Z×AB, факт материалы Z×AC, 0×5, переделки AG−AI в cell[14]];
   строки без стоимости AG пропускаются; тот же невидимый символ);
-  ~959 `buildBudgetFloors_` (работа → 'подрядчик|корпус' → {r:[расц], f:[[этаж,объём,стоимость]]})
-- 1070 `safeCell_` (экранирование =+-@, лимит 1000); 1078 `ensureFactSheet_` (создаёт
-  лист «Факт» с заголовками); 1092 `readFactMarks_` (журнал → последняя отметка по
-  ключу); 1118 `buildFactRef_` (поэтажка V/Z → работа|корпус|этаж, % средневзв. по
+  ~2742 `buildBudgetFloors_` (работа → 'подрядчик|корпус' → {r:[расц], f:[[этаж,объём,стоимость]]})
+- 2822 `safeCell_` (экранирование =+-@, лимит 1000); 2830 `ensureFactSheet_` (создаёт
+  лист «Факт» с заголовками); 2844 `readFactMarks_` (журнал → последняя отметка по
+  ключу); 2870 `buildFactRef_` (поэтажка V/Z → работа|корпус|этаж, % средневзв. по
   объёму, доли ×100 по максимуму колонки)
-- ~1186 `sheetToObjects_`; ~1205 `jsonOut_`
+- ~2940 `sheetToObjects_`; ~2959 `jsonOut_`
