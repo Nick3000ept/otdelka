@@ -277,6 +277,14 @@
   `molAll().filter(molPass)`, `general = !MOL_FINISH.includes(mol)`.
   script.gs: `m1cShortFio_` сразу после `m1cMol_` (он же фолбэк для всех
   МОЛ вне `M1C_MOLS`); кэши `mat1c_v5`, `mat1cd_v3`.
+- Связка списания ЛК (11.09.2026): фронт — `woTarget`/`woTitle`/`woNotesHtml`
+  перед `loadWriteoff`, `state.lkMap` (заполняется в `loadWriteoff`); в
+  `renderMol` — `offByMat` с `src` и `woNotes`, поле `offSrc` строки; в
+  `renderMaterials` — `offTotal`/`offInfo`/`woNotes`, дописка строк «только из
+  списания» (`listed`); `mfMaterials` берёт `woTarget(r).raw`. script.gs —
+  CONFIG `SHEET_MAPLK`, `readMapLk_` перед `readWriteoff_`, поле `lkMap` в
+  `action=writeoff`, doPost `syncMapLk` перед `readQuestions_()` (и перед
+  `syncMap1c`), `CACHE_WO = 'writeoff_v2'`.
 
 ## index.html — выгрузка таблиц (10.09.2026)
 

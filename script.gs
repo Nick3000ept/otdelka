@@ -100,6 +100,10 @@ var CONFIG = {
   WO_VOL: 'Объем материала итого',
   WO_OFF: 'Материал к списанию итого',
   WO_MOL: 'МОЛ',
+  // Связка материалов списания ЛК с материалами модели (11.09.2026) — названия
+  // в личных кабинетах не всегда как в «Расходах» (штукатурка). Лист создаёт
+  // doPost syncMapLk, человек заполняет «Материал витрины» и коэффициент.
+  SHEET_MAPLK: 'Сопоставление_ЛК',
 
   // Колонка «Поставка (1С)» на вкладке «МОЛ» (09.09.2026): движения материалов
   // из 1С. Что считаем поставкой — решения пользователя 09.09.2026: документы
@@ -145,7 +149,7 @@ var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотруд�
 var CACHE_M1CD = 'mat1cd_v3';  // расшифровка поставки 1С по позициям/документам/объектам (модалка вкладок «МОЛ» и «Материалы», 09.09.2026; v2 — правило «поступл» и общестроительные МОЛ, 11.09.2026); чанкованный
 var CACHE_M1CU = 'mat1cu_v1';  // позиции 1С по материалам с РАЗНЫМИ единицами (проверка «Единицы 1С», 09.09.2026)
 var CACHE_M1C = 'mat1c_v5';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026; v2 — поставка и перемещение раздельно, 10.09.2026; v4 — правило «поступл», общестроительные МОЛ, дата выгрузки, несопоставленное по МОЛ; v5 — все МОЛ выгрузки, 11.09.2026); агрегат маленький — обычный кэш
-var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
+var CACHE_WO = 'writeoff_v2';     // списание материалов (вкладка «Материалы», 28.08.2026; v2 — + связка lkMap из «Сопоставление_ЛК», 11.09.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
 function clearCache() {
@@ -534,6 +538,67 @@ function doPost(e) {
       }
       shTz.getRange(tzAt, 1, tzData.length, tzWide).setValues(tzData);
       return jsonOut_({ ok: true, rows: tzData.length, total: shTz.getLastRow() - 1 });
+    }
+
+    // Обновление листа «Сопоставление_ЛК» (11.09.2026): список материалов листа
+    // «Списание материалов» (материал · ед. изм · тип · МОЛ · к списанию) плюс
+    // ручные колонки «Материал витрины» / «Коэф. в ед. витрины» / «Комментарий»,
+    // которые СОХРАНЯЮТСЯ при пересборке (ключ «материал|единица»). Необязательный
+    // `draft` — черновик для пустых строк. Пишет только этот лист.
+    // Тело: { t, action: 'syncMapLk', draft: [[материал ЛК, ед, материал витрины, коэф, коммент], …] }
+    if (body.action === 'syncMapLk') {
+      var ssL = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+      var woL = readWriteoff_(ssL);
+      if (!woL.length) return jsonOut_({ ok: false, error: 'no_source' });
+      var shL = ssL.getSheetByName(CONFIG.SHEET_MAPLK);
+      var keepL = {};
+      if (shL && shL.getLastRow() > 1) {
+        var oldL = shL.getRange(2, 1, shL.getLastRow() - 1, 8).getValues();
+        for (var li = 0; li < oldL.length; li++) {
+          var lMat = m1cText_(oldL[li][5]), lCoef = m1cText_(oldL[li][6]);
+          var lNote = m1cText_(oldL[li][7]);
+          if (!lMat && !lCoef && !lNote) continue;
+          keepL[m1cText_(oldL[li][0]) + '|' + m1cText_(oldL[li][1])] = [lMat, lCoef, lNote];
+        }
+      }
+      var draftL = {};
+      if (Array.isArray(body.draft)) {
+        body.draft.forEach(function (dr) {
+          dr = dr || [];
+          draftL[m1cText_(dr[0]) + '|' + m1cText_(dr[1])] =
+            [m1cText_(dr[2]), m1cText_(dr[3]), m1cText_(dr[4])];
+        });
+      }
+      var posL = {};
+      woL.forEach(function (w) {
+        if (!w[1]) return;
+        var k = w[1] + '|' + w[2];
+        if (!posL[k]) posL[k] = { mat: w[1], unit: w[2], type: w[0], mols: {}, off: 0 };
+        posL[k].off += w[4] || 0;
+        if (w[5]) posL[k].mols[w[5]] = true;
+        if (!posL[k].type && w[0]) posL[k].type = w[0];
+      });
+      var keysL = Object.keys(posL).sort(function (a, b) { return posL[b].off - posL[a].off; });
+      var keptL = 0, draftedL = 0;
+      var rowsL = [['Материал ЛК', 'Ед. изм ЛК', 'Тип материала ЛК', 'МОЛ', 'К списанию всего',
+                    'Материал витрины', 'Коэф. в ед. витрины', 'Комментарий']];
+      keysL.forEach(function (k) {
+        var p = posL[k];
+        var was = keepL[k] || ['', '', ''];
+        var dr = draftL[k] || ['', '', ''];
+        if (was[0] || was[1] || was[2]) keptL++;
+        if (!was[0] && dr[0]) draftedL++;
+        rowsL.push([safeCell_(p.mat), safeCell_(p.unit), safeCell_(p.type),
+                    safeCell_(Object.keys(p.mols).join(', ')), Math.round(p.off * 100) / 100,
+                    safeCell_(was[0] || dr[0]), safeCell_(was[1] || dr[1]),
+                    safeCell_(was[2] || dr[2])]);
+      });
+      if (!shL) shL = ssL.insertSheet(CONFIG.SHEET_MAPLK);
+      shL.clearContents();
+      shL.getRange(1, 1, rowsL.length, 8).setValues(rowsL);
+      shL.setFrozenRows(1);
+      CacheService.getScriptCache().remove(CACHE_WO);
+      return jsonOut_({ ok: true, positions: keysL.length, kept: keptL, drafted: draftedL });
     }
 
     var list = readQuestions_();
@@ -1096,7 +1161,8 @@ function doGet(e) {
           .setMimeType(ContentService.MimeType.JSON);
       }
       var ssW = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-      var payloadW = JSON.stringify({ ok: true, writeoff: readWriteoff_(ssW) });
+      var payloadW = JSON.stringify({ ok: true, writeoff: readWriteoff_(ssW),
+                                      lkMap: readMapLk_(ssW) });
       if (payloadW.length < 95000) cacheW.put(CACHE_WO, payloadW, 21600);
       return ContentService.createTextOutput(payloadW)
         .setMimeType(ContentService.MimeType.JSON);
@@ -1558,6 +1624,25 @@ function buildVolumes_(ss) {
  * фильтр по типам материалов и группировка — на фронте.
  * ⚠️ «Тип материала» заполнен не у всех строк (на 27.08 — 84 из 200).
  */
+/**
+ * Связка списания ЛК с моделью (11.09.2026): лист «Сопоставление_ЛК» →
+ * [[материал ЛК, ед. изм ЛК, материал витрины, коэффициент], …] — только
+ * строки, где человек что-то вписал. Пустой «Материал витрины» = материал
+ * списания остаётся своей строкой, как было.
+ */
+function readMapLk_(ss) {
+  var sh = ss.getSheetByName(CONFIG.SHEET_MAPLK);
+  if (!sh || sh.getLastRow() < 2) return [];
+  var d = sh.getRange(2, 1, sh.getLastRow() - 1, 8).getValues();
+  var out = [];
+  for (var i = 0; i < d.length; i++) {
+    var mat = m1cText_(d[i][5]);
+    if (!mat) continue;
+    out.push([m1cText_(d[i][0]), m1cText_(d[i][1]), mat, m1cNum_(d[i][6])]);
+  }
+  return out;
+}
+
 function readWriteoff_(ss) {
   var sh = ss.getSheetByName(CONFIG.SHEET_WRITEOFF);
   if (!sh) return [];

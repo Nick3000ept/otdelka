@@ -1054,6 +1054,7 @@ const state = {
   anHl: null,                  // выделенный кликом по легенде ряд графика (28.08.2026)
   writeoff: null,              // лист «Списание материалов» (action=writeoff, 28.08.2026)
   writeoffStatus: 'idle',      // idle | loading | ready | error
+  lkMap: new Map(),            // «материал ЛК|ед» -> { mat, coef } из листа «Сопоставление_ЛК» (11.09.2026)
   mat1c: null,                 // поставка материалов по 1С (action=mat1c, 09.09.2026)
   mat1cStatus: 'idle',         // idle | loading | ready | error
   mat1cInfo: null,             // сколько позиций 1С не сопоставлено с материалами витрины
@@ -2958,6 +2959,37 @@ function molBudget(mol) {
   return rows;
 }
 
+/**
+ * Строка списания ЛК → материал витрины (11.09.2026). Названия в личных
+ * кабинетах не всегда как в модели («Штукатурка цементная Основит PK 27 M»
+ * против «…гипсовая PG 27»), поэтому связка задаётся руками в листе
+ * «Сопоставление_ЛК». Материал витрины не указан — строка своя, как было.
+ * Единицы разные и коэффициента нет — НЕ сводим (складывать шт с м.п.
+ * нельзя), причина — в note. Возвращает { k, name, unit, qty, src, note }.
+ */
+function woTarget(r) {
+  const m = state.lkMap && state.lkMap.get(norm(r[1]) + '|' + norm(r[2]));
+  let name = r[1], unit = r[2] || '', coef = 1, note = '';
+  if (m && m.mat) {
+    const our = (state.unitByMaterial && state.unitByMaterial.get(norm(m.mat))) || '';
+    if (m.coef) { name = m.mat; coef = m.coef; unit = our || unit; }
+    else if (!our || !unit || unitClass(our) === unitClass(unit)) { name = m.mat; unit = our || unit; }
+    else note = r[1] + ': единица ЛК «' + unit + '» не как в модели «' + our +
+      '» — нужен коэффициент';
+  }
+  const k = matKey(name);
+  return { k, name: matTitle(k, name), raw: name, unit, qty: (r[4] || 0) * coef,
+           src: norm(name) !== norm(r[1]) ? r[1] : '', note };
+}
+// Предупреждение: связка указана, но свести нельзя — единицы разные без коэффициента.
+const woNotesHtml = notes => notes.size
+  ? '<div class="side-note">Списание ЛК не сведено с моделью — ' +
+    escapeHtml([...notes].join('; ')) + '. Коэффициент задаётся в листе ' +
+    '«Сопоставление_ЛК».</div>' : '';
+// Подсказка к ячейке «К списанию»: какие материалы ЛК в неё сведены.
+const woTitle = srcs => srcs && srcs.size
+  ? ' title="' + escapeHtml('Из ЛК: ' + [...srcs].join('; ')) + '"' : '';
+
 async function loadWriteoff() {
   state.writeoffStatus = 'loading';
   try {
@@ -2965,6 +2997,9 @@ async function loadWriteoff() {
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.writeoff = json.writeoff || [];
+    // Связка «материал ЛК → материал модели» из листа «Сопоставление_ЛК» (11.09.2026).
+    state.lkMap = new Map((json.lkMap || []).map(r =>
+      [norm(r[0]) + '|' + norm(r[1]), { mat: r[2], coef: r[3] || 0 }]));
     state.writeoffStatus = 'ready';
   } catch (e) {
     state.writeoffStatus = 'error';
@@ -3408,7 +3443,7 @@ function mfMaterials() {
   };
   (state.expenses || []).forEach(r => add(r['Материалы']));
   (state.mat1c || []).forEach(r => add(r[0]));
-  (state.writeoff || []).forEach(r => add(r[1]));
+  (state.writeoff || []).forEach(r => add(woTarget(r).raw));
   return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
 }
 // Пункты списка фильтра: [[значение, подпись], …]. Материалы подчиняются группе.
@@ -3564,14 +3599,21 @@ function renderMol() {
   }
   const budgetReady = state.budgetStatus === 'ready';
   // Списание: ключ материала -> МОЛ -> сумма (все виды ГКЛ сведены matKey).
+  // С 11.09.2026 — через связку «Сопоставление_ЛК» (woTarget).
   const offByMat = new Map();
   const unitByMat = new Map();
+  const woNotes = new Set();
   (state.writeoff || []).forEach(r => {
-    const k = matKey(r[1]);
-    if (!offByMat.has(k)) offByMat.set(k, { name: matTitle(k, r[1]), mols: new Map() });
-    const o = offByMat.get(k);
-    o.mols.set(r[5], (o.mols.get(r[5]) || 0) + (r[4] || 0));
-    if (r[2] && !unitByMat.has(k)) unitByMat.set(k, r[2]);
+    const t = woTarget(r);
+    if (t.note && r[4]) woNotes.add(t.note);
+    if (!offByMat.has(t.k)) offByMat.set(t.k, { name: t.name, mols: new Map(), src: new Map() });
+    const o = offByMat.get(t.k);
+    o.mols.set(r[5], (o.mols.get(r[5]) || 0) + t.qty);
+    if (t.src) {
+      if (!o.src.has(r[5])) o.src.set(r[5], new Set());
+      o.src.get(r[5]).add(t.src);
+    }
+    if (t.unit && !unitByMat.has(t.k)) unitByMat.set(t.k, t.unit);
   });
   // Поставка по 1С (09.09.2026): ключ материала -> МОЛ -> единица -> кол-во.
   // Единицы 1С не всегда совпадают с нашими (профиль в штуках против м.п.),
@@ -3594,7 +3636,7 @@ function renderMol() {
   let html = head + m1cToolbar();
   // Честно предупреждаем: часть позиций 1С ещё не связана с материалами витрины,
   // их поставка ни в одну строку не попала (связка — лист «Сопоставление_1С»).
-  html += mat1cUnmappedNote();
+  html += mat1cUnmappedNote() + woNotesHtml(woNotes);
   // Фильтры сверху (11.09.2026): группа МОЛ и выбранные МОЛ.
   const molsShown = molAll().filter(molPass);
   if (!molsShown.length) html += '<div class="side-note">Под выбранные фильтры МОЛ не попал ни один.</div>';
@@ -3677,6 +3719,7 @@ function renderMol() {
           done: c ? c.done : 0,
           cost: c ? c.cost : 0,
           off: off ? (off.mols.get(mol) || 0) : 0,
+          offSrc: off ? off.src.get(mol) : null,
           sup: (supByMat.get(k) || new Map()).get(mol) || null
         };
       }).filter(r => matPass(r.k) && (r.vol || r.off ||
@@ -3724,7 +3767,7 @@ function renderMol() {
               '<td>' + escapeHtml(r.unit) + '</td>' +
               '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
               '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
-              '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
+              '<td class="num bsep"' + woTitle(r.offSrc) + '>' + escapeHtml(fmtQ(r.off)) + '</td>' +
               sup1cCells(r) +
               '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
               '<td class="num">' + escapeHtml(fmtR(s1c)) + '</td>' +
@@ -3779,11 +3822,17 @@ function renderMaterials() {
   // «Списано итого» (просьба 28.08.2026) — сумма по всем МОЛ из листа
   // «Списание материалов»; ключ тот же matKey, поэтому ГКЛ сравнивается целиком.
   // Фильтр МОЛ сверху (11.09.2026) сужает списание и 1С; модель от него не зависит.
+  // С 11.09.2026 списание раскладывается по связке «Сопоставление_ЛК» (woTarget).
   const offTotal = new Map();
+  const offInfo = new Map();   // ключ -> { name, unit, src: Set(названия ЛК) }
+  const woNotes = new Set();
   (state.writeoff || []).forEach(r => {
     if (!molPass(r[5])) return;
-    const k = matKey(r[1]);
-    offTotal.set(k, (offTotal.get(k) || 0) + (r[4] || 0));
+    const t = woTarget(r);
+    if (t.note && r[4]) woNotes.add(t.note);
+    offTotal.set(t.k, (offTotal.get(t.k) || 0) + t.qty);
+    if (!offInfo.has(t.k)) offInfo.set(t.k, { name: t.name, unit: t.unit, src: new Set() });
+    if (t.src) offInfo.get(t.k).src.add(t.src);
   });
   // Поставка по 1С (09.09.2026) — здесь по ВСЕМ МОЛ сразу, ключ тот же matKey.
   // Количество копим по единицам 1С (складывать штуки с м² нельзя), деньги — одним
@@ -3812,6 +3861,14 @@ function renderMaterials() {
     if (!supCellText(supUnits(o), '') && !supSum(o)) return;
     list.push({ k, name: o.name, unit: o.unit, vol: 0, done: 0, cost: 0, works: [] });
   });
+  // Материал есть только в списании ЛК (нет ни в модели, ни в 1С) — тоже строкой,
+  // иначе его списание не показывалось вовсе (11.09.2026).
+  const listed = new Set(list.map(r => r.k));
+  offTotal.forEach((v, k) => {
+    if (!v || listed.has(k) || !matPass(k)) return;
+    const inf = offInfo.get(k);
+    list.push({ k, name: inf.name, unit: inf.unit, vol: 0, done: 0, cost: 0, works: [] });
+  });
   const total = list.reduce((s, r) => s + r.cost, 0);
   // Материал без поставки — пустой объект, чтобы не проверять null в каждой ячейке.
   const sup1c = k => supTotal.get(k) || newSupBucket();
@@ -3836,7 +3893,8 @@ function renderMaterials() {
       '<td>' + escapeHtml(r.unit) + '</td>' +
       '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
-      '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
+      '<td class="num bsep"' + woTitle(offInfo.get(r.k) && offInfo.get(r.k).src) + '>' +
+        escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       sup1cCells(r) +
       '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
       '<td class="num">' + escapeHtml(fmtR(supSum(sup1c(r.k)))) + '</td>' +
@@ -3892,7 +3950,7 @@ function renderMaterials() {
   } else if (state.mat1cStatus === 'error') {
     note1c = '<div class="side-note">Поставку по 1С загрузить не удалось.</div>';
   } else {
-    note1c = mat1cUnmappedNote();
+    note1c = mat1cUnmappedNote() + woNotesHtml(woNotes);
   }
   el.innerHTML = head + m1cToolbar() + note1c + (list.length ? '' :
     '<div class="side-note">Под выбранные фильтры материалов не нашлось.</div>') +
