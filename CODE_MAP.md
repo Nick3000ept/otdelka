@@ -245,6 +245,19 @@
   колонок, `CACHE_M1C = 'mat1c_v2'` (+ в `clearCache`), блок CONFIG `M1C_*`.
   Разведка листа без данных наружу — `action=probe1c` (агрегаты: МОЛ, объекты,
   типы документов, месяцы, совпадения названий).
+- Кнопка перемещений, общестрой, дата выгрузки (11.09.2026): вместо `supSplit`
+  в обеих render-функциях — `const moves = supMovesOn()`; помощники сразу после
+  `supHasSplit`: `supMovesOn`/`supUnits`/`supSum` (что брать при выкл/вкл кнопке),
+  `supHeadCells`/`supRowCells` (шапка и ячейки блока «1С»), `m1cToolbar`/
+  `toggleM1cMoves` (клик — в начале обработчиков `#mol-screen`/
+  `#materials-screen`, `data-m1cmoves`); `mat1cUnmappedNote` (перед
+  `mat1cSkipNote`) — общее предупреждение, по МОЛ из `mat1cInfo.byMol`;
+  `MOL_FINISH`/`MOL_GENERAL` рядом с `MOL_LIST`, в `renderMol` флаг `general`
+  (без раздела «Бюджет»); `showMat1cDate` сразу после `loadMat1c`, `#sb-m1c-date`
+  под `#sb-refresh`, CSS `.sb-note`; `loadMat1c()` при старте — после
+  `loadQuestions()`. script.gs: `m1cDocKind_`/`m1cDate_` перед `m1cMol_`, CONFIG
+  `M1C_DATE`/`M1C_IN_MARK`/`M1C_MOVE` (вместо `M1C_DOCS`), в `buildMat1c_` —
+  `docKind`, `maxDate`, `unmappedByMol`; кэши `mat1c_v4`, `mat1cd_v2`.
 
 ## index.html — выгрузка таблиц (10.09.2026)
 

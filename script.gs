@@ -103,7 +103,7 @@ var CONFIG = {
 
   // Колонка «Поставка (1С)» на вкладке «МОЛ» (09.09.2026): движения материалов
   // из 1С. Что считаем поставкой — решения пользователя 09.09.2026: документы
-  // «Поступление» и «Перемещение», объекты СБ3 и СБ5, только наши четыре МОЛ.
+  // «Поступление» и «Перемещение», объекты СБ3 и СБ5, только наши МОЛ.
   // ⚠️ В 1С МОЛ записаны полными ФИО; «Смирнов Владимир Андреевич» — другой
   // человек, в список не входит. Связка названий — лист «Сопоставление_1С».
   SHEET_M1C: 'Материалы_1С',
@@ -116,10 +116,19 @@ var CONFIG = {
   M1C_UNIT: 'Единица',
   M1C_QTY: 'Количество',
   M1C_SUM: 'Сумма',
-  M1C_DOCS: ['Поступление', 'Перемещение'],
+  M1C_DATE: 'Дата',
+  // Поставка (11.09.2026): строки, где в «Регистраторе» есть «поступл» — так
+  // пользователь фильтрует выгрузку в Excel. Перемещения считаются отдельно
+  // (первое слово «Перемещение»), на витрине их включает кнопка.
+  M1C_IN_MARK: 'поступл',
+  M1C_MOVE: 'Перемещение',
   M1C_OBJECTS: ['Отделка СБ3', 'Сити Бэй 3', 'СБ3', 'Сити Бэй 5', 'СБ5'],
+  // Префикс ФИО в 1С → имя МОЛ на витрине. Первые четыре — отделочные МОЛ,
+  // последние три — общестроительные (добавлены 11.09.2026; префикс с
+  // инициалом — на случай однофамильцев, как у Смирнова).
   M1C_MOLS: [['Овчинников', 'Овчинников'], ['Смирнов Александр', 'Смирнов'],
-             ['Генч', 'Джамал'], ['Амирхонов', 'Элшод']],
+             ['Генч', 'Джамал'], ['Амирхонов', 'Элшод'],
+             ['Мичуров А', 'Мичуров'], ['Соболев А', 'Соболев'], ['Никитин И', 'Никитин']],
   M1C_SKIP: 'не материал (услуга/доставка)'
 };
 
@@ -132,9 +141,9 @@ var CACHE_FACTREF = 'factref_v1'; // справочный факт из поэт
 var CACHE_AN = 'analytics_v4';    // затраты/поступления/ТУЗИО (по статьям) по месяцам (вкладка «Аналитика», МОРС только СБ3); чанкованный
 var CACHE_TUZ = 'tuzio_v1';
 var CACHE_TUZP = 'tuzio_p_v1_';   // карточка одного сотрудника вкладки «ТУЗИО» (31.08.2026); ответ маленький, обычный кэш, ключ = ФИО       // почасовые начисления по месяцам/статьям/людям/табелям (вкладка «ТУЗИО», 31.08.2026); чанкованный
-var CACHE_M1CD = 'mat1cd_v1';  // расшифровка поставки 1С по позициям/документам/объектам (модалка вкладок «МОЛ» и «Материалы», 09.09.2026); чанкованный
+var CACHE_M1CD = 'mat1cd_v2';  // расшифровка поставки 1С по позициям/документам/объектам (модалка вкладок «МОЛ» и «Материалы», 09.09.2026; v2 — правило «поступл» и общестроительные МОЛ, 11.09.2026); чанкованный
 var CACHE_M1CU = 'mat1cu_v1';  // позиции 1С по материалам с РАЗНЫМИ единицами (проверка «Единицы 1С», 09.09.2026)
-var CACHE_M1C = 'mat1c_v2';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026; v2 — поставка и перемещение раздельно, 10.09.2026); агрегат маленький — обычный кэш
+var CACHE_M1C = 'mat1c_v4';    // поставка материалов по 1С в разрезе МОЛ (вкладка «МОЛ», 09.09.2026; v2 — поставка и перемещение раздельно, 10.09.2026; v4 — правило «поступл», общестроительные МОЛ, дата выгрузки, несопоставленное по МОЛ, 11.09.2026); агрегат маленький — обычный кэш
 var CACHE_WO = 'writeoff_v1';     // списание материалов (вкладка «Материалы», 28.08.2026); лист маленький — обычный кэш
 
 /** Сбросить кэш вручную из редактора GAS — например, после правок в «Поэтажка_работы». */
@@ -568,14 +577,13 @@ function doPost(e) {
       var dSrc = shSrc.getRange(1, 1, shSrc.getLastRow(), shSrc.getLastColumn()).getValues();
       var iS = {};
       dSrc[0].forEach(function (h, i) { iS[String(h).trim()] = i; });
-      var docS = {}, objS = {};
-      CONFIG.M1C_DOCS.forEach(function (d) { docS[d] = true; });
+      var objS = {};
       CONFIG.M1C_OBJECTS.forEach(function (o) { objS[o] = true; });
       var pos = {};
       for (var si = 1; si < dSrc.length; si++) {
         var rS = dSrc[si];
         if (!m1cMol_(String(rS[iS[CONFIG.M1C_MOL]] || '').trim())) continue;
-        if (!docS[String(rS[iS[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0]]) continue;
+        if (!m1cDocKind_(rS[iS[CONFIG.M1C_REG]])) continue;
         if (!objS[String(rS[iS[CONFIG.M1C_OBJ]] || '').trim()]) continue;
         var kNom = m1cText_(rS[iS[CONFIG.M1C_NOM]]);
         var kBuh = m1cText_(rS[iS[CONFIG.M1C_BUH]]);
@@ -1112,7 +1120,8 @@ function doGet(e) {
       var payloadM = JSON.stringify({ ok: true, mat1c: m1.rows, mapped: m1.mapped,
                                       unmappedSum: m1.unmappedSum,
                                       unmappedRows: m1.unmappedRows,
-                                      skipRows: m1.skipRows, skipSum: m1.skipSum });
+                                      skipRows: m1.skipRows, skipSum: m1.skipSum,
+                                      unmappedByMol: m1.unmappedByMol, date: m1.date });
       if (payloadM.length < 95000) cacheM.put(CACHE_M1C, payloadM, 21600);
       return ContentService.createTextOutput(payloadM)
         .setMimeType(ContentService.MimeType.JSON);
@@ -1590,9 +1599,11 @@ function readWriteoff_(ss) {
  *
  * Источник — лист «Материалы_1С» (~27,5 тыс. строк, выгрузка движений из 1С).
  * Берём только:
- *   · наших четырёх МОЛ (в 1С они записаны полными ФИО — см. CONFIG.M1C_MOLS;
+ *   · наших МОЛ — четыре отделочных и с 11.09.2026 три общестроительных
+ *     (в 1С они записаны полными ФИО — см. CONFIG.M1C_MOLS;
  *     ⚠️ «Смирнов Владимир Андреевич» — ДРУГОЙ человек, не берём);
- *   · документы «Поступление» и «Перемещение» (решение пользователя 09.09.2026);
+ *   · поставку (в «Регистраторе» есть «поступл», правило 11.09.2026) и
+ *     перемещения — раздельно, перемещения на витрине включает кнопка;
  *   · объекты СБ3 и СБ5 (тоже решение пользователя — материал ездит между очередями).
  * Названия 1С с нашими не совпадают: в 1С «Номенклатура» — грубая группа
  * («Профиль», «Керамогранит»), «Бухгалтерская номенклатура» — позиция поставщика.
@@ -1632,19 +1643,28 @@ function buildMat1c_(ss) {
   var idx = {};
   data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
 
-  var docOk = {}, objOk = {};
-  CONFIG.M1C_DOCS.forEach(function (d) { docOk[d] = true; });
+  var objOk = {};
   CONFIG.M1C_OBJECTS.forEach(function (o) { objOk[o] = true; });
 
+  // Дата выгрузки (11.09.2026) — самый свежий документ во ВСЁМ листе, без
+  // фильтров: показывается внизу бокового меню витрины.
+  var cDate = idx[CONFIG.M1C_DATE] !== undefined ? idx[CONFIG.M1C_DATE] : idx['Период'];
+  var maxDate = null;
+
   var agg = {}, unmappedSum = 0, unmappedRows = 0, skipRows = 0, skipSum = 0;
+  var unmappedByMol = {};
   for (var r = 1; r < data.length; r++) {
     var row = data[r];
+    if (cDate !== undefined) {
+      var dt = m1cDate_(row[cDate]);
+      if (dt && (!maxDate || dt > maxDate)) maxDate = dt;
+    }
     var mol = m1cMol_(String(row[idx[CONFIG.M1C_MOL]] || '').trim());
     if (!mol) continue;
     // Тип документа нужен и дальше: поставка и перемещение идут отдельными
     // колонками витрины (просьба пользователя 10.09.2026).
-    var docType = String(row[idx[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0];
-    if (!docOk[docType]) continue;
+    var docKind = m1cDocKind_(row[idx[CONFIG.M1C_REG]]);
+    if (!docKind) continue;
     if (!objOk[String(row[idx[CONFIG.M1C_OBJ]] || '').trim()]) continue;
     var nom = m1cText_(row[idx[CONFIG.M1C_NOM]]);
     var buh = m1cText_(row[idx[CONFIG.M1C_BUH]]);
@@ -1656,7 +1676,14 @@ function buildMat1c_(ss) {
     if (!hit) {
       if (qty || sum) {
         if (skip[posKey]) { skipSum += sum; skipRows++; }
-        else { unmappedSum += sum; unmappedRows++; }
+        else {
+          unmappedSum += sum; unmappedRows++;
+          // По МОЛ отдельно (11.09.2026): у общестроительных несопоставленного
+          // на порядки больше, витрина показывает группы раздельно.
+          if (!unmappedByMol[mol]) unmappedByMol[mol] = [0, 0];
+          unmappedByMol[mol][0]++;
+          unmappedByMol[mol][1] += sum;
+        }
       }
       continue;
     }
@@ -1675,10 +1702,8 @@ function buildMat1c_(ss) {
                                 qtyIn: 0, sumIn: 0, qtyMv: 0, sumMv: 0 };
     agg[key].qty += outQty;
     agg[key].sum += sum;
-    // Поставка = «Поступление», перемещение = «Перемещение» (других типов
-    // документов в M1C_DOCS нет, но на всякий случай считаем перемещением
-    // только то, что им и названо).
-    if (docType === 'Перемещение') { agg[key].qtyMv += outQty; agg[key].sumMv += sum; }
+    // Поставка — «поступл» в регистраторе, перемещение — «Перемещение».
+    if (docKind === 'mv') { agg[key].qtyMv += outQty; agg[key].sumMv += sum; }
     else { agg[key].qtyIn += outQty; agg[key].sumIn += sum; }
   }
   var out = [];
@@ -1696,7 +1721,11 @@ function buildMat1c_(ss) {
   });
   return { rows: out, unmappedSum: Math.round(unmappedSum), unmappedRows: unmappedRows,
            skipRows: skipRows, skipSum: Math.round(skipSum),
-           mapped: Object.keys(mappedNames).length };
+           mapped: Object.keys(mappedNames).length,
+           unmappedByMol: Object.keys(unmappedByMol).map(function (m) {
+             return [m, unmappedByMol[m][0], Math.round(unmappedByMol[m][1])];
+           }),
+           date: maxDate ? Utilities.formatDate(maxDate, Session.getScriptTimeZone(), 'yyyy-MM-dd') : '' };
 }
 
 /**
@@ -1774,8 +1803,7 @@ function buildMat1cDetail_(ss) {
   var data = sh.getRange(1, 1, sh.getLastRow(), sh.getLastColumn()).getValues();
   var idx = {};
   data[0].forEach(function (h, i) { idx[String(h).trim()] = i; });
-  var docOk = {}, objOk = {};
-  CONFIG.M1C_DOCS.forEach(function (d) { docOk[d] = true; });
+  var objOk = {};
   CONFIG.M1C_OBJECTS.forEach(function (o) { objOk[o] = true; });
 
   var agg = {};
@@ -1783,8 +1811,11 @@ function buildMat1cDetail_(ss) {
     var row = data[r];
     var mol = m1cMol_(String(row[idx[CONFIG.M1C_MOL]] || '').trim());
     if (!mol) continue;
-    var doc = String(row[idx[CONFIG.M1C_REG]] || '').trim().split(/[ №]/)[0];
-    if (!docOk[doc]) continue;
+    // Тип документа — по тому же правилу, что в buildMat1c_ (11.09.2026):
+    // витрина по нему отбрасывает перемещения, пока они выключены кнопкой.
+    var kind = m1cDocKind_(row[idx[CONFIG.M1C_REG]]);
+    if (!kind) continue;
+    var doc = kind === 'mv' ? 'Перемещение' : 'Поступление';
     var obj = m1cText_(row[idx[CONFIG.M1C_OBJ]]);
     if (!objOk[obj]) continue;
     var nom = m1cText_(row[idx[CONFIG.M1C_NOM]]);
@@ -1872,6 +1903,25 @@ function m1cNum_(v) {
   var s = String(v == null ? '' : v).trim().replace(/\s/g, '').replace(',', '.');
   var n = parseFloat(s);
   return isNaN(n) ? 0 : n;
+}
+
+/**
+ * Вид документа 1С по «Регистратору» (11.09.2026): 'in' — поставка (в тексте
+ * есть «поступл», как в фильтре Excel пользователя), 'mv' — перемещение
+ * (первое слово «Перемещение»), '' — не берём (акты, передачи).
+ */
+function m1cDocKind_(reg) {
+  var s = String(reg == null ? '' : reg).trim();
+  if (s.toLowerCase().indexOf(CONFIG.M1C_IN_MARK) >= 0) return 'in';
+  if (s.split(/[ №]/)[0] === CONFIG.M1C_MOVE) return 'mv';
+  return '';
+}
+
+/** Дата из ячейки 1С: объект Date или текст «ДД.ММ.ГГГГ[ чч:мм:сс]». */
+function m1cDate_(v) {
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  var m = String(v == null ? '' : v).trim().match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  return m ? new Date(+m[3], +m[2] - 1, +m[1]) : null;
 }
 
 /** ФИО материально ответственного из 1С → короткое имя МОЛ витрины ('' — чужой). */

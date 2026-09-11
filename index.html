@@ -73,6 +73,9 @@
   }
   .sb-refresh:hover { background: #1a2940; color: #fff; }
   .sb-refresh.busy { opacity: .6; cursor: default; }
+  /* Дата выгрузки 1С — под кнопкой «Обновить данные» (11.09.2026). */
+  .sb-note { margin-top: 8px; padding: 0 4px; font-size: 11px; color: #8a97ad; text-align: center; }
+  .sb-note:empty { display: none; }
 
   #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
@@ -882,6 +885,8 @@
     </div>
     <div id="sb-refresh" class="sb-refresh"
       title="Сбросить кэш и перечитать данные из таблицы заново">&#10227; Обновить данные</div>
+    <div id="sb-m1c-date" class="sb-note"
+      title="Дата самого свежего документа в листе «Материалы_1С»"></div>
   </aside>
   <div id="content">
   <header>
@@ -1040,6 +1045,11 @@ const state = {
   mat1c: null,                 // поставка материалов по 1С (action=mat1c, 09.09.2026)
   mat1cStatus: 'idle',         // idle | loading | ready | error
   mat1cInfo: null,             // сколько позиций 1С не сопоставлено с материалами витрины
+  // Кнопка «Учитывать перемещения» на «МОЛ»/«Материалах» (11.09.2026): выключена —
+  // в блоке «1С» только поставка (строки с «поступл»); включена — появляется
+  // колонка «Перемещение» и итог. Запоминается в браузере.
+  m1cMoves: (() => { try { return localStorage.getItem('otdelka_m1c_moves') === '1'; }
+                     catch (e) { return false; } })(),
   mat1cDet: null,              // расшифровка поставки 1С по позициям (09.09.2026)
   mat1cDetStatus: 'idle',      // idle | loading | ready | error
   mat1cUnits: null,            // материалы, где позиции 1С в разных единицах (09.09.2026)
@@ -2793,9 +2803,13 @@ function unitClass(v) {
   return u;
 }
 
-// Материально ответственные — они же подрядчики собственных сил в поэтажке
-// (те же имена, что в BUDGET_SS_CONTRS). Порядок — как просил пользователь.
-const MOL_LIST = ['Овчинников', 'Смирнов', 'Джамал', 'Элшод'];
+// Материально ответственные. Отделочные — они же подрядчики собственных сил
+// в поэтажке (те же имена, что в BUDGET_SS_CONTRS), порядок — как просил
+// пользователь. Общестроительные (11.09.2026) есть только в 1С: бюджета,
+// модели и списания по ним нет. Имена — как их отдаёт бэкенд (CONFIG.M1C_MOLS).
+const MOL_FINISH = ['Овчинников', 'Смирнов', 'Джамал', 'Элшод'];
+const MOL_GENERAL = ['Мичуров', 'Соболев', 'Никитин'];
+const MOL_LIST = MOL_FINISH.concat(MOL_GENERAL);
 
 /**
  * Расшифровка материалов по листу «Расходы» (28.08.2026).
@@ -2948,12 +2962,24 @@ async function loadMat1c() {
     state.mat1cInfo = { unmappedSum: json.unmappedSum || 0,
                         unmappedRows: json.unmappedRows || 0,
                         skipRows: json.skipRows || 0, skipSum: json.skipSum || 0,
-                        mapped: json.mapped || 0 };
+                        mapped: json.mapped || 0, date: json.date || '',
+                        byMol: json.unmappedByMol || null };
     state.mat1cStatus = 'ready';
   } catch (e) {
     state.mat1cStatus = 'error';
   }
+  showMat1cDate();
   if (state.screen === 'mol') renderMol();
+  if (state.screen === 'materials') renderMaterials();
+}
+
+/** Внизу бокового меню — по какую дату в выгрузке 1С есть документы (11.09.2026). */
+function showMat1cDate() {
+  const el = document.getElementById('sb-m1c-date');
+  const d = state.mat1cInfo && state.mat1cInfo.date;
+  if (!el) return;
+  el.textContent = d ? 'Выгрузка 1С: по ' + d.slice(8, 10) + '.' + d.slice(5, 7) + '.' +
+    d.slice(0, 4) : '';
 }
 
 /**
@@ -3011,8 +3037,11 @@ async function openSupplyModal(matKeyValue, mol, title) {
     return;
   }
   // [материал, МОЛ, позиция 1С, группа 1С, документ, объект, единица, кол-во, сумма]
+  // Перемещения — только при включённой кнопке, чтобы итог окна совпадал
+  // с ячейкой таблицы (11.09.2026).
   const rows = (state.mat1cDet || []).filter(r =>
-    matKey(r[0]) === matKeyValue && (!mol || r[1] === mol));
+    matKey(r[0]) === matKeyValue && (!mol || r[1] === mol) &&
+    (supMovesOn() || r[4] !== 'Перемещение'));
   if (!rows.length) {
     document.getElementById('modal-body').innerHTML =
       '<div class="side-note">По этому материалу строк 1С не нашлось.</div>';
@@ -3073,6 +3102,29 @@ async function openSupplyModal(matKeyValue, mol, title) {
         '<td class="num">' + escapeHtml(fmtR(r[8])) + '</td></tr>').join('') +
     '</tbody></table>';
   document.getElementById('modal-body').innerHTML = html;
+}
+
+/**
+ * Предупреждение над таблицами «МОЛ»/«Материалы»: сколько строк 1С не
+ * сопоставлено. С 11.09.2026 — раздельно по отделочным и общестроительным МОЛ:
+ * у общестроя (Соболев) несопоставленного на порядки больше — это материалы
+ * не отделки, одним числом они заслоняли бы картину по отделке.
+ */
+function mat1cUnmappedNote() {
+  const i = state.mat1cInfo;
+  if (state.mat1cStatus !== 'ready' || !i || !i.unmappedRows) return '';
+  const part = (list, label) => {
+    let n = 0, s = 0;
+    (i.byMol || []).forEach(r => { if (list.includes(r[0])) { n += r[1]; s += r[2]; } });
+    return n ? label + ' — ' + fmtInt(n) + ' строк на ' + fmtR(s) + ' руб' : '';
+  };
+  const parts = i.byMol
+    ? [part(MOL_FINISH, 'отделочные МОЛ'), part(MOL_GENERAL, 'общестроительные МОЛ')]
+        .filter(Boolean).join('; ')
+    : fmtInt(i.unmappedRows) + ' строк на ' + fmtR(i.unmappedSum) + ' руб';
+  return '<div class="side-note">Поставка по 1С: не сопоставлено ' + escapeHtml(parts) +
+    ' — эти позиции в колонки «1С» не вошли' + mat1cSkipNote() +
+    '. Связка названий задаётся в листе «Сопоставление_1С».</div>';
 }
 
 /** Хвост предупреждения: сколько позиций 1С осознанно помечены как не материал. */
@@ -3247,6 +3299,39 @@ function supHasSplit() {
   const rows = state.mat1c || [];
   return rows.length > 0 && rows[0].length > 5;
 }
+// Кнопка «Учитывать перемещения» (11.09.2026). Выключена — в блоке «1С» одна
+// колонка «Поставка» (только строки с «поступл»), и деньги 1С тоже только по
+// поставке; включена — три колонки (поставка · перемещение · итого), деньги
+// по итогу. Старый кэш без разделения — одна колонка итога, как было.
+const supMovesOn = () => state.m1cMoves && supHasSplit();
+const supUnits = o => (supMovesOn() || !supHasSplit()) ? o.units : o.inUnits;
+const supSum = o => (supMovesOn() || !supHasSplit()) ? o.sum : o.inSum;
+function supHeadCells() {
+  if (supMovesOn()) {
+    return '<th class="num bsep">Поставка</th><th class="num">Перемещение</th>' +
+           '<th class="num">Итого</th>';
+  }
+  return '<th class="num bsep">' + (supHasSplit() ? 'Поставка' : 'Поставка + перемещение') + '</th>';
+}
+// Ячейки блока «1С» для одной строки; cell(units, sep) рисует одну ячейку.
+function supRowCells(o, cell) {
+  if (supMovesOn()) return cell(o && o.inUnits, true) + cell(o && o.mvUnits, false) +
+                           cell(o && o.units, false);
+  return cell(o && supUnits(o), true);
+}
+// Панель над таблицей вкладок «МОЛ»/«Материалы». Пока в ней одна кнопка.
+function m1cToolbar() {
+  return '<div class="tz-filters mtools">' +
+    '<button data-m1cmoves="1"' + (state.m1cMoves ? ' class="on"' : '') +
+    ' title="Добавить в блок «1С» колонку «Перемещение» и учитывать её в итоге">' +
+    'Учитывать перемещения</button></div>';
+}
+function toggleM1cMoves() {
+  state.m1cMoves = !state.m1cMoves;
+  try { localStorage.setItem('otdelka_m1c_moves', state.m1cMoves ? '1' : '0'); } catch (e) {}
+  if (state.screen === 'mol') renderMol();
+  if (state.screen === 'materials') renderMaterials();
+}
 
 /**
  * Вкладка «МОЛ» (28.08.2026, бывшая «Материалы») — четыре материально
@@ -3297,30 +3382,26 @@ function renderMol() {
     if (!byMol.has(r[1])) byMol.set(r[1], newSupBucket());
     addSup(byMol.get(r[1]), r);
   });
-  const supSplit = supHasSplit();
+  const moves = supMovesOn();
   // Все группы сворачиваемые (просьба 28.08.2026): на старте блоки МОЛ свёрнуты,
   // внутри раскрытого МОЛ разделы открыты, пока их не свернули отдельно.
   const chev = o => '<span class="chev">' + (o ? '▾' : '▸') + '</span> ';
-  let html = head;
+  let html = head + m1cToolbar();
   // Честно предупреждаем: часть позиций 1С ещё не связана с материалами витрины,
   // их поставка ни в одну строку не попала (связка — лист «Сопоставление_1С»).
-  if (state.mat1cStatus === 'ready' && state.mat1cInfo && state.mat1cInfo.unmappedRows) {
-    html += '<div class="side-note">Поставка по 1С: не сопоставлено ' +
-      escapeHtml(fmtInt(state.mat1cInfo.unmappedRows)) + ' строк 1С на ' +
-      escapeHtml(fmtR(state.mat1cInfo.unmappedSum)) + ' руб — эти позиции в колонку ' +
-      '«Поставка (1С)» не вошли' + mat1cSkipNote() +
-      '. Связка названий задаётся в листе «Сопоставление_1С».</div>';
-  }
+  html += mat1cUnmappedNote();
   MOL_LIST.forEach(mol => {
     const molOpen = state.molOpen.has(mol);
     html += '<div class="mol-block"><div class="mol-name" data-mol="' + escapeHtml(mol) + '">' +
       chev(molOpen) + escapeHtml(mol) + '</div>';
     if (!molOpen) { html += '</div>'; return; }
     const secOpen = sec => !state.molSecClosed.has(mol + '|' + sec);
+    // Общестроительные МОЛ (11.09.2026) есть только в 1С — раздела «Бюджет» у них нет.
+    const general = MOL_GENERAL.includes(mol);
 
     // --- Раздел «Бюджет» ---
-    const bOpen = secOpen('budget');
-    html += '<div class="mol-sec" data-sec="' + escapeHtml(mol) + '|budget">' +
+    const bOpen = !general && secOpen('budget');
+    if (!general) html += '<div class="mol-sec" data-sec="' + escapeHtml(mol) + '|budget">' +
       chev(bOpen) + 'Бюджет</div>';
     if (!bOpen) {
       // раздел свёрнут — содержимое не строим
@@ -3368,7 +3449,7 @@ function renderMol() {
       chev(mOpen) + 'Материалы</div>';
     if (!mOpen) {
       // раздел свёрнут — содержимое не строим
-    } else if (!budgetReady) {
+    } else if (!budgetReady && !general) {
       html += '<div class="side-note">Расчёт появится после загрузки бюджета…</div>';
     } else {
       const calc = buildMaterialCalc(molWorkVolumes(mol), molWorkVolumes(mol, 16));
@@ -3389,14 +3470,15 @@ function renderMol() {
           off: off ? (off.mols.get(mol) || 0) : 0,
           sup: (supByMat.get(k) || new Map()).get(mol) || null
         };
-      }).filter(r => r.vol || r.off || (r.sup && (r.sup.units.size || r.sup.sum)))
+      }).filter(r => r.vol || r.off ||
+          (r.sup && (supCellText(supUnits(r.sup), '') || supSum(r.sup))))
         .sort((a, b) => b.cost - a.cost || b.vol - a.vol);
       if (!list.length) {
         html += '<div class="side-note">Материалов по этому МОЛ не нашлось.</div>';
       } else {
         const tCost = list.reduce((s, r) => s + r.cost, 0);
         // Деньги 1С сложить можно, количества — нет (штуки, м², кг вперемешку).
-        const t1c = list.reduce((s, r) => s + (r.sup ? r.sup.sum : 0), 0);
+        const t1c = list.reduce((s, r) => s + (r.sup ? supSum(r.sup) : 0), 0);
         // Колонки сгруппированы (просьба 09.09.2026): «Модель» — расчёт по
         // «Расходам», «Личный кабинет» — лист «Списание материалов», «1С» —
         // фактическая поставка. Шапка в два ряда, ширины на первом ряду.
@@ -3409,26 +3491,20 @@ function renderMol() {
           const cell = (units, sep) => '<td class="num' + (sep ? ' bsep' : '') +
             ' sup1c' + (r.sup ? ' sup-click' : '') + '"' + attrs + '>' +
             escapeHtml(supCellText(units, r.unit)) + '</td>';
-          if (!supSplit) return cell(r.sup && r.sup.units, true);
-          return cell(r.sup && r.sup.inUnits, true) +
-                 cell(r.sup && r.sup.mvUnits, false) +
-                 cell(r.sup && r.sup.units, false);
+          return supRowCells(r.sup, cell);
         };
         html += '<div class="bdetail-wrap"><table class="check mtab mmat' +
-          (supSplit ? ' m1c3' : '') + '"><thead>' +
+          (moves ? ' m1c3' : '') + '"><thead>' +
           '<tr><th rowspan="2">Материал</th>' +
           '<th rowspan="2" class="c-unit">Ед. изм</th>' +
           '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
           '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-          '<th colspan="' + (supSplit ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
+          '<th colspan="' + (moves ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
           '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
           '<tr class="sub"><th class="num bsep">Объем итого</th>' +
           '<th class="num">Выполнено натурально</th>' +
           '<th class="num bsep">К списанию</th>' +
-          (supSplit
-            ? '<th class="num bsep">Поставка</th><th class="num">Перемещение</th>' +
-              '<th class="num">Итого</th>'
-            : '<th class="num bsep">Поставка + перемещение</th>') +
+          supHeadCells() +
           '<th class="num bsep">Модель, руб</th>' +
           '<th class="num">1С, руб</th></tr></thead><tbody>' +
           list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
@@ -3438,13 +3514,13 @@ function renderMol() {
             '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
             sup1cCells(r) +
             '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtR(r.sup ? r.sup.sum : 0)) +
+            '<td class="num">' + escapeHtml(fmtR(r.sup ? supSum(r.sup) : 0)) +
             '</td></tr>').join('') +
           '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
           '<td class="num"></td>' +
           '<td class="num bsep"></td>' +
           '<td class="num bsep"></td>' +
-          (supSplit ? '<td class="num"></td><td class="num"></td>' : '') +
+          (moves ? '<td class="num"></td><td class="num"></td>' : '') +
           '<td class="num bsep">' + escapeHtml(fmtR(tCost)) + '</td>' +
           '<td class="num">' + escapeHtml(fmtR(t1c)) +
           '</td></tr></tfoot></table></div>';
@@ -3502,7 +3578,7 @@ function renderMaterials() {
       unit: (state.unitByMaterial && state.unitByMaterial.get(norm(r[0]))) || '' }));
     addSup(supTotal.get(k), r);
   });
-  const supSplit = supHasSplit();
+  const moves = supMovesOn();
   const calc = buildMaterialCalc(null, allFactVolumes());
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
@@ -3512,14 +3588,17 @@ function renderMaterials() {
   // (расшифровывать по работам нечего, works пустой).
   supTotal.forEach((o, k) => {
     if (calc.has(k)) return;
+    // Без кнопки «Учитывать перемещения» материал, который только перемещали,
+    // строкой не нужен — все его ячейки были бы пустыми (11.09.2026).
+    if (!supCellText(supUnits(o), '') && !supSum(o)) return;
     list.push({ k, name: o.name, unit: o.unit, vol: 0, done: 0, cost: 0, works: [] });
   });
   const total = list.reduce((s, r) => s + r.cost, 0);
   // Материал без поставки — пустой объект, чтобы не проверять null в каждой ячейке.
   const sup1c = k => supTotal.get(k) || newSupBucket();
   // Деньги 1С складываются, количества — нет (единицы разные).
-  const total1c = list.reduce((s, r) => s + sup1c(r.k).sum, 0);
-  // Блок «1С» из трёх колонок: поставка · перемещение · итого (10.09.2026).
+  const total1c = list.reduce((s, r) => s + supSum(sup1c(r.k)), 0);
+  // Блок «1С»: «Поставка» либо, с кнопкой перемещений, поставка · перемещение · итого.
   const sup1cCells = r => {
     const has = supTotal.has(r.k);
     const attrs = has ? ' data-supmat="' + escapeHtml(r.k) +
@@ -3527,9 +3606,7 @@ function renderMaterials() {
     const cell = (units, sep) => '<td class="num' + (sep ? ' bsep' : '') +
       ' sup1c' + (has ? ' sup-click' : '') + '"' + attrs + '>' +
       escapeHtml(supCellText(units, r.unit)) + '</td>';
-    const o = sup1c(r.k);
-    if (!supSplit) return cell(o.units, true);
-    return cell(o.inUnits, true) + cell(o.mvUnits, false) + cell(o.units, false);
+    return supRowCells(sup1c(r.k), cell);
   };
   const open = state.matOpen;
   let body = '';
@@ -3543,11 +3620,11 @@ function renderMaterials() {
       '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       sup1cCells(r) +
       '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtR(sup1c(r.k).sum)) + '</td></tr>';
+      '<td class="num">' + escapeHtml(fmtR(supSum(sup1c(r.k)))) + '</td></tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="' + (supSplit ? 10 : 8) + '">' +
+    body += '<tr class="mdetail"><td colspan="' + (moves ? 10 : 8) + '">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
@@ -3566,26 +3643,23 @@ function renderMaterials() {
       '</tbody></table></td></tr>';
   });
   // Колонки сгруппированы так же, как на вкладке «МОЛ» (просьба 09.09.2026).
-  const tbl = '<table class="check mtab mmat' + (supSplit ? ' m1c3' : '') + '"><thead>' +
+  const tbl = '<table class="check mtab mmat' + (moves ? ' m1c3' : '') + '"><thead>' +
     '<tr><th rowspan="2">Материал</th>' +
     '<th rowspan="2" class="c-unit">Ед. изм</th>' +
     '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
     '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-    '<th colspan="' + (supSplit ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
+    '<th colspan="' + (moves ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
     '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
     '<tr class="sub"><th class="num bsep">Объем итого</th>' +
     '<th class="num">Выполнено натурально</th>' +
     '<th class="num bsep">К списанию</th>' +
-    (supSplit
-      ? '<th class="num bsep">Поставка</th><th class="num">Перемещение</th>' +
-        '<th class="num">Итого</th>'
-      : '<th class="num bsep">Поставка + перемещение</th>') +
+    supHeadCells() +
     '<th class="num bsep">Модель, руб</th>' +
     '<th class="num">1С, руб</th></tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
     '<td class="num"></td>' +
     '<td class="num bsep"></td><td class="num bsep"></td>' +
-    (supSplit ? '<td class="num"></td><td class="num"></td>' : '') +
+    (moves ? '<td class="num"></td><td class="num"></td>' : '') +
     '<td class="num bsep">' + escapeHtml(fmtR(total)) + '</td>' +
     '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td></tr></tfoot></table>';
   // Та же оговорка, что и на «МОЛ»: часть позиций 1С ещё не связана с материалами.
@@ -3594,14 +3668,10 @@ function renderMaterials() {
     note1c = '<div class="side-note">Поставка по 1С загружается…</div>';
   } else if (state.mat1cStatus === 'error') {
     note1c = '<div class="side-note">Поставку по 1С загрузить не удалось.</div>';
-  } else if (state.mat1cStatus === 'ready' && state.mat1cInfo && state.mat1cInfo.unmappedRows) {
-    note1c = '<div class="side-note">Поставка по 1С: не сопоставлено ' +
-      escapeHtml(fmtInt(state.mat1cInfo.unmappedRows)) + ' строк 1С на ' +
-      escapeHtml(fmtR(state.mat1cInfo.unmappedSum)) + ' руб — эти позиции в колонки ' +
-      '«1С» не вошли' + mat1cSkipNote() +
-      '. Связка названий задаётся в листе «Сопоставление_1С».</div>';
+  } else {
+    note1c = mat1cUnmappedNote();
   }
-  el.innerHTML = head + note1c + '<div class="bdetail-wrap">' + tbl + '</div>';
+  el.innerHTML = head + m1cToolbar() + note1c + '<div class="bdetail-wrap">' + tbl + '</div>';
 }
 
 /**
@@ -6038,6 +6108,7 @@ document.querySelectorAll('.sb-item').forEach(el => {
 // Вкладка «Материалы» (28.08.2026): клик по строке материала раскрывает
 // расшифровку по работам, повторный клик — сворачивает.
 document.getElementById('materials-screen').addEventListener('click', e => {
+  if (e.target.closest('[data-m1cmoves]')) { toggleM1cMoves(); return; }
   // Клик по числу поставки — расшифровка по позициям 1С (09.09.2026).
   const sup1cCell = e.target.closest('[data-supmat]');
   if (sup1cCell) {
@@ -6052,6 +6123,7 @@ document.getElementById('materials-screen').addEventListener('click', e => {
 
 // Вкладка «МОЛ» (28.08.2026): сворачиваются и блоки МОЛ, и разделы внутри них.
 document.getElementById('mol-screen').addEventListener('click', e => {
+  if (e.target.closest('[data-m1cmoves]')) { toggleM1cMoves(); return; }
   // Клик по числу поставки — расшифровка по позициям 1С (09.09.2026).
   const sup = e.target.closest('[data-supmat]');
   if (sup) {
@@ -6469,6 +6541,8 @@ async function loadData() {
     if (state.screen === 'mol') renderMol();
     loadFloors();      // сводка по подрядчикам — фоном, чтобы не тормозить открытие витрины
     loadQuestions();   // вопросы — тоже фоном: файл маленький, нужен бейдж-счётчик
+    // Поставка 1С — фоном, чтобы внизу меню сразу была дата выгрузки (11.09.2026).
+    if (state.mat1cStatus === 'idle') loadMat1c();
     if (state.volsStatus === 'idle') loadVols();   // объёмы из поэтажки — для колонки
                                                    // «Объем работ» на «Расценках» (05.08.2026)
   } catch (e) {
