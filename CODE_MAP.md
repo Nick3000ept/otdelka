@@ -285,6 +285,11 @@
   CONFIG `SHEET_MAPLK`, `readMapLk_` перед `readWriteoff_`, поле `lkMap` в
   `action=writeoff`, doPost `syncMapLk` перед `readQuestions_()` (и перед
   `syncMap1c`), `CACHE_WO = 'writeoff_v2'`.
+- Поставка 1С по группам МОЛ на «Материалах» (11.09.2026): `molGroupOf`/
+  `M1C_GRP_COLS` после `molAll`; поле `grp` в `newSupBucket` (заполняется только
+  в `renderMaterials`); там же `n1c`, своя `sup1cCells`, шапка из
+  `M1C_GRP_COLS`; CSS `table.check.mmat.m1cg4`/`m1cg5` перед правилом переноса
+  подписей второго ряда. На «МОЛ» по-прежнему `supHeadCells`/`supRowCells`.
 
 ## index.html — выгрузка таблиц (10.09.2026)
 

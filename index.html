@@ -454,6 +454,22 @@
   table.check.mmat.m1c3 th.grphead.g-1c { width: 22%; }
   table.check.mmat.m1c3 th.grphead.g-cost { width: 16%; }
   table.check.mmat.m1c3 th.grphead.g-pct { width: 14%; }
+  /* Вкладка «Материалы» (11.09.2026): поставка 1С по группам МОЛ — 4 колонки
+     (отделка · общестрой · прочие · итого), с перемещениями — 5. */
+  table.check.mmat.m1cg4 thead tr:first-child th:first-child { width: 18%; }
+  table.check.mmat.m1cg4 thead tr:first-child th.c-unit { width: 4%; }
+  table.check.mmat.m1cg4 th.grphead.g-model { width: 17%; }
+  table.check.mmat.m1cg4 th.grphead.g-lk { width: 7%; }
+  table.check.mmat.m1cg4 th.grphead.g-1c { width: 26%; }
+  table.check.mmat.m1cg4 th.grphead.g-cost { width: 15%; }
+  table.check.mmat.m1cg4 th.grphead.g-pct { width: 13%; }
+  table.check.mmat.m1cg5 thead tr:first-child th:first-child { width: 16%; }
+  table.check.mmat.m1cg5 thead tr:first-child th.c-unit { width: 4%; }
+  table.check.mmat.m1cg5 th.grphead.g-model { width: 16%; }
+  table.check.mmat.m1cg5 th.grphead.g-lk { width: 7%; }
+  table.check.mmat.m1cg5 th.grphead.g-1c { width: 30%; }
+  table.check.mmat.m1cg5 th.grphead.g-cost { width: 14%; }
+  table.check.mmat.m1cg5 th.grphead.g-pct { width: 13%; }
   /* Подписи второго ряда длинные («Модель (Бюджет), руб») — переносим по словам. */
   table.check.mmat thead tr.sub th { white-space: normal; }
   table.check.mmat th.grphead {
@@ -2839,6 +2855,11 @@ function molOthers() {
   return [...s].filter(m => m && !MOL_LIST.includes(m)).sort((a, b) => a.localeCompare(b, 'ru'));
 }
 const molAll = () => MOL_LIST.concat(molOthers());
+// Группа МОЛ: 'fin' — отделочные, 'gen' — общестроительные, 'oth' — прочие.
+const molGroupOf = mol => MOL_FINISH.includes(mol) ? 'fin'
+  : MOL_GENERAL.includes(mol) ? 'gen' : 'oth';
+// Колонки поставки 1С по группам МОЛ на вкладке «Материалы» (просьба 11.09.2026).
+const M1C_GRP_COLS = [['fin', 'МОЛ отделка'], ['gen', 'МОЛ общестрой'], ['oth', 'Прочие МОЛ']];
 
 /**
  * Расшифровка материалов по листу «Расходы» (28.08.2026).
@@ -3338,7 +3359,9 @@ const fmtR = v => v ? fmtInt(Math.round(v)) : '';
 function newSupBucket() {
   return { units: new Map(), sum: 0,
            inUnits: new Map(), inSum: 0,
-           mvUnits: new Map(), mvSum: 0 };
+           mvUnits: new Map(), mvSum: 0,
+           // Поставка («поступл») по группам МОЛ — колонки вкладки «Материалы» (11.09.2026).
+           grp: { fin: new Map(), gen: new Map(), oth: new Map() } };
 }
 // Строка агрегата: [материал, МОЛ, единица, кол-во, сумма,
 //                   кол-во поставки, сумма поставки, кол-во перемещения, сумма перемещения]
@@ -3844,9 +3867,17 @@ function renderMaterials() {
     if (!supTotal.has(k)) supTotal.set(k, Object.assign(newSupBucket(), {
       name: matTitle(k, r[0]),
       unit: (state.unitByMaterial && state.unitByMaterial.get(norm(r[0]))) || '' }));
-    addSup(supTotal.get(k), r);
+    const o = supTotal.get(k);
+    addSup(o, r);
+    // Поставка по группе МОЛ этой строки (без перемещений — они отдельной колонкой).
+    const gm = o.grp[molGroupOf(r[1])];
+    const q = supHasSplit() ? (r[5] || 0) : (r[3] || 0);
+    gm.set(r[2], (gm.get(r[2]) || 0) + q);
   });
   const moves = supMovesOn();
+  // Блок «1С» на этой вкладке (11.09.2026): МОЛ отделка · МОЛ общестрой · Прочие МОЛ
+  // [· Перемещение, если включена кнопка] · Итого.
+  const n1c = M1C_GRP_COLS.length + (moves ? 1 : 0) + 1;
   const calc = buildMaterialCalc(null, allFactVolumes());
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
@@ -3874,7 +3905,7 @@ function renderMaterials() {
   const sup1c = k => supTotal.get(k) || newSupBucket();
   // Деньги 1С складываются, количества — нет (единицы разные).
   const total1c = list.reduce((s, r) => s + supSum(sup1c(r.k)), 0);
-  // Блок «1С»: «Поставка» либо, с кнопкой перемещений, поставка · перемещение · итого.
+  // Блок «1С»: поставка по группам МОЛ, [перемещение], итог (по кнопке — с перемещениями).
   const sup1cCells = r => {
     const has = supTotal.has(r.k);
     const attrs = has ? ' data-supmat="' + escapeHtml(r.k) +
@@ -3882,7 +3913,9 @@ function renderMaterials() {
     const cell = (units, sep) => '<td class="num' + (sep ? ' bsep' : '') +
       ' sup1c' + (has ? ' sup-click' : '') + '"' + attrs + '>' +
       escapeHtml(supCellText(units, r.unit)) + '</td>';
-    return supRowCells(sup1c(r.k), cell);
+    const o = sup1c(r.k);
+    return M1C_GRP_COLS.map(([g], i) => cell(o.grp[g], i === 0)).join('') +
+      (moves ? cell(o.mvUnits, false) : '') + cell(supUnits(o), false);
   };
   const open = state.matOpen;
   let body = '';
@@ -3903,7 +3936,7 @@ function renderMaterials() {
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="' + (moves ? 13 : 11) + '">' +
+    body += '<tr class="mdetail"><td colspan="' + (10 + n1c) + '">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
@@ -3922,24 +3955,29 @@ function renderMaterials() {
       '</tbody></table></td></tr>';
   });
   // Колонки сгруппированы так же, как на вкладке «МОЛ» (просьба 09.09.2026).
-  const tbl = '<table class="check mtab mmat' + (moves ? ' m1c3' : '') + '"><thead>' +
+  const tbl = '<table class="check mtab mmat ' + (moves ? 'm1cg5' : 'm1cg4') + '"><thead>' +
     '<tr><th rowspan="2">Материал</th>' +
     '<th rowspan="2" class="c-unit">Ед. изм</th>' +
     '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
     '<th class="bsep grphead g-lk">Личный кабинет</th>' +
-    '<th colspan="' + (moves ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
+    '<th colspan="' + n1c + '" class="bsep grphead g-1c">1С</th>' +
     '<th colspan="2" class="bsep grphead g-cost">Стоимость</th>' +
     PCT_HEAD_TOP + '</tr>' +
     '<tr class="sub"><th class="num bsep">Объем итого</th>' +
     '<th class="num">Выполнено натурально</th>' +
     '<th class="num bsep">К списанию</th>' +
-    supHeadCells() +
+    M1C_GRP_COLS.map(([g, t], i) => '<th class="num' + (i === 0 ? ' bsep' : '') + '"' +
+      (g === 'fin' ? ' title="' + escapeHtml(MOL_FINISH.join(', ')) + '"'
+        : g === 'gen' ? ' title="' + escapeHtml(MOL_GENERAL.join(', ')) + '"' : '') +
+      '>' + t + '</th>').join('') +
+    (moves ? '<th class="num">Перемещение</th>' : '') +
+    '<th class="num">Итого</th>' +
     '<th class="num bsep">Модель (Бюджет), руб</th>' +
     '<th class="num">1С Факт, руб</th>' + PCT_HEAD_SUB + '</tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
     '<td class="num"></td>' +
     '<td class="num bsep"></td><td class="num bsep"></td>' +
-    (moves ? '<td class="num"></td><td class="num"></td>' : '') +
+    '<td class="num"></td>'.repeat(n1c - 1) +
     '<td class="num bsep">' + escapeHtml(fmtR(total)) + '</td>' +
     '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td>' +
     pctFoot(total, total1c) + '</tr></tfoot></table>';
