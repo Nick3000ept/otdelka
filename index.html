@@ -438,18 +438,24 @@
   /* Таблица материалов МОЛ (09.09.2026): шапка в два ряда — Модель · Личный
      кабинет · 1С. ⚠️ Ширины — на ячейках ПЕРВОГО ряда (см. предупреждение
      у таблицы бюджета выше), иначе при table-layout: fixed их не видно. */
-  table.check.mmat thead tr:first-child th:first-child { width: 28%; }
-  table.check.mmat th.grphead.g-model { width: 24%; }
-  table.check.mmat th.grphead.g-lk { width: 11%; }
-  table.check.mmat th.grphead.g-1c { width: 13%; }
+  /* С 11.09.2026 справа блок «Проценты» (три узкие колонки) — остальные ужаты. */
+  table.check.mmat thead tr:first-child th:first-child { width: 22%; }
+  table.check.mmat thead tr:first-child th.c-unit { width: 5%; }
+  table.check.mmat th.grphead.g-model { width: 20%; }
+  table.check.mmat th.grphead.g-lk { width: 9%; }
+  table.check.mmat th.grphead.g-1c { width: 11%; }
   table.check.mmat th.grphead.g-cost { width: 18%; }
+  table.check.mmat th.grphead.g-pct { width: 15%; }
   /* Блок «1С» из ТРЁХ колонок (поставка · перемещение · итого, 10.09.2026) —
      ему нужно больше места, поэтому у таблицы класс m1c3 со своей раскладкой. */
-  table.check.mmat.m1c3 thead tr:first-child th:first-child { width: 21%; }
-  table.check.mmat.m1c3 th.grphead.g-model { width: 22%; }
-  table.check.mmat.m1c3 th.grphead.g-lk { width: 9%; }
-  table.check.mmat.m1c3 th.grphead.g-1c { width: 26%; }
+  table.check.mmat.m1c3 thead tr:first-child th:first-child { width: 17%; }
+  table.check.mmat.m1c3 th.grphead.g-model { width: 18%; }
+  table.check.mmat.m1c3 th.grphead.g-lk { width: 8%; }
+  table.check.mmat.m1c3 th.grphead.g-1c { width: 22%; }
   table.check.mmat.m1c3 th.grphead.g-cost { width: 16%; }
+  table.check.mmat.m1c3 th.grphead.g-pct { width: 14%; }
+  /* Подписи второго ряда длинные («Модель (Бюджет), руб») — переносим по словам. */
+  table.check.mmat thead tr.sub th { white-space: normal; }
   table.check.mmat th.grphead {
     text-align: center; background: #edf2fb; border-bottom: 1px solid var(--border);
   }
@@ -3319,6 +3325,31 @@ function supRowCells(o, cell) {
                            cell(o && o.units, false);
   return cell(o && supUnits(o), true);
 }
+// Блок «Проценты» справа (11.09.2026): готовность = выполнено натурально ÷
+// объём итого; поставка = поставка 1С в единице модели ÷ объём итого (с кнопкой
+// перемещений — итог поставки и перемещений); оплаты = 1С Факт, руб ÷ Модель
+// (Бюджет), руб. Нет знаменателя или единица 1С не как в модели — пусто.
+const fmtPct = v => (v && isFinite(v))
+  ? (Math.round(v * 1000) / 10).toLocaleString('ru-RU') + '%' : '';
+function supQtyInUnit(o, ourUnit) {
+  let q = 0;
+  if (o) supUnits(o).forEach((v, u) => { if (unitClass(u) === unitClass(ourUnit)) q += v || 0; });
+  return q;
+}
+const PCT_HEAD_TOP = '<th colspan="3" class="bsep grphead g-pct">Проценты</th>';
+const PCT_HEAD_SUB =
+  '<th class="num bsep" title="Выполнено натурально ÷ Объем итого">% готовности</th>' +
+  '<th class="num" title="Поставка 1С ÷ Объем итого (в единице модели)">% поставки</th>' +
+  '<th class="num" title="1С Факт, руб ÷ Модель (Бюджет), руб">% оплат</th>';
+function pctCells(vol, done, supQty, cost, sum1c) {
+  return '<td class="num bsep">' + escapeHtml(fmtPct(vol ? done / vol : 0)) + '</td>' +
+    '<td class="num">' + escapeHtml(fmtPct(vol ? supQty / vol : 0)) + '</td>' +
+    '<td class="num">' + escapeHtml(fmtPct(cost ? sum1c / cost : 0)) + '</td>';
+}
+// В «Итого» только % оплат: рубли складываются, количества в разных единицах — нет.
+const pctFoot = (cost, sum1c) => '<td class="num bsep"></td><td class="num"></td>' +
+  '<td class="num">' + escapeHtml(fmtPct(cost ? sum1c / cost : 0)) + '</td>';
+
 // Панель над таблицей вкладок «МОЛ»/«Материалы». Пока в ней одна кнопка.
 function m1cToolbar() {
   return '<div class="tz-filters mtools">' +
@@ -3500,30 +3531,35 @@ function renderMol() {
           '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
           '<th class="bsep grphead g-lk">Личный кабинет</th>' +
           '<th colspan="' + (moves ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
-          '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
+          '<th colspan="2" class="bsep grphead g-cost">Стоимость</th>' +
+          PCT_HEAD_TOP + '</tr>' +
           '<tr class="sub"><th class="num bsep">Объем итого</th>' +
           '<th class="num">Выполнено натурально</th>' +
           '<th class="num bsep">К списанию</th>' +
           supHeadCells() +
-          '<th class="num bsep">Модель, руб</th>' +
-          '<th class="num">1С, руб</th></tr></thead><tbody>' +
-          list.map(r => '<tr><td>' + escapeHtml(r.name) + '</td>' +
-            '<td>' + escapeHtml(r.unit) + '</td>' +
-            '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
-            '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
-            sup1cCells(r) +
-            '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
-            '<td class="num">' + escapeHtml(fmtR(r.sup ? supSum(r.sup) : 0)) +
-            '</td></tr>').join('') +
+          '<th class="num bsep">Модель (Бюджет), руб</th>' +
+          '<th class="num">1С Факт, руб</th>' + PCT_HEAD_SUB + '</tr></thead><tbody>' +
+          list.map(r => {
+            const s1c = r.sup ? supSum(r.sup) : 0;
+            return '<tr><td>' + escapeHtml(r.name) + '</td>' +
+              '<td>' + escapeHtml(r.unit) + '</td>' +
+              '<td class="num bsep">' + escapeHtml(fmtQ(r.vol)) + '</td>' +
+              '<td class="num">' + escapeHtml(fmtQ(r.done)) + '</td>' +
+              '<td class="num bsep">' + escapeHtml(fmtQ(r.off)) + '</td>' +
+              sup1cCells(r) +
+              '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
+              '<td class="num">' + escapeHtml(fmtR(s1c)) + '</td>' +
+              pctCells(r.vol, r.done, supQtyInUnit(r.sup, r.unit), r.cost, s1c) +
+              '</tr>';
+          }).join('') +
           '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
           '<td class="num"></td>' +
           '<td class="num bsep"></td>' +
           '<td class="num bsep"></td>' +
           (moves ? '<td class="num"></td><td class="num"></td>' : '') +
           '<td class="num bsep">' + escapeHtml(fmtR(tCost)) + '</td>' +
-          '<td class="num">' + escapeHtml(fmtR(t1c)) +
-          '</td></tr></tfoot></table></div>';
+          '<td class="num">' + escapeHtml(fmtR(t1c)) + '</td>' +
+          pctFoot(tCost, t1c) + '</tr></tfoot></table></div>';
         // Поставку по единицам складывать нельзя — в «Итого» её не показываем.
         if (state.mat1cStatus === 'loading') {
           html += '<div class="side-note">Поставка по 1С загружается…</div>';
@@ -3620,11 +3656,13 @@ function renderMaterials() {
       '<td class="num bsep">' + escapeHtml(fmtQ(offTotal.get(r.k) || 0)) + '</td>' +
       sup1cCells(r) +
       '<td class="num bsep">' + escapeHtml(fmtR(r.cost)) + '</td>' +
-      '<td class="num">' + escapeHtml(fmtR(supSum(sup1c(r.k)))) + '</td></tr>';
+      '<td class="num">' + escapeHtml(fmtR(supSum(sup1c(r.k)))) + '</td>' +
+      pctCells(r.vol, r.done, supQtyInUnit(sup1c(r.k), r.unit), r.cost, supSum(sup1c(r.k))) +
+      '</tr>';
     if (!isOpen) return;
     // Расшифровка: из каких работ сложилась стоимость этого материала.
     const works = r.works.slice().sort((a, b) => b.cost - a.cost);
-    body += '<tr class="mdetail"><td colspan="' + (moves ? 10 : 8) + '">' +
+    body += '<tr class="mdetail"><td colspan="' + (moves ? 13 : 11) + '">' +
       '<table class="check inner"><thead><tr><th>Работа</th>' +
       '<th class="num">Объем работ</th><th class="num">Норма расхода на ед.</th>' +
       '<th class="num">Объем по модели</th><th class="num">Выполнено натурально</th>' +
@@ -3649,19 +3687,21 @@ function renderMaterials() {
     '<th colspan="2" class="bsep grphead g-model">Модель</th>' +
     '<th class="bsep grphead g-lk">Личный кабинет</th>' +
     '<th colspan="' + (moves ? 3 : 1) + '" class="bsep grphead g-1c">1С</th>' +
-    '<th colspan="2" class="bsep grphead g-cost">Стоимость</th></tr>' +
+    '<th colspan="2" class="bsep grphead g-cost">Стоимость</th>' +
+    PCT_HEAD_TOP + '</tr>' +
     '<tr class="sub"><th class="num bsep">Объем итого</th>' +
     '<th class="num">Выполнено натурально</th>' +
     '<th class="num bsep">К списанию</th>' +
     supHeadCells() +
-    '<th class="num bsep">Модель, руб</th>' +
-    '<th class="num">1С, руб</th></tr></thead><tbody>' +
+    '<th class="num bsep">Модель (Бюджет), руб</th>' +
+    '<th class="num">1С Факт, руб</th>' + PCT_HEAD_SUB + '</tr></thead><tbody>' +
     body + '</tbody><tfoot><tr><td>Итого</td><td></td><td class="num bsep"></td>' +
     '<td class="num"></td>' +
     '<td class="num bsep"></td><td class="num bsep"></td>' +
     (moves ? '<td class="num"></td><td class="num"></td>' : '') +
     '<td class="num bsep">' + escapeHtml(fmtR(total)) + '</td>' +
-    '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td></tr></tfoot></table>';
+    '<td class="num">' + escapeHtml(fmtR(total1c)) + '</td>' +
+    pctFoot(total, total1c) + '</tr></tfoot></table>';
   // Та же оговорка, что и на «МОЛ»: часть позиций 1С ещё не связана с материалами.
   let note1c = '';
   if (state.mat1cStatus === 'loading') {

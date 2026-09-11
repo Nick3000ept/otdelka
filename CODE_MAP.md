@@ -258,6 +258,10 @@
   `loadQuestions()`. script.gs: `m1cDocKind_`/`m1cDate_` перед `m1cMol_`, CONFIG
   `M1C_DATE`/`M1C_IN_MARK`/`M1C_MOVE` (вместо `M1C_DOCS`), в `buildMat1c_` —
   `docKind`, `maxDate`, `unmappedByMol`; кэши `mat1c_v4`, `mat1cd_v2`.
+- Блок «Проценты» (11.09.2026): `fmtPct`/`supQtyInUnit`/`PCT_HEAD_TOP`/
+  `PCT_HEAD_SUB`/`pctCells`/`pctFoot` — между `supRowCells` и `m1cToolbar`;
+  CSS `th.grphead.g-pct` рядом с остальными `g-*`; colspan расшифровки
+  материала — 11 или 13.
 
 ## index.html — выгрузка таблиц (10.09.2026)
 
