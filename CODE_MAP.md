@@ -262,6 +262,16 @@
   `PCT_HEAD_SUB`/`pctCells`/`pctFoot` — между `supRowCells` и `m1cToolbar`;
   CSS `th.grphead.g-pct` рядом с остальными `g-*`; colspan расшифровки
   материала — 11 или 13.
+- Фильтры (11.09.2026): state `molGroup`/`molSel`/`matTypeSel`/`matSel`/`mfOpen`/
+  `mfMatQ` (после `m1cMoves`); функции `MF_NO_TYPE`, `molGroupList`, `molPass`,
+  `matTypeOf`, `matPass`, `mfActive`, `mfMaterials`, `mfOptions`, `mfSet`,
+  `mfDropdown`, `m1cToolbar`, `mfRerender`, `mfFocus`, `handleMfClick`,
+  `handleMfInput` — сразу после `pctFoot`; `toggleM1cMoves` — следом.
+  Обработчики: `input` + первая строка `click` у `#mol-screen`/`#materials-screen`
+  (`if (handleMfClick(e)) return;`). Применение: `renderMol` — `molsShown`,
+  `matPass` в фильтре `list`; `renderMaterials` — `molPass` в `offTotal`/`supTotal`,
+  `matPass` в `list` и в дописке «только из 1С»; `openSupplyModal` — `molPass`
+  при пустом `mol`; `mat1cUnmappedNote` — `molPass`. CSS `.tz-opt[hidden]`, `.mf-search`.
 
 ## index.html — выгрузка таблиц (10.09.2026)
 

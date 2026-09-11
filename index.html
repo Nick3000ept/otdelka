@@ -523,6 +523,12 @@
     background: #fff; font-size: 11px; line-height: 13px; text-align: center; color: var(--accent);
   }
   .tz-opt i { margin-left: auto; font-style: normal; color: var(--text-dim); white-space: nowrap; }
+  /* Фильтры «МОЛ»/«Материалов» (11.09.2026) — те же списки, плюс поиск по материалам. */
+  .tz-opt[hidden] { display: none; }
+  .mf-search {
+    width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; padding: 4px 8px;
+    margin-bottom: 6px; border: 1px solid var(--border); border-radius: 4px;
+  }
   /* Сводная «статьи × месяцы» (31.08.2026). Ширины колонок — авто (у базовой
      table.check раскладка fixed и num по 110px, 10 колонок в неё не влезают). */
   .tz-pivot-wrap { overflow-x: auto; }
@@ -1056,6 +1062,13 @@ const state = {
   // колонка «Перемещение» и итог. Запоминается в браузере.
   m1cMoves: (() => { try { return localStorage.getItem('otdelka_m1c_moves') === '1'; }
                      catch (e) { return false; } })(),
+  // Фильтры над таблицами «МОЛ»/«Материалы» (11.09.2026), общие для обеих вкладок.
+  molGroup: '',                // '' — все МОЛ | 'fin' — отделочные | 'gen' — общестроительные
+  molSel: new Set(),           // выбранные МОЛ (пусто — все из группы)
+  matTypeSel: new Set(),       // выбранные группы материалов («Тип материала»)
+  matSel: new Set(),           // выбранные материалы (ключи matKey)
+  mfOpen: null,                // раскрытый список: 'mol' | 'type' | 'mat' | null
+  mfMatQ: '',                  // текст поиска в списке материалов
   mat1cDet: null,              // расшифровка поставки 1С по позициям (09.09.2026)
   mat1cDetStatus: 'idle',      // idle | loading | ready | error
   mat1cUnits: null,            // материалы, где позиции 1С в разных единицах (09.09.2026)
@@ -3045,8 +3058,9 @@ async function openSupplyModal(matKeyValue, mol, title) {
   // [материал, МОЛ, позиция 1С, группа 1С, документ, объект, единица, кол-во, сумма]
   // Перемещения — только при включённой кнопке, чтобы итог окна совпадал
   // с ячейкой таблицы (11.09.2026).
+  // С «Материалов» (mol пустой) — только МОЛ, прошедшие фильтр сверху.
   const rows = (state.mat1cDet || []).filter(r =>
-    matKey(r[0]) === matKeyValue && (!mol || r[1] === mol) &&
+    matKey(r[0]) === matKeyValue && (mol ? r[1] === mol : molPass(r[1])) &&
     (supMovesOn() || r[4] !== 'Перемещение'));
   if (!rows.length) {
     document.getElementById('modal-body').innerHTML =
@@ -3121,13 +3135,17 @@ function mat1cUnmappedNote() {
   if (state.mat1cStatus !== 'ready' || !i || !i.unmappedRows) return '';
   const part = (list, label) => {
     let n = 0, s = 0;
-    (i.byMol || []).forEach(r => { if (list.includes(r[0])) { n += r[1]; s += r[2]; } });
+    // Учитываем фильтр МОЛ сверху — показываем только видимых МОЛ.
+    (i.byMol || []).forEach(r => {
+      if (list.includes(r[0]) && molPass(r[0])) { n += r[1]; s += r[2]; }
+    });
     return n ? label + ' — ' + fmtInt(n) + ' строк на ' + fmtR(s) + ' руб' : '';
   };
   const parts = i.byMol
     ? [part(MOL_FINISH, 'отделочные МОЛ'), part(MOL_GENERAL, 'общестроительные МОЛ')]
         .filter(Boolean).join('; ')
     : fmtInt(i.unmappedRows) + ' строк на ' + fmtR(i.unmappedSum) + ' руб';
+  if (!parts) return '';
   return '<div class="side-note">Поставка по 1С: не сопоставлено ' + escapeHtml(parts) +
     ' — эти позиции в колонки «1С» не вошли' + mat1cSkipNote() +
     '. Связка названий задаётся в листе «Сопоставление_1С».</div>';
@@ -3350,12 +3368,156 @@ function pctCells(vol, done, supQty, cost, sum1c) {
 const pctFoot = (cost, sum1c) => '<td class="num bsep"></td><td class="num"></td>' +
   '<td class="num">' + escapeHtml(fmtPct(cost ? sum1c / cost : 0)) + '</td>';
 
-// Панель над таблицей вкладок «МОЛ»/«Материалы». Пока в ней одна кнопка.
+// --- Фильтры над таблицами «МОЛ»/«Материалы» (11.09.2026) -------------------
+// Группа МОЛ (все / отделочные / общестроительные), МОЛ, группа материалов
+// («Тип материала» из справочника «Материалы») и сами материалы. Фильтры
+// складываются. ⚠️ Модель («Объем итого», «Модель (Бюджет), руб») от МОЛ НЕ
+// зависит (решение пользователя 11.09.2026) — фильтр МОЛ сужает только 1С и
+// «К списанию»; фильтры по материалам убирают строки.
+const MF_NO_TYPE = '— без группы —';
+const molGroupList = () => state.molGroup === 'fin' ? MOL_FINISH
+  : state.molGroup === 'gen' ? MOL_GENERAL : MOL_LIST;
+const molPass = mol => molGroupList().includes(mol) &&
+  (!state.molSel.size || state.molSel.has(mol));
+// Группа материала: у сводной строки ГКЛ — «ГКЛ», у остальных — тип из справочника.
+const matTypeOf = k => k === 'гкл-листы' ? 'ГКЛ'
+  : (String((state.typeByMaterial || new Map()).get(k) || '').trim() || MF_NO_TYPE);
+const matPass = k => (!state.matTypeSel.size || state.matTypeSel.has(matTypeOf(k))) &&
+  (!state.matSel.size || state.matSel.has(k));
+const mfActive = () => !!(state.molGroup || state.molSel.size || state.matTypeSel.size ||
+  state.matSel.size);
+// Все материалы вкладок: модель («Расходы»), поставка 1С и списание -> [[ключ, название]].
+function mfMaterials() {
+  const m = new Map();
+  const add = n => {
+    n = String(n || '').trim();
+    if (!n) return;
+    const k = matKey(n);
+    if (!m.has(k)) m.set(k, matTitle(k, n));
+  };
+  (state.expenses || []).forEach(r => add(r['Материалы']));
+  (state.mat1c || []).forEach(r => add(r[0]));
+  (state.writeoff || []).forEach(r => add(r[1]));
+  return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1], 'ru'));
+}
+// Пункты списка фильтра: [[значение, подпись], …]. Материалы подчиняются группе.
+function mfOptions(kind) {
+  if (kind === 'mol') return molGroupList().map(m => [m, m]);
+  const mats = mfMaterials();
+  if (kind === 'type') {
+    return [...new Set(mats.map(([k]) => matTypeOf(k)))]
+      .sort((a, b) => (a === MF_NO_TYPE) - (b === MF_NO_TYPE) || a.localeCompare(b, 'ru'))
+      .map(t => [t, t]);
+  }
+  return mats.filter(([k]) => !state.matTypeSel.size || state.matTypeSel.has(matTypeOf(k)));
+}
+const mfSet = kind => kind === 'mol' ? state.molSel
+  : kind === 'type' ? state.matTypeSel : state.matSel;
+function mfDropdown(kind, label) {
+  const sel = mfSet(kind);
+  const head = '<div class="tz-dd-head" data-mfdd="' + kind + '">' + label + ': ' +
+    (sel.size ? 'выбрано ' + sel.size : 'все') + ' &#9662;</div>';
+  if (state.mfOpen !== kind) return '<div class="tz-dd mf-dd">' + head + '</div>';
+  const q = kind === 'mat' ? norm(state.mfMatQ) : '';
+  return '<div class="tz-dd mf-dd">' + head + '<div class="tz-dd-list">' +
+    (kind === 'mat' ? '<input class="mf-search" data-mfq="1" placeholder="Найти материал…" ' +
+      'autocomplete="off" value="' + escapeHtml(state.mfMatQ) + '">' : '') +
+    '<div class="tz-dd-act"><button data-mfall="' + kind + '">Выбрать все</button>' +
+    '<button data-mfnone="' + kind + '">Снять все</button></div>' +
+    mfOptions(kind).map(([v, t]) => {
+      const on = sel.has(v);
+      return '<div class="tz-opt' + (on ? ' on' : '') + '" data-mfopt="' + kind +
+        '" data-v="' + escapeHtml(v) + '"' + (q && norm(t).indexOf(q) < 0 ? ' hidden' : '') +
+        '><span class="tz-box">' + (on ? '&#10003;' : '') + '</span>' + escapeHtml(t) + '</div>';
+    }).join('') + '</div></div>';
+}
+// Панель над таблицей вкладок «МОЛ»/«Материалы»: фильтры и кнопка перемещений.
 function m1cToolbar() {
-  return '<div class="tz-filters mtools">' +
+  const grp = [['', 'Все МОЛ', ''], ['fin', 'Отделочные', MOL_FINISH.join(', ')],
+               ['gen', 'Общестроительные', MOL_GENERAL.join(', ')]]
+    .map(g => '<button data-mfgroup="' + g[0] + '"' + (state.molGroup === g[0] ? ' class="on"' : '') +
+      (g[2] ? ' title="' + escapeHtml(g[2]) + '"' : '') + '>' + g[1] + '</button>').join('');
+  return '<div class="tz-filters mtools">' + grp +
+    mfDropdown('mol', 'МОЛ') + mfDropdown('type', 'Группа материалов') +
+    mfDropdown('mat', 'Материалы') +
     '<button data-m1cmoves="1"' + (state.m1cMoves ? ' class="on"' : '') +
     ' title="Добавить в блок «1С» колонку «Перемещение» и учитывать её в итоге">' +
-    'Учитывать перемещения</button></div>';
+    'Учитывать перемещения</button>' +
+    (mfActive() ? '<button data-mfreset="1">Сбросить фильтры</button>' : '') + '</div>';
+}
+function mfRerender() {
+  if (state.screen === 'mol') renderMol();
+  if (state.screen === 'materials') renderMaterials();
+}
+// После перерисовки — вернуть курсор в поиск по материалам, если список открыт.
+function mfFocus(el) {
+  const inp = state.mfOpen === 'mat' && el.querySelector('[data-mfq]');
+  if (!inp) return;
+  inp.focus();
+  inp.setSelectionRange(inp.value.length, inp.value.length);
+}
+// Клики по панели фильтров (общие для обеих вкладок). true — клик обработан.
+function handleMfClick(e) {
+  const t = e.target;
+  if (t.closest('[data-m1cmoves]')) { state.mfOpen = null; toggleM1cMoves(); return true; }
+  if (t.closest('[data-mfq]')) return true;
+  const dd = t.closest('[data-mfdd]');
+  if (dd) {
+    state.mfOpen = state.mfOpen === dd.dataset.mfdd ? null : dd.dataset.mfdd;
+    mfRerender();
+    return true;
+  }
+  const opt = t.closest('[data-mfopt]');
+  const bulk = t.closest('[data-mfall],[data-mfnone]');
+  if (opt || bulk) {
+    const kind = opt ? opt.dataset.mfopt : (bulk.dataset.mfall || bulk.dataset.mfnone);
+    const sel = mfSet(kind);
+    if (opt) {
+      if (sel.has(opt.dataset.v)) sel.delete(opt.dataset.v); else sel.add(opt.dataset.v);
+    } else {
+      sel.clear();
+      // «Выбрать все» у материалов — только то, что видно после поиска.
+      if (bulk.dataset.mfall) {
+        const q = kind === 'mat' ? norm(state.mfMatQ) : '';
+        mfOptions(kind).forEach(([v, tx]) => { if (!q || norm(tx).indexOf(q) >= 0) sel.add(v); });
+      }
+    }
+    // Сменилась группа материалов — выбранные материалы других групп отпадают.
+    if (kind === 'type') {
+      state.matSel = new Set([...state.matSel].filter(k =>
+        !state.matTypeSel.size || state.matTypeSel.has(matTypeOf(k))));
+    }
+    mfRerender();
+    return true;
+  }
+  const g = t.closest('[data-mfgroup]');
+  if (g) {
+    state.molGroup = g.dataset.mfgroup;
+    // МОЛ другой группы из выбора убираем — иначе таблица оказалась бы пустой.
+    state.molSel = new Set([...state.molSel].filter(m => molGroupList().includes(m)));
+    state.mfOpen = null;
+    mfRerender();
+    return true;
+  }
+  if (t.closest('[data-mfreset]')) {
+    state.molGroup = '';
+    state.molSel = new Set(); state.matTypeSel = new Set(); state.matSel = new Set();
+    state.mfMatQ = ''; state.mfOpen = null;
+    mfRerender();
+    return true;
+  }
+  // Клик мимо раскрытого списка — закрыть его; дальше клик обрабатывается как обычно.
+  if (state.mfOpen && !t.closest('.mf-dd')) { state.mfOpen = null; mfRerender(); }
+  return false;
+}
+// Поиск по списку материалов — прячем пункты без перерисовки, чтобы не терять курсор.
+function handleMfInput(e) {
+  if (!e.target.matches('[data-mfq]')) return;
+  state.mfMatQ = e.target.value;
+  const q = norm(e.target.value);
+  e.target.closest('.tz-dd-list').querySelectorAll('[data-mfopt]').forEach(o => {
+    o.hidden = !!q && norm(o.textContent).indexOf(q) < 0;
+  });
 }
 function toggleM1cMoves() {
   state.m1cMoves = !state.m1cMoves;
@@ -3421,7 +3583,10 @@ function renderMol() {
   // Честно предупреждаем: часть позиций 1С ещё не связана с материалами витрины,
   // их поставка ни в одну строку не попала (связка — лист «Сопоставление_1С»).
   html += mat1cUnmappedNote();
-  MOL_LIST.forEach(mol => {
+  // Фильтры сверху (11.09.2026): группа МОЛ и выбранные МОЛ.
+  const molsShown = MOL_LIST.filter(molPass);
+  if (!molsShown.length) html += '<div class="side-note">Под выбранные фильтры МОЛ не попал ни один.</div>';
+  molsShown.forEach(mol => {
     const molOpen = state.molOpen.has(mol);
     html += '<div class="mol-block"><div class="mol-name" data-mol="' + escapeHtml(mol) + '">' +
       chev(molOpen) + escapeHtml(mol) + '</div>';
@@ -3501,11 +3666,12 @@ function renderMol() {
           off: off ? (off.mols.get(mol) || 0) : 0,
           sup: (supByMat.get(k) || new Map()).get(mol) || null
         };
-      }).filter(r => r.vol || r.off ||
-          (r.sup && (supCellText(supUnits(r.sup), '') || supSum(r.sup))))
+      }).filter(r => matPass(r.k) && (r.vol || r.off ||
+          (r.sup && (supCellText(supUnits(r.sup), '') || supSum(r.sup)))))
         .sort((a, b) => b.cost - a.cost || b.vol - a.vol);
       if (!list.length) {
-        html += '<div class="side-note">Материалов по этому МОЛ не нашлось.</div>';
+        html += '<div class="side-note">Материалов по этому МОЛ не нашлось' +
+          (state.matTypeSel.size || state.matSel.size ? ' (с учётом фильтров)' : '') + '.</div>';
       } else {
         const tCost = list.reduce((s, r) => s + r.cost, 0);
         // Деньги 1С сложить можно, количества — нет (штуки, м², кг вперемешку).
@@ -3571,6 +3737,7 @@ function renderMol() {
     html += '</div>';
   });
   el.innerHTML = html;
+  mfFocus(el);
 }
 
 /**
@@ -3598,8 +3765,10 @@ function renderMaterials() {
   }
   // «Списано итого» (просьба 28.08.2026) — сумма по всем МОЛ из листа
   // «Списание материалов»; ключ тот же matKey, поэтому ГКЛ сравнивается целиком.
+  // Фильтр МОЛ сверху (11.09.2026) сужает списание и 1С; модель от него не зависит.
   const offTotal = new Map();
   (state.writeoff || []).forEach(r => {
+    if (!molPass(r[5])) return;
     const k = matKey(r[1]);
     offTotal.set(k, (offTotal.get(k) || 0) + (r[4] || 0));
   });
@@ -3608,6 +3777,7 @@ function renderMaterials() {
   // числом. Правила отбора строк 1С — на бэкенде (см. buildMat1c_).
   const supTotal = new Map();
   (state.mat1c || []).forEach(r => {
+    if (!molPass(r[1])) return;
     const k = matKey(r[0]);
     if (!supTotal.has(k)) supTotal.set(k, Object.assign(newSupBucket(), {
       name: matTitle(k, r[0]),
@@ -3618,12 +3788,12 @@ function renderMaterials() {
   const calc = buildMaterialCalc(null, allFactVolumes());
   const list = Array.from(calc.entries())
     .map(([k, o]) => ({ k, ...o }))
-    .filter(r => r.cost || r.vol)
+    .filter(r => (r.cost || r.vol) && matPass(r.k))
     .sort((a, b) => b.cost - a.cost);
   // Материал есть в поставке 1С, но не в модели — строка с пустой «Моделью»
   // (расшифровывать по работам нечего, works пустой).
   supTotal.forEach((o, k) => {
-    if (calc.has(k)) return;
+    if (calc.has(k) || !matPass(k)) return;
     // Без кнопки «Учитывать перемещения» материал, который только перемещали,
     // строкой не нужен — все его ячейки были бы пустыми (11.09.2026).
     if (!supCellText(supUnits(o), '') && !supSum(o)) return;
@@ -3711,7 +3881,10 @@ function renderMaterials() {
   } else {
     note1c = mat1cUnmappedNote();
   }
-  el.innerHTML = head + m1cToolbar() + note1c + '<div class="bdetail-wrap">' + tbl + '</div>';
+  el.innerHTML = head + m1cToolbar() + note1c + (list.length ? '' :
+    '<div class="side-note">Под выбранные фильтры материалов не нашлось.</div>') +
+    '<div class="bdetail-wrap">' + tbl + '</div>';
+  mfFocus(el);
 }
 
 /**
@@ -6147,8 +6320,9 @@ document.querySelectorAll('.sb-item').forEach(el => {
 
 // Вкладка «Материалы» (28.08.2026): клик по строке материала раскрывает
 // расшифровку по работам, повторный клик — сворачивает.
+document.getElementById('materials-screen').addEventListener('input', handleMfInput);
 document.getElementById('materials-screen').addEventListener('click', e => {
-  if (e.target.closest('[data-m1cmoves]')) { toggleM1cMoves(); return; }
+  if (handleMfClick(e)) return;
   // Клик по числу поставки — расшифровка по позициям 1С (09.09.2026).
   const sup1cCell = e.target.closest('[data-supmat]');
   if (sup1cCell) {
@@ -6162,8 +6336,9 @@ document.getElementById('materials-screen').addEventListener('click', e => {
 });
 
 // Вкладка «МОЛ» (28.08.2026): сворачиваются и блоки МОЛ, и разделы внутри них.
+document.getElementById('mol-screen').addEventListener('input', handleMfInput);
 document.getElementById('mol-screen').addEventListener('click', e => {
-  if (e.target.closest('[data-m1cmoves]')) { toggleM1cMoves(); return; }
+  if (handleMfClick(e)) return;
   // Клик по числу поставки — расшифровка по позициям 1С (09.09.2026).
   const sup = e.target.closest('[data-supmat]');
   if (sup) {
