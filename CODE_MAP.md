@@ -272,6 +272,11 @@
   `matPass` в фильтре `list`; `renderMaterials` — `molPass` в `offTotal`/`supTotal`,
   `matPass` в `list` и в дописке «только из 1С»; `openSupplyModal` — `molPass`
   при пустом `mol`; `mat1cUnmappedNote` — `molPass`. CSS `.tz-opt[hidden]`, `.mf-search`.
+- Все МОЛ (11.09.2026): `molOthers`/`molAll` сразу после `MOL_LIST`; группа
+  `'oth'` в `molGroupList` и кнопка «Прочие» в `m1cToolbar`; `renderMol` —
+  `molAll().filter(molPass)`, `general = !MOL_FINISH.includes(mol)`.
+  script.gs: `m1cShortFio_` сразу после `m1cMol_` (он же фолбэк для всех
+  МОЛ вне `M1C_MOLS`); кэши `mat1c_v5`, `mat1cd_v3`.
 
 ## index.html — выгрузка таблиц (10.09.2026)
 

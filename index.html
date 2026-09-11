@@ -2829,6 +2829,15 @@ function unitClass(v) {
 const MOL_FINISH = ['Овчинников', 'Смирнов', 'Джамал', 'Элшод'];
 const MOL_GENERAL = ['Мичуров', 'Соболев', 'Никитин'];
 const MOL_LIST = MOL_FINISH.concat(MOL_GENERAL);
+// Прочие МОЛ (11.09.2026, «добавляем всех»): все остальные МОЛ выгрузки 1С,
+// бэкенд отдаёт их как «Фамилия И.О.». Список берётся из ответа mat1c, по алфавиту.
+function molOthers() {
+  const s = new Set();
+  (state.mat1c || []).forEach(r => s.add(r[1]));
+  ((state.mat1cInfo || {}).byMol || []).forEach(r => s.add(r[0]));
+  return [...s].filter(m => m && !MOL_LIST.includes(m)).sort((a, b) => a.localeCompare(b, 'ru'));
+}
+const molAll = () => MOL_LIST.concat(molOthers());
 
 /**
  * Расшифровка материалов по листу «Расходы» (28.08.2026).
@@ -3142,7 +3151,8 @@ function mat1cUnmappedNote() {
     return n ? label + ' — ' + fmtInt(n) + ' строк на ' + fmtR(s) + ' руб' : '';
   };
   const parts = i.byMol
-    ? [part(MOL_FINISH, 'отделочные МОЛ'), part(MOL_GENERAL, 'общестроительные МОЛ')]
+    ? [part(MOL_FINISH, 'отделочные МОЛ'), part(MOL_GENERAL, 'общестроительные МОЛ'),
+       part(molOthers(), 'прочие МОЛ')]
         .filter(Boolean).join('; ')
     : fmtInt(i.unmappedRows) + ' строк на ' + fmtR(i.unmappedSum) + ' руб';
   if (!parts) return '';
@@ -3376,7 +3386,8 @@ const pctFoot = (cost, sum1c) => '<td class="num bsep"></td><td class="num"></td
 // «К списанию»; фильтры по материалам убирают строки.
 const MF_NO_TYPE = '— без группы —';
 const molGroupList = () => state.molGroup === 'fin' ? MOL_FINISH
-  : state.molGroup === 'gen' ? MOL_GENERAL : MOL_LIST;
+  : state.molGroup === 'gen' ? MOL_GENERAL
+  : state.molGroup === 'oth' ? molOthers() : molAll();
 const molPass = mol => molGroupList().includes(mol) &&
   (!state.molSel.size || state.molSel.has(mol));
 // Группа материала: у сводной строки ГКЛ — «ГКЛ», у остальных — тип из справочника.
@@ -3434,7 +3445,8 @@ function mfDropdown(kind, label) {
 // Панель над таблицей вкладок «МОЛ»/«Материалы»: фильтры и кнопка перемещений.
 function m1cToolbar() {
   const grp = [['', 'Все МОЛ', ''], ['fin', 'Отделочные', MOL_FINISH.join(', ')],
-               ['gen', 'Общестроительные', MOL_GENERAL.join(', ')]]
+               ['gen', 'Общестроительные', MOL_GENERAL.join(', ')],
+               ['oth', 'Прочие', molOthers().join(', ')]]
     .map(g => '<button data-mfgroup="' + g[0] + '"' + (state.molGroup === g[0] ? ' class="on"' : '') +
       (g[2] ? ' title="' + escapeHtml(g[2]) + '"' : '') + '>' + g[1] + '</button>').join('');
   return '<div class="tz-filters mtools">' + grp +
@@ -3584,7 +3596,7 @@ function renderMol() {
   // их поставка ни в одну строку не попала (связка — лист «Сопоставление_1С»).
   html += mat1cUnmappedNote();
   // Фильтры сверху (11.09.2026): группа МОЛ и выбранные МОЛ.
-  const molsShown = MOL_LIST.filter(molPass);
+  const molsShown = molAll().filter(molPass);
   if (!molsShown.length) html += '<div class="side-note">Под выбранные фильтры МОЛ не попал ни один.</div>';
   molsShown.forEach(mol => {
     const molOpen = state.molOpen.has(mol);
@@ -3592,8 +3604,9 @@ function renderMol() {
       chev(molOpen) + escapeHtml(mol) + '</div>';
     if (!molOpen) { html += '</div>'; return; }
     const secOpen = sec => !state.molSecClosed.has(mol + '|' + sec);
-    // Общестроительные МОЛ (11.09.2026) есть только в 1С — раздела «Бюджет» у них нет.
-    const general = MOL_GENERAL.includes(mol);
+    // Общестроительные и прочие МОЛ (11.09.2026) есть только в 1С — раздела
+    // «Бюджет» у них нет.
+    const general = !MOL_FINISH.includes(mol);
 
     // --- Раздел «Бюджет» ---
     const bOpen = !general && secOpen('budget');
