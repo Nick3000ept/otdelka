@@ -202,7 +202,12 @@ function cacheGetBig_(cache, key) {
 }
 
 function setup() {
-  PropertiesService.getScriptProperties().setProperty('PASSWORD', 'otdelka2026');
+  // Пароль витрины в коде не хранится (2026-09-13: прежний утёк в публичный репозиторий).
+  // Задаётся вручную: редактор GAS → Настройки проекта → Свойства скрипта → PASSWORD;
+  // значение — в ДОСТУПЫ.md. Функция лишь проверяет, что свойство задано.
+  var pw = PropertiesService.getScriptProperties().getProperty('PASSWORD');
+  if (!pw) throw new Error('Свойство PASSWORD не задано — добавьте его в Свойствах скрипта');
+  Logger.log('PASSWORD задан, длина ' + pw.length);
 }
 
 /**
