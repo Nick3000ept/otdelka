@@ -77,6 +77,10 @@
   /* Дата выгрузки 1С — под кнопкой «Обновить данные» (11.09.2026). */
   .sb-note { margin-top: 8px; padding: 0 4px; font-size: 11px; color: #8a97ad; text-align: center; }
   .sb-note:empty { display: none; }
+  /* Возврат на портал acons.space (14.09.2026) — только у вошедших через портал. */
+  .sb-portal { display: block; margin: 0 0 10px; padding: 6px 12px; font-size: 12px; color: #8a97ad; text-decoration: none; border-radius: 8px; }
+  .sb-portal:hover { background: #1a2940; color: #fff; }
+  .sb-portal[hidden] { display: none; }
 
   #content { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
@@ -887,6 +891,7 @@
 
 <div id="app">
   <aside id="sidebar">
+    <a id="sb-portal" class="sb-portal" href="https://acons.space" hidden title="Вернуться к списку инструментов">&larr; Портал acons.space</a>
     <div class="sb-brand">Отделка СБ3</div>
     <div class="sb-item active" data-screen="rates">Расценки</div>
     <div class="sb-item" data-screen="volumes">Объемы</div>
@@ -7349,6 +7354,7 @@ if (state.token || state.pass) {
   showApp();
   loadData();
   if (state.pass) renewPass();
+  document.getElementById('sb-portal').hidden = !state.pass;   // «← Портал» только у вошедших через портал
   // Вкладку могут не закрывать неделями — проверяем раз в час (запрос уходит раз в сутки).
   setInterval(() => { if (state.pass) renewPass(); }, 3600000);
 } else if (!(/(^|\.)acons\.space$/.test(location.hostname) && goPortal())) {

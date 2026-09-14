@@ -425,6 +425,8 @@
 - ~6208 `authQ` — хвост GET-адреса `&t=…&p=…` (**все** GET-запросы строятся через него);
   ~6216 `goPortal` (защита от петли: sessionStorage `otdelka_portal_jump`, 2 мин);
   ~6229 `renewPass` (action=portalRenew раз в сутки)
+- `#sb-portal` — ссылка «← Портал acons.space» над `.sb-brand` в `#sidebar` (CSS `.sb-portal` рядом с `.sb-note`),
+  показывается в запуске только при `state.pass`
 
 ## script.gs (деплой ТОЛЬКО clasp update-deployment, сейчас v24+)
 
