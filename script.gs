@@ -405,10 +405,11 @@ function doPost(e) {
   } catch (err) {
     return jsonOut_({ ok: false, error: 'bad_json' });
   }
-  var stored = PropertiesService.getScriptProperties().getProperty('PASSWORD');
-  if (!stored || body.t !== stored) {
-    return jsonOut_({ ok: false, error: 'unauthorized' });
-  }
+  // Общий пароль или пропуск портала acons.space (14.09.2026, см. auth_).
+  var who = auth_(body.t, body.p);
+  if (who.error) return jsonOut_({ ok: false, error: who.error });
+  // Вошёл через портал — в журналы факта и вопросов пишется ФИО учётки, а не набранное имя.
+  if (who.fio) body.author = who.fio;
 
   var lock = LockService.getScriptLock();
   try {
@@ -722,14 +723,17 @@ function doPost(e) {
       // пароль лежит в Script Properties (ключ ADMIN_PASSWORD, задаётся вручную
       // в редакторе GAS: Настройки проекта -> Свойства скрипта). Пока свойство
       // не задано — фиксация закрыта для всех (fail closed).
-      var adminPass = PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
-      if (!adminPass) {
-        return jsonOut_({ ok: false, error: 'admin_not_configured',
-          message: 'пароль администратора ещё не настроен (свойство ADMIN_PASSWORD в GAS)' });
-      }
-      if (String(body.at || '') !== adminPass) {
-        return jsonOut_({ ok: false, error: 'admin_only',
-          message: 'фиксировать базовый расчёт может только администратор' });
+      // С 14.09.2026 роль «администратор» в Отделке на портале заменяет этот пароль.
+      if (who.role !== 'администратор') {
+        var adminPass = PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
+        if (!adminPass) {
+          return jsonOut_({ ok: false, error: 'admin_not_configured',
+            message: 'пароль администратора ещё не настроен (свойство ADMIN_PASSWORD в GAS)' });
+        }
+        if (String(body.at || '') !== adminPass) {
+          return jsonOut_({ ok: false, error: 'admin_only',
+            message: 'фиксировать базовый расчёт может только администратор' });
+        }
       }
       var ssBl = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
       var obj = { date: new Date().toISOString(), data: buildBaseline_(ssBl),
@@ -774,14 +778,17 @@ function doGet(e) {
   var params = (e && e.parameter) || {};
   var action = params.action || 'load';
   var token = params.t || '';
-  var stored = PropertiesService.getScriptProperties().getProperty('PASSWORD');
 
-  if (!stored || token !== stored) {
-    return jsonOut_({ ok: false, error: 'unauthorized' });
-  }
+  // Общий пароль или пропуск портала acons.space (14.09.2026, см. auth_).
+  var who = auth_(token, params.p);
+  if (who.error) return jsonOut_({ ok: false, error: who.error });
+  if (action === 'portalRenew') return jsonOut_(portalRenew_(who));
 
   if (action === 'ping') {
-    return jsonOut_({ ok: true, time: new Date().toISOString() });
+    // portal — заданы ли свойства для входа через портал (14.09.2026); значения не отдаются.
+    var prPing = PropertiesService.getScriptProperties();
+    return jsonOut_({ ok: true, time: new Date().toISOString(), via: who.via,
+      portal: { secret: !!prPing.getProperty('PORTAL_SECRET'), sheet: !!prPing.getProperty('PORTAL_SHEET_ID') } });
   }
 
   // Сброс кэша без редактора GAS (14.08.2026): после правок в «Поэтажка_работы»
@@ -1294,7 +1301,9 @@ function doGet(e) {
   // отдельно на 6 часов.
   if (action === 'tuzioPerson') {
     try {
-      var fioQ = String(params.p || '').trim();
+      // С 14.09.2026 ФИО приходит в fio (p — пропуск портала); p=ФИО шлёт только старая
+      // закэшированная страница, и то лишь при входе по паролю.
+      var fioQ = String(params.fio || (who.via === 'password' ? params.p : '') || '').trim();
       if (!fioQ) return jsonOut_({ ok: false, error: 'no_person' });
       var cacheTp = CacheService.getScriptCache();
       var keyTp = CACHE_TUZP + Utilities.base64EncodeWebSafe(fioQ).slice(0, 200);
@@ -3125,3 +3134,112 @@ function jsonOut_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+// ───────────── Вход через портал acons.space (14.09.2026) ─────────────
+// Портал (папка Портал_acons, TZ.md §6а) выдаёт подписанный пропуск ?p=. Витрина
+// принимает его наравне с общим паролем PASSWORD — старый вход работает параллельно.
+// Решение пользователя 14.09.2026 «зайти один раз и спокойно пользоваться»: пропуск
+// живёт 30 дней и продлевается сам при открытии витрины (action=portalRenew), а доступ
+// всё равно закрывается в течение 5 минут после отключения учётки или снятия роли:
+// витрина сверяется с таблицей портала и держит ответ в кэше. Таблица недоступна —
+// пускаем по пропуску, чтобы сбой портала не выбрасывал людей.
+// Script Properties (задаются вручную): PORTAL_SECRET — тот же, что у портала;
+// PORTAL_SHEET_ID — ID таблицы «Портал_пользователи» (свойство SHEET_ID портала).
+var PORTAL_APP = 'otdelka';
+var PORTAL_ROLES = ['просмотр', 'администратор'];
+var PORTAL_PASS_TTL_SEC = 30 * 86400;
+var PORTAL_RECHECK_SEC = 300;
+
+/** Проверка входа: пропуск портала или общий пароль. {via, login, fio, role} либо {error}. */
+function auth_(t, p) {
+  if (p) {
+    var who = portalWho_(p);
+    if (who) return who;
+  }
+  var stored = PropertiesService.getScriptProperties().getProperty('PASSWORD');
+  if (stored && t && t === stored) return { via: 'password', login: '', fio: '', role: '' };
+  return { error: p ? 'bad_pass' : 'unauthorized' };
+}
+
+/** Пропуск подлинный и роль на портале не снята → {via:'portal', login, fio, role}; иначе null. */
+function portalWho_(p) {
+  var pass = checkPortalPass_(p, PORTAL_APP, PORTAL_ROLES);
+  if (!pass) return null;
+  var live = portalLive_(pass.login);
+  if (live && !live.role) return null;   // отключён, срок вышел или роль в Отделке снята
+  return { via: 'portal', login: pass.login,
+           fio: (live && live.fio) || pass.fio || '', role: (live && live.role) || pass.role };
+}
+
+/**
+ * Текущая роль человека в Отделке по таблице портала (лист «Пользователи»), кэш 5 минут.
+ * {role, fio}: role '' — доступа нет; null — таблицу прочитать не удалось (пускаем по пропуску).
+ */
+function portalLive_(login) {
+  login = String(login || '').trim().toLowerCase();
+  var cache = CacheService.getScriptCache();
+  var key = 'plive_' + Utilities.base64EncodeWebSafe(login);
+  var c = cache.get(key);
+  if (c) return c === 'err' ? null : JSON.parse(c);
+  var id = PropertiesService.getScriptProperties().getProperty('PORTAL_SHEET_ID');
+  if (!id) return null;
+  try {
+    var rows = SpreadsheetApp.openById(id).getSheetByName('Пользователи').getDataRange().getValues();
+    var h = rows[0].map(function (x) { return String(x).trim(); });
+    var iL = h.indexOf('Логин'), iF = h.indexOf('ФИО'), iS = h.indexOf('Статус'),
+        iV = h.indexOf('Действует до'), iR = h.indexOf('Отделка');
+    if (iL < 0 || iS < 0 || iR < 0) throw new Error('в таблице портала нет колонок Логин/Статус/Отделка');
+    var res = { role: '', fio: '' };
+    for (var i = 1; i < rows.length; i++) {
+      if (String(rows[i][iL]).trim().toLowerCase() !== login) continue;
+      var vt = iV >= 0 ? rows[i][iV] : '';
+      var active = String(rows[i][iS]).trim() === 'активен' &&
+                   !(vt && new Date(vt).getTime() < Date.now() - 86400000);
+      var role = String(rows[i][iR] || '').trim();
+      res = { role: active && PORTAL_ROLES.indexOf(role) >= 0 ? role : '',
+              fio: iF >= 0 ? String(rows[i][iF] || '') : '' };
+      break;
+    }
+    cache.put(key, JSON.stringify(res), PORTAL_RECHECK_SEC);
+    return res;
+  } catch (e) {
+    cache.put(key, 'err', 60);   // не долбим таблицу при сбое, через минуту попробуем снова
+    return null;
+  }
+}
+
+/** Свежий пропуск на 30 дней с текущими ролью и ФИО — фронт просит раз в сутки. */
+function portalRenew_(who) {
+  if (who.via !== 'portal') return { ok: false, error: 'not_portal' };
+  var now = Math.floor(Date.now() / 1000);
+  var payload = JSON.stringify({ l: who.login, n: who.fio, a: PORTAL_APP, r: who.role,
+                                 exp: now + PORTAL_PASS_TTL_SEC, iat: now });
+  var p = b64url_(Utilities.newBlob(payload).getBytes()) + '.' +
+          b64url_(Utilities.computeHmacSha256Signature(payload, secret_()));
+  return { ok: true, p: p, role: who.role, fio: who.fio };
+}
+
+/** Проверка пропуска — копия эталона из Портал_acons/Code.gs. {login, fio, role} или null. */
+function checkPortalPass_(p, myCode, allowedRoles) {
+  try {
+    var parts = String(p || '').split('.');
+    if (parts.length !== 2) return null;
+    var b64 = parts[0];
+    while (b64.length % 4) b64 += '=';
+    var payload = Utilities.newBlob(Utilities.base64DecodeWebSafe(b64)).getDataAsString();
+    var sig = b64url_(Utilities.computeHmacSha256Signature(payload, secret_()));
+    if (sig !== parts[1]) return null;
+    var d = JSON.parse(payload);
+    if (d.a !== myCode || !d.exp || d.exp < Math.floor(Date.now() / 1000)) return null;
+    if (allowedRoles && allowedRoles.indexOf(d.r) < 0) return null;
+    return { login: d.l, fio: d.n, role: d.r };
+  } catch (e) { return null; }
+}
+
+function secret_() {
+  var s = PropertiesService.getScriptProperties().getProperty('PORTAL_SECRET');
+  if (!s) throw new Error('PORTAL_SECRET не задан в свойствах скрипта');
+  return s;
+}
+
+function b64url_(bytes) { return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/, ''); }

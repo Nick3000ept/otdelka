@@ -2,6 +2,10 @@
 
 Карта кода `index.html` и `script.gs` — **читать перед правкой вместо чтения всего файла**;
 после правки актуализировать сдвинувшиеся номера строк затронутых секций.
+> 14.09.2026 (вход через портал): index.html 7355 строк, script.gs 3242 — точно пересчитаны
+> только секции входа, «Изменений», «Вопросов», каркаса и `doPost`/`doGet`; остальные номера
+> index.html после ~1040 сдвинулись примерно на +30…+75 — искать Grep-ом по имени.
+
 Номера строк **сверены с кодом 2026-09-11** (index.html 7280 строк, script.gs 3122):
 86 ссылок на функции и константы пересчитаны скриптом по фактическим объявлениям
 в файлах (после правок 11.09 — фильтры и проценты на «МОЛ»/«Материалах», все МОЛ
@@ -17,7 +21,8 @@
 
 ## index.html — структура страницы
 
-- `#gate` — экран пароля (общий пароль, localStorage `otdelka_token`)
+- `#gate` — экран пароля (общий пароль, localStorage `otdelka_token`) + ссылка `.portal-link` на портал
+  (с 14.09.2026 вход и через портал acons.space — см. раздел «вход через портал» ниже)
 - `#app` = `#sidebar` (`.sb-item` data-screen=`rates|volumes|budget`; блок Проверки
   `#sb-checks`: `check-rates|check-work-rates|check-no-cost|check-formulas|check-changes|check-questions`,
   бейджи `#badge-check-*`) + `#content`
@@ -391,23 +396,35 @@
   клики в обработчике #check-screen; работы «— вне бюджета —» отдельной статьёй;
   budget error → плоский список; детали строк — столбцами CH_COLS/fieldCell:
   Подрядчик · Стоимость мат./работ за ед. · Объём · Стоимость, mod красным);
-  кнопка `#baseline-save`; ~6136 `saveBaseline` (с 18.08 требует админ-пароль:
-  prompt -> localStorage `otdelka_admin` -> POST `at`, бэк сверяет с ADMIN_PASSWORD)
+  кнопка `#baseline-save`; ~6165 `saveBaseline` (с 18.08 требует админ-пароль:
+  prompt -> localStorage `otdelka_admin` -> POST `at`, бэк сверяет с ADMIN_PASSWORD;
+  с 14.09 роль «администратор» в пропуске портала — без запроса пароля)
 - ~6254 `renderCheckQuestions` — «Вопросы» (кнопка статуса qstatus)
 - ~6332 `updateCheckBadges`; ~6352 `CHECK_SCREENS` (экран → рендер; новые проверки сюда);
   2325 клик `#check-screen` (qstatus/baseline-save/ncgrp/grp/wrow)
 
 ## index.html — Вопросы (запись)
 
-- ~6176 `postJson` (POST text/plain — обход CORS-preflight); ~6191 `loadQuestions` (фоном);
+- ~6241 `postJson` (POST text/plain — обход CORS-preflight; шлёт `t` и `p`); `loadQuestions` (фоном);
   ~6206 `openQuestionModal`; ~6223 `submitQuestion`; ~6301 `toggleQuestionStatus`
   (optimistic + откат); имя — localStorage `otdelka_user`
 
 ## index.html — каркас
 
 - ~6362 `setScreen`; ~6786 `setStatus`; ~6800 `fetchWithRetry` (3 попытки)
-- ~6822 `loadData` — action=load; затем фоном: `loadFloors` + `loadQuestions` + `loadVols`
-- ~6882 `loadFloors`; 2593/2600 gate/app; ~6918 `submitPassword`
+- ~6888 `loadData` — action=load; затем фоном: `loadFloors` + `loadQuestions` + `loadVols`;
+  unauthorized/bad_pass при пропуске → забыть пропуск, `goPortal()`
+- `loadFloors`; ~6976 `showGate`; `submitPassword`; ~7347 запуск (token/pass → витрина,
+  *.acons.space без них → портал, иначе экран пароля)
+
+## index.html — вход через портал acons.space (14.09.2026)
+
+- ~1044 `PORTAL_LOGIN_URL` + самовызов `takePassFromUrl` (`?p=` → localStorage `otdelka_pass`,
+  убрать из адреса); ~1053 `lsGet`; ~1058 `passInfo` (разбор пропуска только для интерфейса);
+  ~1066 `state` (`pass`, `userName` берёт ФИО из пропуска)
+- ~6208 `authQ` — хвост GET-адреса `&t=…&p=…` (**все** GET-запросы строятся через него);
+  ~6216 `goPortal` (защита от петли: sessionStorage `otdelka_portal_jump`, 2 мин);
+  ~6229 `renewPass` (action=portalRenew раз в сутки)
 
 ## script.gs (деплой ТОЛЬКО clasp update-deployment, сейчас v24+)
 
@@ -428,14 +445,18 @@
   `readBaseSums_`, пишется в saveBaseline)
 - ~285 `buildBaseline_` — слепок работа|корпус|этаж → [стоимость, объём, подрядчик,
   расц.раб, расц.мат]; ~354 `diffBaseline_` (add/del/mod)
-- ~396 `doPost` — saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
+- ~401 `doPost` — вход `auth_(t, p)`, при портале `author` = ФИО учётки (14.09); saveFact (журнал в лист «Факт», append-only, лимит 300, safeCell_;
   ветка ДО чтения вопросов) / importShamov (перезапись листа «расчет_Шамов»
   целиком, «Месяц» текстовым форматом; 24.08) / addQuestion / saveBaseline /
   setQuestionStatus (LockService, пароль)
 - `buildAnalytics_` (26.08, перед `readSsFact_`) — затраты МОРС × месяц и закрытия
   «Формы КП» по месячным колонкам (даты в строке 1, без даты — пропуск), для
   action=analytics (вкладка «Аналитика»; ответ статья → {месяц: сумма} + morsStatus)
-- ~768 `doGet`: ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
+- ~3151–3242 вход через портал (14.09.2026): `auth_` (пароль или пропуск) · `portalWho_` ·
+  `portalLive_` (сверка с таблицей портала PORTAL_SHEET_ID, кэш `plive_*` 5 мин, сбой → null =
+  пускать по пропуску) · `portalRenew_` (свежий пропуск на 30 дней) · `checkPortalPass_` ·
+  `secret_` (PORTAL_SECRET) · `b64url_`
+- ~778 `doGet`: вход `auth_` · portalRenew (14.09) · ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
   `#sb-refresh` «Обновить данные» внизу сайдбара) · meta (безопасно из чата) ·
   probe (агрегаты) · floors · volumes · questions · budget · analytics (26.08) · changes ·
   budgetFloors · fact (отметки, без кэша) · factRef (справка V/Z) · load

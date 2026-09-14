@@ -39,6 +39,7 @@
   }
   #gate button:disabled { opacity: .6; cursor: default; }
   #gate .err { color: var(--danger); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  #gate .portal-link { display: block; margin-top: 12px; font-size: 13px; color: inherit; opacity: .75; }
 
   #app { display: none; height: 100%; flex-direction: row; }
 
@@ -880,6 +881,7 @@
     <input id="pw" type="password" placeholder="Пароль" autocomplete="current-password">
     <button id="pwBtn">Войти</button>
     <div class="err" id="pwErr"></div>
+    <a class="portal-link" href="https://acons.space/?next=otdelka">Войти через портал acons.space</a>
   </div>
 </div>
 
@@ -1036,8 +1038,34 @@ const DETAIL_COLS = [
 // Колонка, по которой в раскрытом списке считается итог.
 const SUM_COL = 'Стоимость материала в ед работы';
 
+// Вход через портал acons.space (14.09.2026). Плитка портала открывает витрину по ссылке
+// ?p=<пропуск>: забираем его в localStorage и убираем из адресной строки. Пропуск шлётся
+// с каждым запросом рядом со старым общим паролем (тот работает параллельно).
+const PORTAL_LOGIN_URL = 'https://acons.space/?next=otdelka';
+(function takePassFromUrl() {
+  const q = new URLSearchParams(location.search);
+  if (!q.get('p')) return;
+  try { localStorage.setItem('otdelka_pass', q.get('p')); } catch (e) {}
+  q.delete('p');
+  const rest = q.toString();
+  history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+})();
+function lsGet(key) {
+  try { return localStorage.getItem(key) || ''; } catch (e) { return ''; }
+}
+// Содержимое пропуска {l: логин, n: ФИО, r: роль, exp, iat} — только для подсказок
+// интерфейса; подпись и актуальную роль проверяет бэкенд.
+function passInfo(p) {
+  try {
+    let s = String(p || '').split('.')[0].replace(/-/g, '+').replace(/_/g, '/');
+    while (s.length % 4) s += '=';
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(s), c => c.charCodeAt(0))));
+  } catch (e) { return null; }
+}
+
 const state = {
   token: localStorage.getItem('otdelka_token') || '',
+  pass: lsGet('otdelka_pass'),   // пропуск портала acons.space (14.09.2026)
   works: [],
   byWork: new Map(),           // название работы -> строки листа «Расходы»
   unitByMaterial: new Map(),   // название материала -> ед. изм. из справочника «Материалы»
@@ -1137,7 +1165,8 @@ const state = {
   chgWorkOpen: new Set(),      // «Изменения»: работы с раскрытыми строками корпус × этаж
   questions: [],               // вопросы по работам (action=questions + POST)
   questionsStatus: 'idle',     // idle | loading | ready | error
-  userName: localStorage.getItem('otdelka_user') || '',  // имя для вопросов/статусов
+  // имя для вопросов/статусов; вошёл через портал — ФИО учётки (14.09.2026)
+  userName: (passInfo(lsGet('otdelka_pass')) || {}).n || localStorage.getItem('otdelka_user') || '',
   ctrSel: null,                // выбранный в сводной подрядчик: { name, ss }
   ctrMode: 'work',             // что в ячейках сводной: work | mat | both (04.08.2026)
   selected: null,              // ключ выбранной работы -> нижняя панель подрядчиков
@@ -1899,7 +1928,7 @@ function miniTable(cols, rows) {
 async function loadVols() {
   state.volsStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=volumes&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=volumes' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.vols = json.vols || {};
@@ -1938,7 +1967,7 @@ async function loadVols() {
 async function loadBudget() {
   state.budgetStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=budget&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=budget' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.budget = json.budget || [];
@@ -2495,7 +2524,7 @@ const anKey = name => {
 async function loadAnalytics() {
   state.analyticsStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=analytics&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=analytics' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.analytics = json.analytics || null;
@@ -3014,7 +3043,7 @@ const woTitle = srcs => srcs && srcs.size
 async function loadWriteoff() {
   state.writeoffStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=writeoff&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=writeoff' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.writeoff = json.writeoff || [];
@@ -3039,7 +3068,7 @@ async function loadWriteoff() {
 async function loadMat1c() {
   state.mat1cStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=mat1c&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=mat1c' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.mat1c = json.mat1c || [];
@@ -3082,7 +3111,7 @@ function showMat1cDate() {
 async function loadMat1cDetail() {
   state.mat1cDetStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=mat1cDetail&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=mat1cDetail' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.mat1cDet = json.detail || [];
@@ -3228,7 +3257,7 @@ function mat1cSkipNote() {
 async function loadMat1cUnits() {
   state.mat1cUnitsStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=mat1cUnits&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=mat1cUnits' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.mat1cUnits = json.mixed || [];
@@ -4011,7 +4040,7 @@ async function openAnPayments(key, name) {
   document.getElementById('modal-overlay').style.display = 'flex';
   try {
     const url = GAS_URL + '?action=morsRows&item=' + encodeURIComponent(key) +
-      '&t=' + encodeURIComponent(state.token);
+      authQ();
     let json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     if (month) {
@@ -4123,7 +4152,7 @@ const tzIsFinish = name => {
 async function loadTuzio() {
   state.tuzioStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=tuzio&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=tuzio' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.tuzio = json.tuzio || null;
@@ -4637,8 +4666,9 @@ async function tzLoadPerson(fio) {
   const cached = state.tzPersonCache.get(fio);
   if (cached && cached !== 'error') return cached;
   try {
-    const url = GAS_URL + '?action=tuzioPerson&p=' + encodeURIComponent(fio) +
-      '&t=' + encodeURIComponent(state.token);
+    // ФИО — параметром fio: имя «p» с 14.09.2026 занято пропуском портала (authQ).
+    const url = GAS_URL + '?action=tuzioPerson&fio=' + encodeURIComponent(fio) +
+      authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     const person = json.person || { rows: [] };
@@ -5153,7 +5183,7 @@ function budgetWorkHtml(w) {
 async function loadBudgetFloors() {
   state.budgetFloorsStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=budgetFloors&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=budgetFloors' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.budgetFloors = json.bfloors || {};
@@ -5320,7 +5350,7 @@ function openVolModal(key, name) {
 async function loadFact() {
   state.factStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=fact&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=fact' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.factMarks = new Map(Object.entries(json.marks || {}));
@@ -5334,7 +5364,7 @@ async function loadFact() {
 async function loadFactRef() {
   state.factRefStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=factRef&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=factRef' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.factRef = json.ref || {};
@@ -5918,7 +5948,7 @@ async function loadChanges() {
   state.changesStatus = 'loading';
   if (state.screen === 'check-changes') renderCheckChanges();
   try {
-    const url = GAS_URL + '?action=changes&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=changes' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.changes = json;
@@ -6139,7 +6169,9 @@ async function saveBaseline(btnEl) {
   // после удачной фиксации держим в localStorage; неверный — стираем и просим снова.
   let admin = '';
   try { admin = localStorage.getItem('otdelka_admin') || ''; } catch (e) {}
-  if (!admin) {
+  // Роль «администратор» на портале заменяет пароль (14.09.2026) — бэкенд проверит сам.
+  const portalAdmin = (passInfo(state.pass) || {}).r === 'администратор';
+  if (!admin && !portalAdmin) {
     admin = (window.prompt('Фиксировать базовый расчёт может только администратор.\n' +
       'Пароль администратора:') || '').trim();
     if (!admin) return;
@@ -6156,7 +6188,7 @@ async function saveBaseline(btnEl) {
       }
       throw new Error(json.message || json.error);
     }
-    try { localStorage.setItem('otdelka_admin', admin); } catch (e) {}
+    if (admin) try { localStorage.setItem('otdelka_admin', admin); } catch (e) {}
     state.changes = null;
     state.changesStatus = 'idle';
     renderCheckChanges();
@@ -6173,8 +6205,43 @@ async function saveBaseline(btnEl) {
  * Drive владельца скрипта (выбор пользователя). Статусы «Открыт»/«Закрыт», при любой
  * записи фиксируются автор и время. Имя пользователя запоминается в localStorage.
  */
+// Хвост адреса GET-запроса: общий пароль и, если есть, пропуск портала (14.09.2026).
+function authQ() {
+  return '&t=' + encodeURIComponent(state.token) +
+    (state.pass ? '&p=' + encodeURIComponent(state.pass) : '');
+}
+
+// Уход на портал за новым пропуском; портал сразу возвращает сюда. Если и новый пропуск
+// не принят (например, в Отделке не задан PORTAL_SECRET), второй раз за 2 минуты
+// не уходим — иначе вкладка бесконечно прыгала бы между сайтами.
+function goPortal() {
+  try {
+    const last = Number(sessionStorage.getItem('otdelka_portal_jump') || 0);
+    if (Date.now() - last < 120000) return false;
+    sessionStorage.setItem('otdelka_portal_jump', String(Date.now()));
+  } catch (e) { return false; }
+  location.href = PORTAL_LOGIN_URL;
+  return true;
+}
+
+// Решение пользователя 14.09.2026: вошёл на портал один раз — и пользуется без разлогинов.
+// Пропуск живёт 30 дней и раз в сутки при открытии витрины меняется на свежий; снятую
+// на портале роль бэкенд всё равно увидит в течение 5 минут.
+async function renewPass() {
+  const info = passInfo(state.pass);
+  if (info && info.iat && Date.now() / 1000 - info.iat < 86400) return;
+  try {
+    const json = await fetchWithRetry(GAS_URL + '?action=portalRenew' + authQ(), 2);
+    if (!json.ok || !json.p) return;
+    state.pass = json.p;
+    try { localStorage.setItem('otdelka_pass', json.p); } catch (e) {}
+    if (json.fio) state.userName = json.fio;
+  } catch (e) {}
+}
+
 async function postJson(payload) {
   payload.t = state.token;
+  if (state.pass) payload.p = state.pass;
   const resp = await fetch(GAS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
@@ -6191,7 +6258,7 @@ async function postJson(payload) {
 async function loadQuestions() {
   state.questionsStatus = 'loading';
   try {
-    const url = GAS_URL + '?action=questions&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=questions' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.questions = json.questions || [];
@@ -6541,7 +6608,7 @@ document.getElementById('sb-refresh').addEventListener('click', async () => {
   el.classList.add('busy');
   el.textContent = 'Обновляем…';
   try {
-    const url = GAS_URL + '?action=clearCache&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=clearCache' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     location.reload();
@@ -6822,10 +6889,19 @@ async function fetchWithRetry(url, attempts) {
 async function loadData() {
   setStatus('Загрузка данных...');
   try {
-    const url = GAS_URL + '?action=load&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=load' + authQ();
     const json = await fetchWithRetry(url);
     if (!json.ok) {
-      if (json.error === 'unauthorized') {
+      if (json.error === 'unauthorized' || json.error === 'bad_pass') {
+        // Пропуск портала не принят (учётку отключили, роль сняли, сменили секрет) —
+        // забываем его и уходим на портал: тот вернёт сюда с новым пропуском.
+        if (state.pass) {
+          state.pass = '';
+          try { localStorage.removeItem('otdelka_pass'); } catch (e) {}
+          if (goPortal()) return;
+          showGate('Вход через портал не удался — обратитесь к администратору или войдите по паролю');
+          return;
+        }
         showGate('Неверный пароль');
         return;
       }
@@ -6881,7 +6957,7 @@ async function loadData() {
  */
 async function loadFloors() {
   try {
-    const url = GAS_URL + '?action=floors&t=' + encodeURIComponent(state.token);
+    const url = GAS_URL + '?action=floors' + authQ();
     const json = await fetchWithRetry(url, 2);
     if (!json.ok) throw new Error(json.message || json.error);
     state.floors = json.floors || {};
@@ -7269,10 +7345,15 @@ document.addEventListener('click', e => {
   else printTablePdf(tbl, title);
 });
 
-if (state.token) {
+if (state.token || state.pass) {
   showApp();
   loadData();
-} else {
+  if (state.pass) renewPass();
+  // Вкладку могут не закрывать неделями — проверяем раз в час (запрос уходит раз в сутки).
+  setInterval(() => { if (state.pass) renewPass(); }, 3600000);
+} else if (!(/(^|\.)acons\.space$/.test(location.hostname) && goPortal())) {
+  // На otdelka.acons.space вход — через портал. Экран пароля — на старом адресе и запасной,
+  // если портал не вернул рабочий пропуск (защита от петли в goPortal).
   showGate();
 }
 </script>
