@@ -3149,6 +3149,7 @@ var PORTAL_APP = 'otdelka';
 var PORTAL_ROLES = ['просмотр', 'администратор'];
 var PORTAL_PASS_TTL_SEC = 30 * 86400;
 var PORTAL_RECHECK_SEC = 300;
+var PORTAL_CHECK_URL = 'https://acons.space/api/portal/check';   // сервер портала (acons-server), шаг 2 переезда
 
 /** Проверка входа: пропуск портала или общий пароль. {via, login, fio, role} либо {error}. */
 function auth_(t, p) {
@@ -3172,8 +3173,10 @@ function portalWho_(p) {
 }
 
 /**
- * Текущая роль человека в Отделке по таблице портала (лист «Пользователи»), кэш 5 минут.
- * {role, fio}: role '' — доступа нет; null — таблицу прочитать не удалось (пускаем по пропуску).
+ * Текущая роль человека в Отделке — спрашиваем сервер портала acons.space (acons-server TZ §5.2), кэш 5 минут.
+ * С 2026-09-14 (шаг 2 переезда, деплой @86) база пользователей живёт на сервере; Google-таблица портала — архив.
+ * {role, fio}: role '' — доступа нет; null — сервер не ответил (пускаем по пропуску, как решено 2026-09-14).
+ * Запрос подписан PORTAL_SECRET: sig = hex(HMAC-SHA256('логин|otdelka|ts')), ts — unix-секунды (±300 с).
  */
 function portalLive_(login) {
   login = String(login || '').trim().toLowerCase();
@@ -3181,31 +3184,34 @@ function portalLive_(login) {
   var key = 'plive_' + Utilities.base64EncodeWebSafe(login);
   var c = cache.get(key);
   if (c) return c === 'err' ? null : JSON.parse(c);
-  var id = PropertiesService.getScriptProperties().getProperty('PORTAL_SHEET_ID');
-  if (!id) return null;
   try {
-    var rows = SpreadsheetApp.openById(id).getSheetByName('Пользователи').getDataRange().getValues();
-    var h = rows[0].map(function (x) { return String(x).trim(); });
-    var iL = h.indexOf('Логин'), iF = h.indexOf('ФИО'), iS = h.indexOf('Статус'),
-        iV = h.indexOf('Действует до'), iR = h.indexOf('Отделка');
-    if (iL < 0 || iS < 0 || iR < 0) throw new Error('в таблице портала нет колонок Логин/Статус/Отделка');
-    var res = { role: '', fio: '' };
-    for (var i = 1; i < rows.length; i++) {
-      if (String(rows[i][iL]).trim().toLowerCase() !== login) continue;
-      var vt = iV >= 0 ? rows[i][iV] : '';
-      var active = String(rows[i][iS]).trim() === 'активен' &&
-                   !(vt && new Date(vt).getTime() < Date.now() - 86400000);
-      var role = String(rows[i][iR] || '').trim();
-      res = { role: active && PORTAL_ROLES.indexOf(role) >= 0 ? role : '',
-              fio: iF >= 0 ? String(rows[i][iF] || '') : '' };
-      break;
-    }
+    var ts = String(Math.floor(Date.now() / 1000));
+    var sig = Utilities.computeHmacSha256Signature(login + '|' + PORTAL_APP + '|' + ts, secret_())
+      .map(function (b) { return ('0' + (b & 255).toString(16)).slice(-2); }).join('');
+    var url = PORTAL_CHECK_URL + '?login=' + encodeURIComponent(login) + '&app=' + PORTAL_APP +
+              '&ts=' + ts + '&sig=' + sig;
+    var resp = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+    if (resp.getResponseCode() !== 200) throw new Error('сервер портала: HTTP ' + resp.getResponseCode());
+    var j = JSON.parse(resp.getContentText());
+    if (!j.ok) throw new Error('сервер портала: ' + j.error);
+    var role = String(j.role || '').trim();
+    var res = { role: PORTAL_ROLES.indexOf(role) >= 0 ? role : '', fio: String(j.fio || '') };
     cache.put(key, JSON.stringify(res), PORTAL_RECHECK_SEC);
     return res;
   } catch (e) {
-    cache.put(key, 'err', 60);   // не долбим таблицу при сбое, через минуту попробуем снова
+    cache.put(key, 'err', 60);   // не долбим сервер при сбое, через минуту попробуем снова
     return null;
   }
+}
+
+/**
+ * ЗАПУСТИТЬ ОДИН РАЗ В РЕДАКТОРЕ (владелец) перед выкладкой шага 2 переезда: Google спросит разрешение
+ * «подключаться к внешним сервисам» — нажать «Разрешить». Без этого веб-приложение после деплоя
+ * может перестать отвечать всем. В журнале выполнения должен появиться ответ сервера с "ok": true.
+ */
+function authorizeServer() {
+  var r = UrlFetchApp.fetch('https://acons.space/api/portal?action=ping', { muteHttpExceptions: true });
+  Logger.log('Сервер портала ответил: HTTP ' + r.getResponseCode() + ' ' + r.getContentText().slice(0, 120));
 }
 
 /** Свежий пропуск на 30 дней с текущими ролью и ФИО — фронт просит раз в сутки. */
