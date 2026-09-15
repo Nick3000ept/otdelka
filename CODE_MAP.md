@@ -2,9 +2,11 @@
 
 Карта кода `index.html` и `script.gs` — **читать перед правкой вместо чтения всего файла**;
 после правки актуализировать сдвинувшиеся номера строк затронутых секций.
-> 14.09.2026 (вход через портал): index.html 7355 строк, script.gs 3242 — точно пересчитаны
-> только секции входа, «Изменений», «Вопросов», каркаса и `doPost`/`doGet`; остальные номера
-> index.html после ~1040 сдвинулись примерно на +30…+75 — искать Grep-ом по имени.
+> 14.09.2026 (данные с сервера acons.space, шаг 5 переезда): index.html 7474 строки (было 7355) —
+> точно пересчитаны секции входа, каркаса, «данные с сервера»; секции «Изменений», «Вопросов» и
+> `doPost`/`doGet` из предыдущей правки (вход через портал) не трогались, но могли сдвинуться на
+> несколько строк из-за добавок выше в файле. Остальные номера index.html после ~1040 сдвинулись
+> примерно на +30…+80 — искать Grep-ом по имени.
 
 Номера строк **сверены с кодом 2026-09-11** (index.html 7280 строк, script.gs 3122):
 86 ссылок на функции и константы пересчитаны скриптом по фактическим объявлениям
@@ -25,7 +27,8 @@
   (с 14.09.2026 вход и через портал acons.space — см. раздел «вход через портал» ниже)
 - `#app` = `#sidebar` (`.sb-item` data-screen=`rates|volumes|budget`; блок Проверки
   `#sb-checks`: `check-rates|check-work-rates|check-no-cost|check-formulas|check-changes|check-questions`,
-  бейджи `#badge-check-*`) + `#content`
+  бейджи `#badge-check-*`; внизу `#sb-refresh` → `#sb-synced` (14.09.2026, пометка «Данные на …»,
+  только серверный режим) → `#sb-m1c-date`) + `#content`
 - `#content`: `header` (фильтры `#f-group/#f-place/#f-surface`, `#f-toggle-all`, `#f-reset`,
   кнопки масштаба `#zoom-out/#zoom-reset/#zoom-in` (`applyZoom`, localStorage
   `otdelka_zoom`, 14.08), `#search`) → `main`: `#status`, `#pane-top`
@@ -35,7 +38,9 @@
 
 ## index.html — константы и state
 
-- ~985 `GAS_URL`; ~1019 `filled`; ~1039 **`state`** (все данные и UI-состояние; см. комменты;
+- ~994 `GOOGLE_GAS_URL`/`SERVER_API`/`GAS_URL` (14.09.2026, шаг 5 переезда: `GAS_URL` теперь
+  `let`, переключается на `SERVER_API` при старте — см. раздел «вход через портал» ниже);
+  ~1034 `filled`; ~1079 **`state`** (все данные и UI-состояние; см. комменты;
   12.08 добавлены `budgetContr`/`budgetContrOpen`)
 - ~1169 `hasVolume` (признак лидерного объёма); ~1177 `workVolD` — ЧИСТЫЙ объём работы
   из поэтажки D (сумма volsTotals; «Объем работ» справочника — с коэффициентом);
@@ -411,22 +416,46 @@
 
 ## index.html — каркас
 
-- ~6362 `setScreen`; ~6786 `setStatus`; ~6800 `fetchWithRetry` (3 попытки)
-- ~6888 `loadData` — action=load; затем фоном: `loadFloors` + `loadQuestions` + `loadVols`;
+- ~6362 `setScreen`; ~6858 `setStatus`; ~6960 `fetchWithRetry` (3 попытки; 14.09.2026 —
+  запасной путь в Google для `SERVER_API`, см. «вход через портал» ниже)
+- ~6996 `loadData` — action=load; затем фоном: `loadFloors` + `loadQuestions` + `loadVols`;
   unauthorized/bad_pass при пропуске → забыть пропуск, `goPortal()`
-- `loadFloors`; ~6976 `showGate`; `submitPassword`; ~7347 запуск (token/pass → витрина,
-  *.acons.space без них → портал, иначе экран пароля)
+- `loadFloors`; ~7084 `showGate`; `submitPassword`; ~7455 запуск (token/pass → витрина,
+  *.acons.space без них → портал, иначе экран пароля; 14.09.2026 — тут же выбор
+  `GAS_URL`/`SERVER_API` и вызов `refreshSyncedNote()`)
 
 ## index.html — вход через портал acons.space (14.09.2026)
 
 - ~1044 `PORTAL_LOGIN_URL` + самовызов `takePassFromUrl` (`?p=` → localStorage `otdelka_pass`,
   убрать из адреса); ~1053 `lsGet`; ~1058 `passInfo` (разбор пропуска только для интерфейса);
-  ~1066 `state` (`pass`, `userName` берёт ФИО из пропуска)
-- ~6208 `authQ` — хвост GET-адреса `&t=…&p=…` (**все** GET-запросы строятся через него);
-  ~6216 `goPortal` (защита от петли: sessionStorage `otdelka_portal_jump`, 2 мин);
-  ~6229 `renewPass` (action=portalRenew раз в сутки)
+  ~1079 `state` (`pass`, `userName` берёт ФИО из пропуска)
+- ~6222 `authQ` — хвост GET-адреса `&t=…&p=…` (**все** GET-запросы строятся через него);
+  ~6230 `goPortal` (защита от петли: sessionStorage `otdelka_portal_jump`, 2 мин);
+  ~6243 `renewPass` (action=portalRenew раз в сутки)
 - `#sb-portal` — ссылка «← Портал acons.space» над `.sb-brand` в `#sidebar` (CSS `.sb-portal` рядом с `.sb-note`),
   показывается в запуске только при `state.pass`
+
+## index.html — данные с сервера acons.space (14.09.2026, шаг 5 переезда)
+
+- ~994 `GOOGLE_GAS_URL` (прежний адрес Google) / `SERVER_API` = `'/api/otdelka'` (относительный —
+  та же страница) / `GAS_URL` (`let`, по умолчанию = `GOOGLE_GAS_URL`, читается в момент каждого
+  запроса — существующие ~20 мест `GAS_URL + '?action=…' + authQ()` не менялись)
+- ~7455 запуск: если `state.pass` (вошёл через портал) и `location.hostname` — `*.acons.space` →
+  `GAS_URL = SERVER_API`; иначе как раньше (github.io, вход по общему паролю)
+- ~6258 `postJsonOnce_` (один POST; `serverDown` на исключении — сеть/не-JSON/HTTP≥500) →
+  ~6287 `postJson` — запасной путь в Google **только** если сервер вовсе не ответил (`e.serverDown`);
+  осмысленный `{ok:false}` (включая `google_unavailable`) повторно не пересылается — риск задвоить
+  запись (saveFact/addQuestion/setQuestionStatus/saveBaseline/refresh)
+- ~6960 `fetchWithRetry` — для `url` на `SERVER_API`: HTTP≥500 или `{ok:false, error:'server_error'|
+  'google_unavailable'}` → повторяет тот же запрос в Google (`url.replace(SERVER_API, GOOGLE_GAS_URL)`);
+  `bad_pass`/`unknown_action` не перенаправляются; `google_unavailable` для чтения тоже пускаем
+  в Google (решение — вреда нет, запись не задваивается)
+- ~6651 `fmtSyncedAt_`/~6657 `refreshSyncedNote` — `#sb-synced` под кнопкой «Обновить данные»:
+  `action=status`, «Данные на ДД.ММ ЧЧ:ММ» / «Обновляются…»; пусто в режиме Google (`.sb-note:empty`
+  скрывает); вызывается при старте (только в серверном режиме) и после ручного обновления
+- ~6672 клик `#sb-refresh` — в серверном режиме `postJson({action:'refresh'})` → опрос
+  `action=status` раз в 10 с, максимум 6 минут, при готовности `location.reload()`, при таймауте —
+  alert и кнопка возвращается; в режиме Google — без изменений (`action=clearCache` + reload)
 
 ## script.gs (деплой ТОЛЬКО clasp update-deployment, сейчас v24+)
 
@@ -455,8 +484,8 @@
   «Формы КП» по месячным колонкам (даты в строке 1, без даты — пропуск), для
   action=analytics (вкладка «Аналитика»; ответ статья → {месяц: сумма} + morsStatus)
 - ~3151–3242 вход через портал (14.09.2026): `auth_` (пароль или пропуск) · `portalWho_` ·
-  `portalLive_` (сверка с таблицей портала PORTAL_SHEET_ID, кэш `plive_*` 5 мин, сбой → null =
-  пускать по пропуску) · `portalRenew_` (свежий пропуск на 30 дней) · `checkPortalPass_` ·
+  `portalLive_` (с 14.09 — запрос `PORTAL_CHECK_URL` acons.space/api/portal/check с HMAC-подписью, кэш
+  `plive_*` 5 мин, сбой → null = пускать по пропуску) · `authorizeServer` (разовое разрешение UrlFetchApp) · `portalRenew_` (свежий пропуск на 30 дней) · `checkPortalPass_` ·
   `secret_` (PORTAL_SECRET) · `b64url_`
 - ~778 `doGet`: вход `auth_` · portalRenew (14.09) · ping · clearCache (сброс кэша с витрины, 14.08; на фронте кнопка
   `#sb-refresh` «Обновить данные» внизу сайдбара) · meta (безопасно из чата) ·

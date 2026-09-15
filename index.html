@@ -920,6 +920,8 @@
     </div>
     <div id="sb-refresh" class="sb-refresh"
       title="Сбросить кэш и перечитать данные из таблицы заново">&#10227; Обновить данные</div>
+    <div id="sb-synced" class="sb-note"
+      title="Когда сервер acons.space в последний раз забрал данные из Google-таблицы"></div>
     <div id="sb-m1c-date" class="sb-note"
       title="Дата самого свежего документа в листе «Материалы_1С»"></div>
   </aside>
@@ -989,7 +991,13 @@
 </div>
 
 <script>
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbyo6f-OGca1loM1aBXtHkcx7nq8tlJWBreGepxp0KTwq7GvDdDPKo-tuFjXQqKs1nZfdQ/exec';
+const GOOGLE_GAS_URL = 'https://script.google.com/macros/s/AKfycbyo6f-OGca1loM1aBXtHkcx7nq8tlJWBreGepxp0KTwq7GvDdDPKo-tuFjXQqKs1nZfdQ/exec';
+// Сервер acons.space (шаг 5 переезда, 14.09.2026): та же витрина, тот же адрес сайта —
+// путь относительный. Источник данных выбирается при запуске (см. конец файла):
+// вошёл через портал и открыт на *.acons.space — GAS_URL переключается на SERVER_API,
+// иначе (github.io, вход по общему паролю) остаётся Google, как раньше.
+const SERVER_API = '/api/otdelka';
+let GAS_URL = GOOGLE_GAS_URL;
 
 // Колонки листа «Работы», которые на витрине не показываем (решение пользователя 03.08.2026).
 const HIDDEN_COLS = [
@@ -6244,19 +6252,52 @@ async function renewPass() {
   } catch (e) {}
 }
 
+// Один POST-запрос. serverMode=true — HTTP ≥ 500 тоже считается «сервер не ответил
+// как надо» (для запасного пути в Google); в режиме Google статус не проверяем — как
+// было раньше.
+async function postJsonOnce_(url, body, serverMode) {
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body
+    });
+  } catch (e) {
+    e.serverDown = true;
+    throw e;
+  }
+  const text = await resp.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch (e) {
+    const err = new Error('сервер вернул не JSON');
+    err.serverDown = true;
+    throw err;
+  }
+  if (serverMode && resp.status >= 500) {
+    const err = new Error('server_http_' + resp.status);
+    err.serverDown = true;
+    throw err;
+  }
+  return json;
+}
+
 async function postJson(payload) {
   payload.t = state.token;
   if (state.pass) payload.p = state.pass;
-  const resp = await fetch(GAS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify(payload)
-  });
-  const text = await resp.text();
+  const body = JSON.stringify(payload);
+  const useServer = GAS_URL === SERVER_API;
   try {
-    return JSON.parse(text);
+    return await postJsonOnce_(GAS_URL, body, useServer);
   } catch (e) {
-    throw new Error('сервер вернул не JSON');
+    // Запасной путь в Google — ТОЛЬКО если сервер acons.space вовсе не ответил как
+    // надо (сеть, не-JSON, HTTP ≥ 500). Ответ {ok:false,...} сервер уже прислал по
+    // делу (в т.ч. google_unavailable) — пересылать запрос ещё раз в Google нельзя:
+    // можно задвоить запись (вопрос, отметку факта). Шаг 5 переезда, 14.09.2026.
+    if (useServer && e.serverDown) return postJsonOnce_(GOOGLE_GAS_URL, body, false);
+    throw e;
   }
 }
 
@@ -6604,13 +6645,60 @@ document.getElementById('check-screen').addEventListener('click', e => {
   renderCheckWorkRates();
 });
 
-// Кнопка «Обновить данные» (14.08.2026): сбрасывает серверный кэш (action=clearCache)
-// и перезагружает страницу — все данные перечитываются из таблицы заново.
-// Первая загрузка после сброса медленнее обычного (кэш собирается заново).
+// Пометка «Данные на …» под кнопкой обновления — только в серверном режиме
+// (шаг 5 переезда, 14.09.2026); в режиме Google элемент пустой и скрыт CSS
+// (`.sb-note:empty`).
+function fmtSyncedAt_(iso) {
+  const d = iso && new Date(iso);
+  if (!d || isNaN(d)) return '';
+  const p2 = n => String(n).padStart(2, '0');
+  return p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes());
+}
+async function refreshSyncedNote() {
+  const el = document.getElementById('sb-synced');
+  if (!el || GAS_URL !== SERVER_API) return;
+  try {
+    const json = await fetchWithRetry(SERVER_API + '?action=status' + authQ(), 2);
+    el.textContent = !json.ok ? ''
+      : json.running ? 'Обновляются…'
+      : json.syncedAt ? 'Данные на ' + fmtSyncedAt_(json.syncedAt) : '';
+  } catch (e) { el.textContent = ''; }
+}
+
+// Кнопка «Обновить данные» (14.08.2026). В серверном режиме (14.09.2026, шаг 5
+// переезда) запускает полную выгрузку из Google на сервере (action=refresh, 1–3 мин)
+// и дожидается её конца по action=status; в режиме Google — как раньше, сбрасывает
+// кэш (action=clearCache) и перезагружает страницу.
 document.getElementById('sb-refresh').addEventListener('click', async () => {
   const el = document.getElementById('sb-refresh');
   if (el.classList.contains('busy')) return;
   el.classList.add('busy');
+  if (GAS_URL === SERVER_API) {
+    el.textContent = 'Обновляем… (1–3 мин)';
+    try {
+      const start = await postJson({ action: 'refresh' });
+      if (!start.ok) throw new Error(start.message || start.error || 'не удалось запустить обновление');
+      const deadline = Date.now() + 360000;   // дольше 6 минут не ждём
+      let done = false;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 10000));
+        let st;
+        try { st = await fetchWithRetry(SERVER_API + '?action=status' + authQ(), 2); }
+        catch (e) { continue; }
+        if (st.ok && !st.running) { done = true; break; }
+      }
+      if (done) { location.reload(); return; }
+      el.classList.remove('busy');
+      el.innerHTML = '&#10227; Обновить данные';
+      refreshSyncedNote();
+      alert('Обновление идёт дольше обычного — данные подтянутся позже');
+    } catch (e) {
+      el.classList.remove('busy');
+      el.innerHTML = '&#10227; Обновить данные';
+      alert('Не получилось обновить: ' + e.message);
+    }
+    return;
+  }
   el.textContent = 'Обновляем…';
   try {
     const url = GAS_URL + '?action=clearCache' + authQ();
@@ -6870,7 +6958,10 @@ function setStatus(text, isError) {
 }
 
 async function fetchWithRetry(url, attempts) {
-  attempts = attempts || 3;
+  const isServer = url.indexOf(SERVER_API) === 0;
+  // К серверу — одна попытка: он отдаёт копии мгновенно, а если не смог, повтор к нему же
+  // только растягивает ожидание (nginx ждёт до 120 с). Сразу запасной путь в Google.
+  attempts = isServer ? 1 : (attempts || 3);
   let lastErr;
   for (let i = 0; i < attempts; i++) {
     try {
@@ -6882,12 +6973,26 @@ async function fetchWithRetry(url, attempts) {
       } catch (e) {
         throw new Error('Сервер вернул не JSON (возможно, ошибка доступа к таблице)');
       }
+      if (isServer && resp.status >= 500) {
+        throw new Error('server_http_' + resp.status);
+      }
+      // Сервер acons.space ответил, но сам сообщил о сбое — пробуем получить те же
+      // данные напрямую у Google, откуда сервер их и берёт (запасной путь шага 5
+      // переезда, 14.09.2026). bad_pass не перенаправляем — Google ответит так же.
+      // google_unavailable для ЧТЕНИЯ тоже пускаем в Google: вреда нет (это не запись),
+      // а данные напрямую получить шанс есть. not_ready (модуль Отделки на сервере ещё
+      // не выложен) и unknown_action (сервер не знает действие, Google знает) — тоже в Google.
+      if (isServer && json && json.ok === false &&
+        ['server_error', 'google_unavailable', 'not_ready', 'unknown_action'].indexOf(json.error) >= 0) {
+        return fetchWithRetry(url.replace(SERVER_API, GOOGLE_GAS_URL), attempts);
+      }
       return json;
     } catch (e) {
       lastErr = e;
       if (i < attempts - 1) await new Promise(r => setTimeout(r, 600 * (i + 1)));
     }
   }
+  if (isServer) return fetchWithRetry(url.replace(SERVER_API, GOOGLE_GAS_URL), attempts);
   throw lastErr;
 }
 
@@ -7352,7 +7457,12 @@ document.addEventListener('click', e => {
 
 if (state.token || state.pass) {
   showApp();
+  // Данные с сервера acons.space (шаг 5 переезда, 14.09.2026): вошёл через портал
+  // (есть пропуск) и страница открыта на *.acons.space — источник переключается на
+  // сервер; иначе (github.io, вход по общему паролю) — как раньше, напрямую в Google.
+  if (state.pass && /(^|\.)acons\.space$/.test(location.hostname)) GAS_URL = SERVER_API;
   loadData();
+  if (GAS_URL === SERVER_API) refreshSyncedNote();
   if (state.pass) renewPass();
   document.getElementById('sb-portal').hidden = !state.pass;   // «← Портал» только у вошедших через портал
   // Вкладку могут не закрывать неделями — проверяем раз в час (запрос уходит раз в сутки).
